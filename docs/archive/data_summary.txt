@@ -1,0 +1,642 @@
+================================================================================
+1_data — 데이터셋 정리본 (Final__MCP__Web__MES)
+================================================================================
+
+[작성일]      2026-05-21
+[원본 위치]   C:\IT\Project\Project#2\Project#2\
+              (0.data/ + 1.ESG_배터리.../data/ 의 raw 검증 완료 데이터만)
+[정합 기준]   2-2_handover_dataset_selection.txt (v2)
+[데이터 정책] KAMP 실증 데이터 ★100%★ / 합성 데이터 ★0%★
+
+[총 규모]
+  - 데이터셋:   34개
+  - 자산 단위:  53개  (개별 파일 + 폴더 묶음 기준)
+  - 실제 파일:  2,837개 (이미지 1장 단위까지 카운트)
+  - 총 용량:    5.1 GB
+
+[구조 원칙]
+  - 모듈 (발표·영업 단위) = ★제품 라인★ (한 부품이 여러 공정 거쳐 완성)
+  - MCP (시스템 내부)     = ★모달리티★ (공정 종속 없음)
+  - 두 분류는 ★직교★. 모듈은 발표·영업용, MCP는 코드용
+
+[발표 핵심 메시지]
+  "KAMP ★실증 데이터 34개★ 자동 전처리.
+   합성 0%, MCP 4개만, 라인 추가해도 MCP 안 늘어남."
+
+================================================================================
+[0] 폴더 구조 — 한눈에
+================================================================================
+
+1_data/
+│
+├── module_1_metal_processing/             ★ 13 데이터셋 / 427 파일
+│   │   금속 가공·검사 라인 (자동차 파워트레인 / 일반 기계 가공)
+│   │
+│   ├── 1_primary_forming/                   (2) mold_condition + mold_anomaly
+│   ├── 2_cnc_cutting/                       (2) cnc_lathe_quality + cnc_roughing
+│   ├── 3_mct_machining/                     (3) mct_tool_manage + mct_tool_improve(8xlsx) + mct_condition_inspect(9xlsx)
+│   ├── 4_precision_inspection/              (2) precision_machine + cnc_load_dimension
+│   ├── 5_surface_inspection/                (1) inspection_image (200 bmp + 200 label)
+│   └── 6_pdm/                               (3) rotary_drill + solenoid_roughing + guideloader_drill
+│
+├── module_2_forming_joining_surface/       ★ 9 데이터셋 / 2,078 파일
+│   │   성형·접합·표면처리·회전기 라인 (자동차 차체 / 일반 외관 부품)
+│   │
+│   ├── 1_press/                             (1) press_forming
+│   ├── 2_press_inspection/                  (1) press_aluminum (50 jpg + 40 label)
+│   ├── 3_welding/                           (2) welding_auto + welding_condition
+│   ├── 4_welding_inspection/                (2) welding_bead (554+554) + welding_electrode (100 bmp + CSV)
+│   ├── 5_surface_treatment_taping/          (1) vision_taping (774 jpg, 4-depth 폴더)
+│   └── 6_rotary_pdm/                        (2) blower_vibration + elevator_vibration
+│
+└── module_3_polymer_electronic/             ★ 12 데이터셋 / 332 파일
+    │   폴리머 성형·전자 검사·진동 신호 라인 (PCB Assembly / BMS / 소형 사출품)
+    │
+    ├── 1_order_planning/                    (1) 고객사_모델별_주문량 (1.ESG, ★CP949)
+    ├── 2_injection/                         (3) injection_optimize + injection_production + cnc_machine_optimize
+    ├── 3_extrusion/                         (1) extrusion_pdm (3 머신 CSV: 3002P/3004P/3008P)
+    ├── 4_precision_parts/                   (1) vacuum_pump (8 채널)
+    ├── 5_semiconductor_interior_inspection/  (2) auto_console_detect + wafer_defect (6 클래스 균등)
+    ├── 6_ict_electric_inspection/           (2) ict_checker + ict_inspection (★둘 다 CP949)
+    └── 7_vibration_simulation/              (2) vibration_fault_sim + sim2 (16K × 2049 FFT)
+
+================================================================================
+[1] 모듈 ① 금속 가공·검사 라인 — 상세 (13 데이터셋 / 427 파일)
+================================================================================
+
+★ 공정 흐름:
+   [1차성형(주조/단조)] → [CNC 절삭] → [MCT 가공] → [정밀가공/치수검사]
+   → [표면 검사] → [PdM 설비]
+
+★ 발표 멘트:
+   "엔진블록 1개가 1차성형→CNC→MCT→정밀가공→검사→설비PdM 6단계.
+    각 단계의 KAMP 실증 데이터를 한 라인의 디지털 트윈으로 통합."
+
+────────────────────────────────────────────────────────────────────────────────
+1_primary_forming/  1차 성형 (주조/단조)
+────────────────────────────────────────────────────────────────────────────────
+
+L3_mold_condition_kamp.csv          1,323 × 71   | utf-8-sig | 0.4 MB
+  출처: 대성금형
+  헤더: INJ_ID, INJ_NO, SPC_DATETIME, PROC_QTY, CV_001~CV_020, SV_001~SV_063,
+        MOLD_CAVITY, stock_mst_code, weight
+  특징: 71열 다변수 (CV/SV 편차) 통합
+
+L3_mold_anomaly_kamp.csv         6,900,588 × 5   | utf-8-sig | 325.3 MB
+  출처: 윤영테크 (단조)
+  ★ 챌린지 2-③: 헤더가 첫 측정값 (header=None 후 처리 필요)
+  ★ 챌린지 4: 대용량 chunking 필요
+
+────────────────────────────────────────────────────────────────────────────────
+2_cnc_cutting/  CNC 절삭
+────────────────────────────────────────────────────────────────────────────────
+
+L1_cnc_lathe_quality_kamp.csv   10,385,862 × 13  | utf-8-sig | 385.9 MB
+  출처: 가유
+  헤더: CNC_ServoLoad_1, CNC_ServoCurrentPct_1, ..., TagId, Quality, Value
+  ★ 챌린지 3: 마스킹 카테고리 '*', '**', '***' 다수 (object 컬럼)
+  ★ 챌린지 4: 1,000만행 대용량
+
+L3_cnc_roughing_kamp.csv         1,000,000 × 4   | utf-8-sig | 26.2 MB
+  출처: 대한냉열공업
+  헤더: idx, dttm, part_count, buf_spload
+
+────────────────────────────────────────────────────────────────────────────────
+3_mct_machining/  MCT 가공
+────────────────────────────────────────────────────────────────────────────────
+
+L1_mct_tool_manage_kamp_제조AI데이터셋_(주)미래하이테크.csv
+                                     1,628 × 29  | utf-8-sig | 0.3 MB
+  출처: ㈜미래하이테크
+  헤더: gdatetime, fcycleTime, fspindleRPM1, fspindleTroq1, ftoolNum,
+        gadc2~5, gmv, gma, gmactP, gmractP, ..., A_c_v, A_c_a
+  활용: Tool 교체 주기 관리, 전압·전류 누적 데미지 산정
+
+L1_mct_tool_improve_kamp/  (folder, Excel 8개)   | utf-8-sig
+  출처: 문테크
+  - F1SCORE_온도편차_최종점검 후 수정.xlsx       Sheet1   15,159 × 32
+  - 제조데이터_1_AI 3차원 측정.xlsx              dbdata    4,911 × 30
+  - 제조데이터_2_AI MCT.xlsx                     Sheet1   15,159 × 16
+  - 제조데이터_3_MCT.xlsx                        MCT...    3,684 × 7
+  - 제조데이터_4_온도.xlsx                       Sheet1   15,159 × 5
+  - 제조데이터_5_3차원 측정.xlsx                  3차원..     237 × 10
+  - 제조데이터_6_LEAK측정.xlsx                   LEAK...   1,213 × 7
+  - 제조데이터_최종점검 후 수정.xlsx             dbdata      199 × 124 (헤더 빈 메타)
+  ★ 챌린지 8: 멀티 시트 통합
+
+L3_mct_condition_inspect_kamp/  (folder, xlsx 9개)
+  출처: 엔티엘
+  - F1SCORE.xlsx                                 dbdata     4,887 × 126 (헤더 빈 메타)
+  - F1SCORE_온도편차.xlsx                         Sheet1     7,540 × 21
+  - 제조데이터_1_AI 비전검사.xlsx                 dbdata     4,871 × 42
+  - 제조데이터_2_AI MCT.xlsx                      Sheet1     7,540 × 22
+  - 제조데이터_3_MCT.xlsx                         MCT...     5,573 × 7
+  - 제조데이터_4_온도.xlsx                        제조...     7,540 × 5
+  - 제조데이터_5_3차원 측정.xlsx                  3차원..    1,071 × 13
+  - 제조데이터_6_비전검사.xlsx                    비전..     9,826 × 12
+  - 홀치수불량률.xlsx                             Sheet    157,202 × 26 ★최대
+  ★ 챌린지 2-⑤: 빈 메타 헤더
+  ★ 챌린지 8: 멀티 시트 통합
+
+────────────────────────────────────────────────────────────────────────────────
+4_precision_inspection/  정밀 가공·치수 검사
+────────────────────────────────────────────────────────────────────────────────
+
+L3_precision_machine_kamp.xlsx       3,643 × 52  | MITS (1)
+  출처: MITS
+
+L2_cnc_load_dimension_kamp.xlsx      1,001 × 17  | Sheet1
+  출처: 정원산업
+  헤더: ncWorkCount, tq_max/med/min/mean, tq_5/10/20, tq_cnt_90, box, zone1~7
+
+────────────────────────────────────────────────────────────────────────────────
+5_surface_inspection/  표면 검사
+────────────────────────────────────────────────────────────────────────────────
+
+L2_inspection_image_kamp/  (folder)             | 200 bmp + 200 .txt 라벨
+  출처: (유)비알엠
+  해상도: 640×480 RGB
+  라벨 형식: 동명 .txt 페어 (`0001_081020_X2_1_Y.bmp` + `.txt`)
+  ★ 챌린지 7: 정형-비정형 매핑 (동명 매칭)
+
+────────────────────────────────────────────────────────────────────────────────
+6_pdm/  설비 PdM (드릴·축계)
+────────────────────────────────────────────────────────────────────────────────
+
+L3_rotary_drill_kamp.xlsx          51,185 × 40  | AI...
+  출처: 제이디테크 (FANUC OPC-UA)
+  헤더: datetime, edgeId, fanuc_MFRH5_OP10_p2@Override/SigSPL/SigOP/RunTime/
+        SigAL/MainProgram/ActF/Modal/PowOnTime/SpindleTemp/PartsNum/AbsPos ...
+
+L3_solenoid_roughing_kamp.xltx  ★1,000,001 × 4  | CNC_sample
+  출처: 도스코
+  헤더: idx, dttm, part_count, buf_spload (cnc_roughing 동일 스키마)
+  ★ P2 라벨: "솔레노이드 거친가공" → "CNC 부하 PdM" (헤더 본질로 정정)
+  ★ 챌린지 4: xltx 형식 100만행 대용량
+
+L3_guideloader_drill_kamp.csv    1,000,000 × 4  | utf-8-sig | 27.8 MB
+  출처: 대기공업
+  헤더: idx, dttm, part_count, buf_spload (cnc_roughing 동일)
+
+================================================================================
+[2] 모듈 ② 성형·접합·표면처리·회전기 라인 — 상세 (9 데이터셋 / 2,078 파일)
+================================================================================
+
+★ 공정 흐름:
+   [프레스 성형] → [성형 검사] → [용접] → [용접 검사] →
+   [표면 처리/테이핑] → [회전기 PdM]
+
+★ 발표 멘트:
+   "차체 패널 1짝이 프레스→용접→표면처리→PdM 4단계.
+    PaintGuard 의 도장 결과 시연이 아니라, ★전 공정 자동 전처리★ 메시지로 차별화."
+
+────────────────────────────────────────────────────────────────────────────────
+1_press/  프레스 성형
+────────────────────────────────────────────────────────────────────────────────
+
+L1_press_forming_kamp.csv          449,862 × 26  | utf-8-sig | 39.1 MB
+  출처: 에스케이지
+  헤더: ITEM_CODE, VALUE1~VALUE19, VALUE24, VALUE26, VALUE28~30, PASS_YN
+  ★ 챌린지 2-④: VALUE20~23, 25, 27 누락 (헤더 점프)
+  ★ 챌린지 6: PASS_YN ★2.85% 극심 불균형★
+
+────────────────────────────────────────────────────────────────────────────────
+2_press_inspection/  성형 검사
+────────────────────────────────────────────────────────────────────────────────
+
+L2_press_aluminum_image_kamp/  (folder)         | 50 jpg, 사이즈 변동
+  출처: (주)삼아삭스호일
+  해상도: 807~837 × 835~840 RGB (★혼재)
+  서브폴더: 샘플/ 10장 (라벨X) + 학습용/ 40장 (라벨O)
+  ★ 챌린지 5: 사이즈 혼재
+  ★ 챌린지 7: 부분 라벨링
+
+────────────────────────────────────────────────────────────────────────────────
+3_welding/  용접
+────────────────────────────────────────────────────────────────────────────────
+
+L1_welding_auto_kamp.csv        2,067,888 × 8   | utf-8-sig | 145.4 MB
+  출처: 대명
+  헤더: mc_id, dt_event, d_date, n_value_1~5
+  ★ 챌린지 4: 200만행 대용량
+
+L1_welding_condition_kamp.csv     264,888 × 10  | utf-8-sig | 19.0 MB
+  출처: 동양하이테크
+  헤더: id, corp_no, factory_cd, machine, jig_no, voltage, e_current, gas,
+        starttime, lot_no
+  특징: machine = "co2 #1", "co2 #2"
+
+────────────────────────────────────────────────────────────────────────────────
+4_welding_inspection/  용접 검사
+────────────────────────────────────────────────────────────────────────────────
+
+L2_welding_bead_quality_kamp/  (folder)         | 554 jpg + 554 .txt
+  출처: 유에스지
+  해상도: 2464×2056 그레이스케일 (mode L)
+  명명: `SL20231122_N1_114859_buff8_Ori.jpg` + `.txt` 페어
+  ★ 챌린지 5: 그레이스케일 모드
+  ★ 챌린지 7: 동명 라벨 매칭
+
+L2_welding_electrode_kamp/  (folder)            | 100 bmp + 사이드 CSV (99 × 6)
+  출처: (주)진양
+  해상도: 1920×1200 RGB
+  CSV: 진양_데이터_공개용.csv (DX_ID, TIMEVALUE, VALUE000~003, 큰 정수)
+
+────────────────────────────────────────────────────────────────────────────────
+5_surface_treatment_taping/  표면 처리·테이핑
+────────────────────────────────────────────────────────────────────────────────
+
+L2_vision_taping_kamp/  (folder)                | ★774 jpg, 4-depth 폴더
+  출처: (주)영진 (수행사 (주)아이씨엔아이티)
+  해상도: 2446×1024 그레이스케일 (mode L)
+  구조: 02 (47장) / 03 (324장) / 04 (403장)
+        각각 CAM1/CAM2 × Front/Rear × NG/OK
+  ★ 챌린지 5: 그레이스케일
+  ★ 챌린지 6: NG 다수 + OK 소수 (전면/후면 불량률 9:1)
+  ★ 챌린지 7: 폴더명이 라벨
+
+────────────────────────────────────────────────────────────────────────────────
+6_rotary_pdm/  회전기 PdM
+────────────────────────────────────────────────────────────────────────────────
+
+L3_blower_vibration_kamp.csv    1,048,574 × 3   | utf-8-sig | 45.9 MB
+  출처: 시스템벤트
+  헤더: x, y, z (전부 float64, 진동 3축)
+  ★ 챌린지 4: 100만행
+
+L3_elevator_vibration_kamp.csv    210,000 × 4   | utf-8-sig | 11.3 MB
+  출처: 대명엘리베이터
+  헤더: motor1_x, motor1_y, motor1_z, time (5kHz 샘플레이트)
+
+================================================================================
+[3] 모듈 ③ 폴리머 성형·전자 검사·진동 신호 라인 — 상세 (12 데이터셋 / 332 파일)
+================================================================================
+
+★ 공정 흐름:
+   [주문 계획] → [사출 성형] → [압출 외장] → [정밀 부품] →
+   [반도체·인테리어 검사] → [ICT 전기 검사] → [진동 시뮬 검증]
+
+★ 발표 멘트:
+   "PCB+BMS 한 묶음이 주문→사출/압출→부품→검사 8단계.
+    이종 4기업 데이터 (CP949 주문 + CP949 ICT + utf-8-sig 사출) 를
+    한 라인의 ★학습 정답지(ICT를 Label로)★ 로 통합 (1.ESG '수직적 통합' 컨셉)."
+
+────────────────────────────────────────────────────────────────────────────────
+1_order_planning/  주문 계획
+────────────────────────────────────────────────────────────────────────────────
+
+고객사_모델별_주문량.csv           93,509 × 21   | ★CP949 | 10.1 MB
+  출처: 에스윈텍 (수행사 (주)제이캐스트)
+  헤더(한글): uid, order_date, 제품코드, 제품명, 제품군분류, 생산구분,
+              규격구분, 제품등급, ★예측수량★, ★실제수량★, ★오차율(%)★,
+              현재고주문량, ..., 종주문잔량 (21개)
+  도메인: 자동차 부품 360종 / 연간 9천만개 생산
+  ★ 챌린지 1: CP949 인코딩
+  활용: 주문 다변량 시계열 → 생산량 예측
+
+────────────────────────────────────────────────────────────────────────────────
+2_injection/  사출 성형
+────────────────────────────────────────────────────────────────────────────────
+
+L1_injection_optimize_kamp.csv    117,783 × 68  | utf-8-sig | 57.4 MB
+  출처: 뉴서광
+  ★ 챌린지 2-②: "Unnamed: 0" 인덱스 컬럼 잔존 + idx 중복
+
+L1_injection_production_kamp.csv      184 × 15  | utf-8-sig | 0.0 MB
+  출처: 대영전자
+  헤더: P1_Max, P2_Max, Cycle Time, Actual Barrel Temperature HN/H1~H5,
+        Filling Time, Metering Time, Max Injection Pressure,
+        Max Injection Velocity, Cooling Time, ★Label★
+  활용: 튜토리얼 적합 (184행 + Label)
+
+L1_cnc_machine_optimize_kamp.csv   41,146 × 95  | utf-8-sig | 24.3 MB
+  출처: 구름테크
+  헤더: LOT No., TimeStamp, EQP_ID, 1ST~10TH INJECTION VELOCITY,
+        1ST~9TH INJECTION SWITCH POS, PACK STEP, PACK PRESSURE 1~6,
+        PACK TIME 1~6, BACK PRESSURE 등 (총 95)
+  ★ 파일명 "cnc_machine" 이지만 헤더는 ★사출 (INJECTION)★ — 헤더 본질 우선
+  ★ 챌린지 2-①: "8TH INJECTION VELOCITY" 컬럼 중복
+
+────────────────────────────────────────────────────────────────────────────────
+3_extrusion/  압출 외장
+────────────────────────────────────────────────────────────────────────────────
+
+L3_extrusion_pdm_kamp/  (folder, CSV 3개 — 머신별 분할 동일 스키마)
+  출처: 한국닛다무아
+  공통 헤더: Unnamed:0, PLC_TIME, ADA1_TEMP, DIES1_TEMP, DIES2_TEMP,
+            MELT_TEMP, SCREW_CURRENT, TAKEUP_RPM, TAKEN_TIME, OUTSIDE_TIME,
+            MAX, MIN, OUTSIDE_CURRENT, RESULT, OS_TIME
+  - merged_df_3002P.csv  33.1 MB |  206,056 × 15
+  - merged_df_3004P.csv  84.7 MB |  529,264 × 15
+  - merged_df_3008P.csv   6.5 MB |   40,872 × 15
+  ★ 챌린지 8: 머신별 분할 통합
+
+────────────────────────────────────────────────────────────────────────────────
+4_precision_parts/  정밀 부품
+────────────────────────────────────────────────────────────────────────────────
+
+L3_vacuum_pump_kamp.csv            43,236 × 10  | utf-8-sig | 2.2 MB
+  출처: 엘오티티에스
+  헤더: Model("ADO2100022" 고정), Test_time, C1~C8 (8 채널 일제)
+
+────────────────────────────────────────────────────────────────────────────────
+5_semiconductor_interior_inspection/  반도체·인테리어 검사
+────────────────────────────────────────────────────────────────────────────────
+
+L2_auto_console_detect_kamp/  (folder)          | 20 jpg, 1024×1024 RGB
+  출처: ★동광기연-채움아이티★ (KAMP 등록정보 PDF 확정)
+  공정: 어퍼 페시아 완전검사 (자동차 인테리어 콘솔 조립)
+  목적: 품질보증 (조립 부품 객체 탐지, YOLO 라벨)
+  수집기간: 2023-06-08 ~ 2023-08-25 (KAMP 원본 1,000장 + Annotations 12,920개)
+  ★ 우리 폴더 20장 = ★샘플 부분 공개★
+  명명: `YYMMDD_HHMMSS_jpg.rf.<32hex>.jpg` (Roboflow export)
+  활용: 부품 → ALC 코드 → 서열정보 매칭 → 조립 정상 여부
+
+L2_wafer_defect_kamp/  (folder)                 | 300 png, 6 클래스 균등 50장
+  출처: 시지트로닉스
+  해상도: 대부분 1430×1380 RGBA + 일부 1184×1134 (★혼재)
+  클래스: AREA / DISTRIBUTION / FAIL / NEEDLE / PASS / SCATCH 각 50장
+  ★ 챌린지 5: 사이즈 혼재 + RGBA 모드
+  ★ 챌린지 6: ★완전 균등 분포★ (드문 케이스)
+  ★ 챌린지 7: 폴더명이 라벨 + SCATCH 만 4자리 padding (0001~)
+
+────────────────────────────────────────────────────────────────────────────────
+6_ict_electric_inspection/  ICT 전기 검사
+────────────────────────────────────────────────────────────────────────────────
+
+L4_ict_checker_kamp.csv          225,726 × 33   | ★CP949 | 43.3 MB
+  출처: (주)세영
+  헤더(한글): Step, Barcode, 검사호기, 검사일시, Part Name, 부품위치,
+              측정값, 단위, 기준값, 편차, 평균값, 검사결과, ... (18개 외)
+  도메인: PCB Assembly (SMT/IMT/수삽/솔더링/검사)
+  ★ 챌린지 1: CP949
+  ★ 챌린지 3: NaN 다수 (LOT 첫 행 Step -2/-1 메타)
+  ★ ICT 가 학습 정답지(Label)로 활용 (수직적 통합 컨셉)
+
+L4_ict_inspection_kamp.csv            551 × 11  | ★CP949 | 0.0 MB
+  출처: 세영테크놀러지
+  헤더(한글): ID, TIMEVALUE, 제품명, 기준값, 표준값, 측정값,
+              최소치, 최대치, 검사결과, High값(입력), Low값(출력)
+  특징: 모든 TIMEVALUE = 2024-01-08 11:20 (단일 LOT)
+
+────────────────────────────────────────────────────────────────────────────────
+7_vibration_simulation/  진동 시뮬 검증
+────────────────────────────────────────────────────────────────────────────────
+
+L3_vibration_fault_sim_kamp.csv    15,333 × 2049 | utf-8-sig | ★667.3 MB
+  출처: 디와이이노베이트
+  헤더: Time[s], 0.0, 0.002049..., ... (2,048개 부동소수점 컬럼)
+
+L3_vibration_fault_sim2_kamp.csv   16,796 × 2049 | utf-8-sig | 406.5 MB
+  출처: 썬겔
+  헤더: Time[s], 0, 0.00125, 0.0025, ... (2,048개 시간 인덱스)
+  ★ sim 과 sim2 는 ★샘플링 주기 다름★ (sim: ~0.002048s, sim2: 0.00125s)
+  ★ 챌린지 4: 16K × 2049 고차원 + 400MB+ 대용량
+  활용: FFT 윈도우 분석
+
+================================================================================
+[4] MCP 서버 ↔ 데이터셋 라우팅 매핑 (모달리티 카탈로그)
+================================================================================
+
+★ MCP 서버 4종이 데이터셋의 ★모달리티★ 기준으로 라우팅.
+   모듈 (제품 라인) 과 MCP (모달리티) 는 ★직교★.
+
+────────────────────────────────────────────────────────────────────────────────
+manufacturing/timeseries (설비 시계열) — 17 데이터셋
+────────────────────────────────────────────────────────────────────────────────
+  M1/2_cnc_cutting/        L1_cnc_lathe_quality, L3_cnc_roughing
+  M1/3_mct_machining/      L1_mct_tool_manage
+  M1/6_pdm/                L3_rotary_drill, L3_solenoid_roughing, L3_guideloader_drill
+  M2/3_welding/            L1_welding_auto, L1_welding_condition
+  M2/6_rotary_pdm/         L3_blower_vibration, L3_elevator_vibration
+  M3/2_injection/          L1_cnc_machine_optimize (★헤더=사출)
+  M3/3_extrusion/          L3_extrusion_pdm/* (3 머신)
+  M3/4_precision_parts/    L3_vacuum_pump
+  M3/7_vibration_simulation/ L3_vibration_fault_sim, sim2
+  M1/1_primary_forming/    L3_mold_anomaly (★header=None)
+
+────────────────────────────────────────────────────────────────────────────────
+manufacturing/inspection-image (검사 이미지) — 7 데이터셋
+────────────────────────────────────────────────────────────────────────────────
+  M1/5_surface_inspection/         L2_inspection_image (200 bmp + .txt 페어)
+  M2/2_press_inspection/           L2_press_aluminum (50 jpg, 샘플+학습용)
+  M2/4_welding_inspection/         L2_welding_bead (554 jpg + .txt), L2_welding_electrode (100 bmp + 사이드 CSV)
+  M2/5_surface_treatment_taping/   L2_vision_taping (774 jpg, 4-depth 폴더 라벨)
+  M3/5_semiconductor_interior_inspection/ L2_auto_console_detect (20 jpg Roboflow), L2_wafer_defect (300 png, 6 클래스)
+
+★ 라벨 형식 6종 자동 감지 필요:
+  - .txt 동명 페어 (inspection_image, welding_bead)
+  - 폴더명이 라벨 (vision_taping, wafer_defect)
+  - 라벨 없음 (welding_electrode 이미지)
+  - 부분 라벨 (press_aluminum 샘플/학습용 분리)
+  - Roboflow export (auto_console_detect)
+  - 사이드 CSV (welding_electrode)
+
+────────────────────────────────────────────────────────────────────────────────
+manufacturing/event-log (LOT 이벤트·양/불 판정) — 9 데이터셋
+────────────────────────────────────────────────────────────────────────────────
+  M1/1_primary_forming/    L3_mold_condition
+  M1/3_mct_machining/      L1_mct_tool_improve/* (8 xlsx), L3_mct_condition_inspect/* (9 xlsx)
+  M1/4_precision_inspection/ L3_precision_machine, L2_cnc_load_dimension
+  M2/1_press/              L1_press_forming (PASS_YN 2.85% 불균형)
+  M3/2_injection/          L1_injection_optimize (Unnamed:0), L1_injection_production (Label)
+  M3/6_ict_electric_inspection/ L4_ict_checker (CP949), L4_ict_inspection (CP949)
+
+────────────────────────────────────────────────────────────────────────────────
+manufacturing/order (주문·생산량) — 1 데이터셋
+────────────────────────────────────────────────────────────────────────────────
+  M3/1_order_planning/     고객사_모델별_주문량 (CP949 93K, 자동차 부품 360종)
+
+================================================================================
+[5] 전처리 자동화 시연 챌린지 8가지 — 데이터셋 매핑
+================================================================================
+
+본 8가지가 시연 시나리오의 ★핵심★. 전 데이터셋에 골고루 등장.
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 1. 인코딩 다양성
+────────────────────────────────────────────────────────────────────────────────
+  CP949 (한글 컬럼) 3건:
+    - M3/1_order_planning/고객사_모델별_주문량.csv
+    - M3/6_ict_electric_inspection/L4_ict_checker_kamp.csv
+    - M3/6_ict_electric_inspection/L4_ict_inspection_kamp.csv
+  utf-8-sig (나머지 모든 CSV)
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 2. 헤더 이상 (5종 패턴)
+────────────────────────────────────────────────────────────────────────────────
+  ① 컬럼 중복: M3/2_injection/L1_cnc_machine_optimize → "8TH INJECTION VELOCITY" 두 번
+  ② Unnamed:0 잔존: M3/2_injection/L1_injection_optimize, M3/3_extrusion/extrusion_pdm/* 3종
+  ③ 헤더가 데이터: M1/1_primary_forming/L3_mold_anomaly (header=None 후 처리)
+  ④ 헤더 누락: M2/1_press/L1_press_forming → VALUE20~23, 25, 27 누락 (점프)
+  ⑤ 빈 메타 헤더: M1/3_mct_machining/.../F1SCORE.xlsx (4,887 × 126)
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 3. dtype 혼재
+────────────────────────────────────────────────────────────────────────────────
+  - 마스킹 카테고리: M1/2_cnc_cutting/L1_cnc_lathe_quality → '*', '**', '***'
+  - datetime 문자열: M2/3_welding/L1_welding_auto → '2023-08-21 12:13:21.'
+  - NaN 다수: M3/6_ict_electric_inspection/L4_ict_checker LOT 첫 행
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 4. 다양한 데이터 규모
+────────────────────────────────────────────────────────────────────────────────
+  튜토리얼: 184행 (M3/2_injection/L1_injection_production)
+  소량:    1K ~ 7K행 (M3/4_precision_parts/L3_vacuum_pump, 다수 xlsx)
+  중량:    10만 ~ 100만행 (M2/6_rotary_pdm/blower, M2/3_welding/welding_condition)
+  ★대용량: 1,000만+ 행 ★
+    - M1/2_cnc_cutting/L1_cnc_lathe_quality (10.4M)
+    - M1/1_primary_forming/L3_mold_anomaly (6.9M)
+    - M2/3_welding/L1_welding_auto (2.07M)
+    - M1/6_pdm/L3_solenoid_roughing (1M xltx)
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 5. 이미지 사이즈·모드 혼재
+────────────────────────────────────────────────────────────────────────────────
+  RGB: M1/5_surface_inspection, M2/2_press_inspection (★사이즈 변동),
+       M2/4_welding_inspection/welding_electrode, M3/5_.../auto_console_detect
+  L (그레이스케일): M2/5_surface_treatment_taping (774), M2/4_welding_inspection/welding_bead (554)
+  RGBA: M3/5_.../wafer_defect (300, ★사이즈 혼재)
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 6. 클래스 불균형
+────────────────────────────────────────────────────────────────────────────────
+  ★극심: M2/1_press/L1_press_forming → PASS_YN 2.85%
+  ★완전 균등: M3/5_.../wafer_defect → 6 클래스 각 50장
+  ★결측: M2/5_surface_treatment_taping/vision_taping → NG 다수, OK 소수
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 7. 정형-비정형 연결키 부재
+────────────────────────────────────────────────────────────────────────────────
+  - 동명 .txt 매칭: inspection_image, welding_bead
+  - 폴더명이 라벨: vision_taping, wafer_defect
+  - 부분 라벨링: press_aluminum (샘플/학습용 분리)
+  - Roboflow export: auto_console_detect (라벨 외부)
+  - 사이드 CSV: welding_electrode
+
+────────────────────────────────────────────────────────────────────────────────
+챌린지 8. 멀티 시트·다중 파일 통합
+────────────────────────────────────────────────────────────────────────────────
+  - M1/3_mct_machining/L1_mct_tool_improve/ → Excel 8개 (각각 다른 시트명·구조)
+  - M1/3_mct_machining/L3_mct_condition_inspect/ → Excel 9개
+  - M3/3_extrusion/L3_extrusion_pdm/ → CSV 3개 (3002P/3004P/3008P 머신별)
+
+================================================================================
+[6] 원본 → 신 위치 매핑 (1:1)
+================================================================================
+
+★ 모든 데이터는 ★복사본★. 원본은 Project#2/Project#2/ 에 그대로 보존.
+   1_data/ 는 ★작업용 통합 본★.
+
+[원본 기준 위치 → 1_data 내 위치]
+
+0.data/L1_process/
+  L1_cnc_lathe_quality_kamp.csv                 → M1/2_cnc_cutting/
+  L1_cnc_machine_optimize_kamp.csv              → M3/2_injection/
+  L1_injection_optimize_kamp.csv                → M3/2_injection/
+  L1_injection_production_kamp.csv              → M3/2_injection/
+  L1_mct_tool_manage_kamp_..._(주)미래하이테크.csv → M1/3_mct_machining/
+  L1_mct_tool_improve_kamp/ (8 xlsx)            → M1/3_mct_machining/
+  L1_press_forming_kamp.csv                     → M2/1_press/
+  L1_welding_auto_kamp.csv                      → M2/3_welding/
+  L1_welding_condition_kamp.csv                 → M2/3_welding/
+
+0.data/L2_quality/
+  L2_auto_console_detect_kamp/                  → M3/5_semiconductor_interior_inspection/
+  L2_cnc_load_dimension_kamp.xlsx               → M1/4_precision_inspection/
+  L2_inspection_image_kamp/                     → M1/5_surface_inspection/
+  L2_press_aluminum_image_kamp/                 → M2/2_press_inspection/
+  L2_vision_taping_kamp/                        → M2/5_surface_treatment_taping/
+  L2_wafer_defect_kamp/                         → M3/5_semiconductor_interior_inspection/
+  L2_welding_bead_quality_kamp/                 → M2/4_welding_inspection/
+  L2_welding_electrode_kamp/                    → M2/4_welding_inspection/
+
+0.data/L3_maintenance/
+  L3_blower_vibration_kamp.csv                  → M2/6_rotary_pdm/
+  L3_cnc_roughing_kamp.csv                      → M1/2_cnc_cutting/
+  L3_elevator_vibration_kamp.csv                → M2/6_rotary_pdm/
+  L3_extrusion_pdm_kamp/ (3 CSV)                → M3/3_extrusion/
+  L3_guideloader_drill_kamp.csv                 → M1/6_pdm/
+  L3_mct_condition_inspect_kamp/ (9 xlsx)       → M1/3_mct_machining/
+  L3_mold_anomaly_kamp.csv                      → M1/1_primary_forming/
+  L3_mold_condition_kamp.csv                    → M1/1_primary_forming/
+  L3_precision_machine_kamp.xlsx                → M1/4_precision_inspection/
+  L3_rotary_drill_kamp.xlsx                     → M1/6_pdm/
+  L3_solenoid_roughing_kamp.xltx                → M1/6_pdm/
+  L3_vacuum_pump_kamp.csv                       → M3/4_precision_parts/
+  L3_vibration_fault_sim_kamp.csv               → M3/7_vibration_simulation/
+  L3_vibration_fault_sim2_kamp.csv              → M3/7_vibration_simulation/
+
+0.data/L4_reference/
+  L4_ict_checker_kamp.csv                       → M3/6_ict_electric_inspection/
+  L4_ict_inspection_kamp.csv                    → M3/6_ict_electric_inspection/
+
+1.ESG_배터리_관리_모듈_공정/data/
+  고객사_모델별_주문량.csv                       → M3/1_order_planning/
+
+================================================================================
+[7] 인코딩·헤더 이슈 일괄 요약 (전처리 자동화 진입점)
+================================================================================
+
+★ CP949 (★3건 — 한글 컬럼)
+  - M3/1_order_planning/고객사_모델별_주문량.csv
+  - M3/6_ict_electric_inspection/L4_ict_checker_kamp.csv
+  - M3/6_ict_electric_inspection/L4_ict_inspection_kamp.csv
+
+★ 헤더 이상 (★8건)
+  - L1_cnc_machine_optimize (컬럼 중복 8TH)
+  - L1_injection_optimize (Unnamed:0 + idx)
+  - L1_press_forming (VALUE 누락)
+  - L3_mold_anomaly (헤더가 데이터, header=None 필요)
+  - L3_extrusion_pdm/* (Unnamed:0)
+  - L1_mct_tool_improve/F1SCORE_제조데이터_최종... (빈 메타)
+  - L3_mct_condition_inspect/F1SCORE (빈 메타)
+  - L4_ict_checker (LOT 첫 행 Step -2/-1 메타)
+
+★ 대용량 (★5건 — chunking/parquet 권장)
+  - L3_vibration_fault_sim    667 MB (15,333 × 2,049)
+  - L3_vibration_fault_sim2   406 MB (16,796 × 2,049)
+  - L1_cnc_lathe_quality      386 MB (10.4M × 13)
+  - L3_mold_anomaly           325 MB (6.9M × 5)
+  - L1_welding_auto           145 MB (2.07M × 8)
+
+★ 이미지 사이즈 혼재 (★2건)
+  - L2_press_aluminum (807~837 × 835~840 RGB)
+  - L2_wafer_defect (1430×1380 + 1184×1134 RGBA)
+
+================================================================================
+[8] 다음 단계
+================================================================================
+
+★ Sprint 1 (3주 데드라인 1주차):
+  □ MCP 서버 1개 (timeseries) 프로토타입 코드
+    → 시작 데이터셋 권장:
+       M1/3_mct_machining/L1_mct_tool_manage (1.6K, 인코딩 챌린지 가벼움)
+       M1/3_mct_machining/L3_mct_condition_inspect/* (홀치수불량률 157K)
+       → 멀티 시트 통합 + 인코딩 자동 감지 시연
+
+  □ PaintGuard DevOps 패턴 이식
+    - GitHub Actions workflow
+    - PM2 배포 레시피
+    - S3 JSON snapshot 적재 패턴
+    - tRPC type-safe RPC 인터페이스
+
+★ Sprint 2 (2주차):
+  □ MCP 서버 4개 (image, event-log, order 추가)
+  □ 모듈 ②③ 데이터 통합
+  □ L3 권한 모델 + Lineage DB 스키마
+  □ Q5 LoT 키 프로파일 매핑 실 적용
+
+★ Sprint 3 (3주차):
+  □ 데모 영상 3종 제작 (3분/7분/15분)
+  □ 발표 자료 + 1.ESG 영민님 docx 내러티브 통합
+  □ 데모 환경 분리 + 백업 영상
+
+★ 참고 인계서 (정합 기준):
+  c:\IT\Project\Project#2\Project#2\2-2_handover_dataset_selection.txt  (데이터셋 v2)
+  c:\IT\Project\Project#2\Project#2\3-2_handover_system_architecture.txt (시스템 구조 v2)
+  c:\IT\Project\Project#2\Project#2\1_new_project_brief.txt              (종합 브리프)
+
+================================================================================
+[작성일: 2026-05-21]   [파일: 1_data_summary.txt]   [위치: Final__MCP__Web__MES/]
+================================================================================

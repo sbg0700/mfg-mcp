@@ -1,0 +1,59 @@
+# docker-compose.yml — 수직 슬라이스 (ollama + postgres + mcp-timeseries + backend)
+# 핵심: 코드는 호스트에 두고 volumes로 마운트한다 (CLAUDE.md §1-5).
+#       개발 중 코드 수정이 즉시 반영됨 (--reload).
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: mfg-ollama
+    ports: ["11434:11434"]
+    volumes:
+      - ollama_models:/root/.ollama       # 모델 영속 (재시작해도 유지)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mfg-postgres
+    environment:
+      POSTGRES_USER: mfg
+      POSTGRES_PASSWORD: mfg_local_dev      # 내부망 전용 (외부 노출 안 함)
+      POSTGRES_DB: manufacturing
+    ports: ["5432:5432"]                     # 로컬 디버깅용. 운영선 내부망만 권장
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro   # 최초 1회 스키마 생성
+    restart: unless-stopped
+
+  mcp-timeseries:
+    build: ./mcp-servers/timeseries
+    container_name: mfg-mcp-timeseries
+    environment:
+      TIMESERIES_DATA_ROOT: /data/timeseries
+    volumes:
+      - ./mcp-servers/timeseries:/app                          # 코드 마운트
+      - ./data/synthetic/timeseries:/data/timeseries:ro        # 더미 데이터 마운트
+    ports: ["8101:8101"]
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: mfg-backend
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}                 # .env로 교체 (e4b↔26b)
+      MCP_TIMESERIES_URL: http://mcp-timeseries:8101
+    volumes:
+      - .:/repo                                                # 레포 전체 마운트 (agents/harness import)
+    working_dir: /repo/backend
+    ports: ["8000:8000"]
+    depends_on: [ollama, postgres, mcp-timeseries]
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  pg_data:

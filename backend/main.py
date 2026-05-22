@@ -1,0 +1,75 @@
+"""
+backend/main.py
+===============
+백엔드 오케스트레이션 (FastAPI). 수직 슬라이스의 진입점.
+
+흐름: 브라우저 → /api/inspect → Inspector 에이전트 → (MCP 도구 + Gemma) → DataProfile
+또한 frontend/index.html(더미 대시보드)을 서빙한다.
+
+⚠️ 지금은 FastAPI 하나로 충분. tRPC/Express는 Sprint 2 프론트 본격화 때. (CLAUDE.md §2)
+"""
+
+from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+# 레포 루트를 PYTHONPATH에 추가 (agents/, harness/ import용)
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "agents" / "inspector"))
+sys.path.insert(0, str(ROOT / "backend"))
+
+app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+FRONTEND = ROOT / "frontend" / "index.html"
+
+
+@app.get("/api/health")
+async def health() -> dict:
+    """LLM + MCP 가용성 한눈에."""
+    from llm import health as llm_health
+    out = {"backend": "ok"}
+    out["llm"] = await llm_health()
+    try:
+        import httpx
+        mcp_url = os.environ.get("MCP_TIMESERIES_URL", "http://mcp-timeseries:8101")
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(f"{mcp_url}/health")
+            out["mcp_timeseries"] = r.json()
+    except Exception as e:
+        out["mcp_timeseries"] = {"status": "down", "error": str(e)}
+    return out
+
+
+@app.get("/api/datasets")
+async def datasets() -> dict:
+    """MCP 서버에 등록된 더미 데이터셋 목록."""
+    import httpx
+    mcp_url = os.environ.get("MCP_TIMESERIES_URL", "http://mcp-timeseries:8101")
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(f"{mcp_url}/datasets")
+        return r.json()
+
+
+@app.get("/api/inspect")
+async def inspect(dataset_id: str) -> dict:
+    """수직 슬라이스의 핵심 엔드포인트: Inspector 에이전트 실행."""
+    from inspector import inspect as run_inspect
+    try:
+        return await run_inspect(dataset_id)
+    except Exception as e:
+        raise HTTPException(500, f"inspect failed: {e}")
+
+
+@app.get("/")
+async def root() -> FileResponse:
+    """더미 대시보드 서빙."""
+    if FRONTEND.exists():
+        return FileResponse(str(FRONTEND))
+    raise HTTPException(404, "frontend/index.html not found")
