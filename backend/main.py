@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "agents" / "inspector"))
+sys.path.insert(0, str(ROOT / "agents" / "planner"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
@@ -65,6 +66,20 @@ async def inspect(dataset_id: str) -> dict:
         return await run_inspect(dataset_id)
     except Exception as e:
         raise HTTPException(500, f"inspect failed: {e}")
+
+
+@app.get("/api/plan")
+async def plan_endpoint(dataset_id: str) -> dict:
+    """Inspector → Planner 체인 실행. DataProfile을 만들고 그걸로 전처리 계획 생성.
+    이게 Agentic Flow의 1→2단 연결 (A2A: Inspector 출력이 Planner 입력)."""
+    from inspector import inspect as run_inspect
+    from planner import plan as run_plan
+    try:
+        profile = await run_inspect(dataset_id)
+        plan_result = await run_plan(profile)
+        return {"profile": profile, "plan": plan_result}
+    except Exception as e:
+        raise HTTPException(500, f"plan failed: {e}")
 
 
 @app.get("/")

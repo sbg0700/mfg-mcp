@@ -89,6 +89,17 @@
   .empty { color: var(--muted); text-align: center; padding: 40px; font-style: italic; }
   .pulse { animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+  /* 권한 배지 + 계획 단계 */
+  .step { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  .step:last-child { border-bottom: none; }
+  .step .ord { color: var(--muted); font-size: 11px; min-width: 18px; }
+  .step .op { font-weight: 700; min-width: 150px; }
+  .step .rat { color: var(--muted); font-size: 12px; flex: 1; }
+  .perm { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 2px; letter-spacing: 0.5px; min-width: 34px; text-align: center; }
+  .perm.L1 { background: #173a2a; color: var(--ok); }
+  .perm.L2 { background: #3a2e17; color: var(--warn); }
+  .perm.L3 { background: #3a1f1c; color: var(--accent); }
+  .approval-banner { padding: 10px 14px; background: #3a2e17; border-left: 3px solid var(--warn); font-size: 12px; margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -105,6 +116,7 @@
   <div class="controls">
     <select id="dataset"><option>로딩 중...</option></select>
     <button id="run">▶ INSPECT</button>
+    <button id="runplan" style="background:var(--panel-2);color:var(--text);border:1px solid var(--accent)">▶ INSPECT + PLAN</button>
     <span id="status" style="color:var(--muted);font-size:11px"></span>
   </div>
 
@@ -145,22 +157,55 @@ async function loadDatasets() {
   }
 }
 
-document.getElementById('run').addEventListener('click', async () => {
+document.getElementById('run').addEventListener('click', () => runInspect(false));
+document.getElementById('runplan').addEventListener('click', () => runInspect(true));
+
+async function runInspect(withPlan) {
   const ds = document.getElementById('dataset').value;
-  const btn = document.getElementById('run');
+  const btns = [document.getElementById('run'), document.getElementById('runplan')];
   const status = document.getElementById('status');
-  btn.disabled = true;
-  status.textContent = 'Inspector 실행 중... (LLM 해석 포함, 26B면 수십 초 소요 가능)';
+  btns.forEach(b => b.disabled = true);
+  status.textContent = withPlan
+    ? 'Inspector → Planner 체인 실행 중... (LLM 2회 호출, 26B면 1분+ 가능)'
+    : 'Inspector 실행 중...';
   status.className = 'pulse';
   try {
-    const p = await (await fetch(`${API}/api/inspect?dataset_id=${encodeURIComponent(ds)}`)).json();
-    render(p);
+    if (withPlan) {
+      const r = await (await fetch(`${API}/api/plan?dataset_id=${encodeURIComponent(ds)}`)).json();
+      render(r.profile);
+      renderPlan(r.plan);
+    } else {
+      const p = await (await fetch(`${API}/api/inspect?dataset_id=${encodeURIComponent(ds)}`)).json();
+      render(p);
+    }
   } catch (e) {
     document.getElementById('result').innerHTML = `<div class="panel"><div class="empty">실패: ${e}</div></div>`;
   } finally {
-    btn.disabled = false; status.textContent = ''; status.className = '';
+    btns.forEach(b => b.disabled = false); status.textContent = ''; status.className = '';
   }
-});
+}
+
+function renderPlan(plan) {
+  const steps = (plan.steps || []);
+  const banner = plan.requires_approval
+    ? `<div class="approval-banner">⚠ 이 계획에는 승인이 필요한 단계(L2/L3)가 포함되어 있습니다. Executor 실행 전 사용자 승인 필요.</div>`
+    : `<div class="approval-banner" style="background:#173a2a;border-left-color:var(--ok);color:var(--ok)">✓ 모두 L1 자동 단계. 승인 없이 실행 가능.</div>`;
+  const stepsHtml = steps.map(s => `
+    <div class="step">
+      <span class="ord">${s.order}</span>
+      <span class="perm ${s.permission_level}">${s.permission_level}</span>
+      <span class="op">${s.operation}${s.target_column ? `<span style="color:var(--muted);font-weight:400"> · ${s.target_column}</span>` : ''}</span>
+      <span class="rat">${s.rationale || ''}</span>
+    </div>`).join('');
+  const panel = `
+    <div class="panel">
+      <h2>Preprocessing Plan · Planner (${steps.length} steps)</h2>
+      <p style="color:var(--muted);font-size:12px;margin-bottom:12px">${plan.summary || ''}</p>
+      ${banner}
+      ${stepsHtml || '<div class="empty">계획 단계 없음</div>'}
+    </div>`;
+  document.getElementById('result').insertAdjacentHTML('beforeend', panel);
+}
 
 function render(p) {
   const flags = (p.deterministic_flags || []);

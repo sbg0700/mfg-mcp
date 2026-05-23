@@ -14,12 +14,16 @@ class Permission(str, Enum):
 
 
 # 작업 유형 → 권한 등급 매핑 (확장 가능)
+# ⚠️ agents/planner/schemas.py 의 OperationType 과 반드시 동기화할 것.
 OPERATION_PERMISSION = {
     "detect_encoding": Permission.L1,
+    "reparse_header": Permission.L1,    # 헤더 재파싱 (구조 복원, 위험 낮음)
     "compute_stats": Permission.L1,
+    "clean_masking": Permission.L2,     # 마스킹 문자 → NaN (값 변경이라 승인)
     "fill_missing": Permission.L2,
     "remove_outlier": Permission.L2,
     "create_feature": Permission.L2,
+    "balance_classes": Permission.L2,   # 클래스 불균형 보정 (샘플링 변경)
     "drop_column": Permission.L3,
     "relabel": Permission.L3,
     "merge_external": Permission.L3,
