@@ -155,7 +155,7 @@ function setBadge(id, label, up) {
   el.className = 'badge ' + (up ? 'up' : 'down');
 }
 
-async def loadModels() {
+async function loadModels() {
   try {
     const m = await (await fetch(`${API}/api/models`)).json();
     const sel = document.getElementById('model');
