@@ -19,41 +19,57 @@ import os
 import json
 import httpx
 
-# MCP timeseries 서버 주소 (도커 내부망)
-MCP_TIMESERIES = os.environ.get("MCP_TIMESERIES_URL", "http://mcp-timeseries:8101")
+# 모달리티별 MCP 서버 주소 (도커 내부망). 새 모달리티 추가 = 여기 한 줄.
+MCP_SERVERS = {
+    "timeseries": os.environ.get("MCP_TIMESERIES_URL", "http://mcp-timeseries:8101"),
+    "inspection-image": os.environ.get("MCP_IMAGE_URL", "http://mcp-inspection-image:8102"),
+    # event-log, order 는 Sprint에서 추가
+}
+DEFAULT_MODALITY = "timeseries"
 
 
-async def _mcp_get(path: str, **params) -> dict:
+async def _mcp_get(modality: str, path: str, **params) -> dict:
+    base = MCP_SERVERS.get(modality, MCP_SERVERS[DEFAULT_MODALITY])
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.get(f"{MCP_TIMESERIES}{path}", params=params)
+        r = await client.get(f"{base}{path}", params=params)
         r.raise_for_status()
         return r.json()
 
 
-async def inspect(dataset_id: str, model: str | None = None) -> dict:
+async def inspect(dataset_id: str, model: str | None = None,
+                  modality: str = "timeseries") -> dict:
     """dataset_id를 받아 DataProfile을 생성한다.
 
-    1) MCP 도구(결정론적)로 프로파일 수집
+    1) MCP 도구(결정론적)로 프로파일 수집 — modality에 맞는 MCP 서버로 라우팅
     2) LLM(Gemma)에게 해석 요청
+
+    ★modality만 바꾸면 같은 코드가 timeseries/image 모두 처리 (재사용 증명).
     """
-    # ---- 1. 결정론적 프로파일 수집 (MCP 도구 호출) ----
-    columns = await _mcp_get("/list_columns", dataset_id=dataset_id)
-    schema = await _mcp_get("/get_schema", dataset_id=dataset_id)
-    sample = await _mcp_get("/sample", dataset_id=dataset_id, n=5)
-    encoding = await _mcp_get("/detect_encoding", dataset_id=dataset_id)
+    # ---- 1. 결정론적 프로파일 수집 (MCP 도구 호출, 모달리티 라우팅) ----
+    columns = await _mcp_get(modality, "/list_columns", dataset_id=dataset_id)
+    schema = await _mcp_get(modality, "/get_schema", dataset_id=dataset_id)
+    sample = await _mcp_get(modality, "/sample", dataset_id=dataset_id, n=5)
+    encoding = await _mcp_get(modality, "/detect_encoding", dataset_id=dataset_id)
 
     # 결정론적으로 감지된 '챌린지 신호' (LLM 없이도 잡히는 것)
     flags = []
-    if encoding.get("encoding") in ("cp949", "euc-kr"):
+    enc = encoding.get("encoding")
+    if enc in ("cp949", "euc-kr"):
         flags.append("non-utf8 encoding (한글 인코딩)")
     if columns.get("read_notes", {}).get("headerless"):
         flags.append("headerless (헤더가 데이터 행)")
     for c in columns.get("columns", []):
         if c.get("mixed_dtype_suspected"):
-            flags.append(f"mixed dtype in '{c['name']}' (마스킹/혼재 의심)")
+            # 모달리티에 따라 메시지를 자연스럽게
+            if modality == "inspection-image":
+                dist = c.get("distribution", {})
+                flags.append(f"'{c['name']}' 혼재 (이미지 {c['name']} 불일치: {dist})")
+            else:
+                flags.append(f"mixed dtype in '{c['name']}' (마스킹/혼재 의심)")
 
     profile = {
         "dataset_id": dataset_id,
+        "modality": modality,
         "encoding": encoding.get("encoding"),
         "n_rows": columns.get("n_rows"),
         "n_cols": columns.get("n_cols"),

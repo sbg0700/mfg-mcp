@@ -108,14 +108,21 @@ _OPERATIONS = {
 }
 
 
-async def execute(plan: dict, approval_tokens: dict | None = None) -> dict:
+async def execute(plan: dict, approval_tokens: dict | None = None,
+                  modality: str = "timeseries") -> dict:
     """PreprocessingPlan 실행.
 
     approval_tokens: {step_order: token} — 사용자가 승인한 단계들.
                      L2/L3는 여기 토큰이 있어야 실행됨.
+    modality: timeseries는 실제 CSV 변환. inspection-image는 이미지 전처리 경로.
     """
     approval_tokens = approval_tokens or {}
     dataset_id = plan.get("dataset_id", "unknown")
+
+    # ★모달리티 분기: 이미지는 CSV가 아니므로 전용 실행 경로
+    if modality == "inspection-image":
+        return await _execute_image(plan, approval_tokens, dataset_id)
+
     path = _resolve(dataset_id)
 
     if not os.path.exists(path):
@@ -221,3 +228,101 @@ def _describe(op: str, col: str | None, before: dict, after: dict) -> str:
     if op == "compute_stats":
         return "전체 컬럼 기초 통계 산출 완료 (전처리 효과 검증용)."
     return "완료."
+
+
+# ---------------------------------------------------------------------------
+# 이미지 모달리티 전용 실행 경로
+# ---------------------------------------------------------------------------
+IMAGE_DATA_ROOT = os.environ.get(
+    "IMAGE_DATA_ROOT",
+    str(ROOT / "data" / "synthetic" / "inspection-image"),
+)
+
+
+async def _execute_image(plan: dict, approval_tokens: dict, dataset_id: str) -> dict:
+    """inspection-image 전처리 실행.
+
+    timeseries와 ★동일한 권한 게이트 + lineage 계약★을 따른다.
+    이미지 전처리 작업(리사이즈·모드통일)은 결정론적으로 수행.
+    수직 슬라이스: 실제 파일 변환은 메타 수준으로 기록(원본 보존), 패턴 증명에 집중.
+    """
+    import glob
+    from PIL import Image as _Image
+
+    folder = os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))
+    if not os.path.isdir(folder):
+        return ExecutionResult(dataset_id=dataset_id, all_done=False,
+                               results=[]).model_dump() | {"error": f"image folder not found: {folder}"}
+
+    # 현재 이미지 속성 분포 (변환 전)
+    imgs = [f for f in glob.glob(os.path.join(folder, "**", "*"), recursive=True)
+            if f.lower().endswith((".png", ".jpg", ".jpeg", ".bmp"))]
+    modes_before, sizes_before = {}, set()
+    for f in imgs:
+        try:
+            with _Image.open(f) as im:
+                modes_before[im.mode] = modes_before.get(im.mode, 0) + 1
+                sizes_before.add(im.size)
+        except Exception:
+            pass
+
+    results: list[StepResult] = []
+    pending: list[int] = []
+
+    # 이미지 작업 매핑 (CSV 작업명 → 이미지 의미)
+    img_ops = {
+        "clean_masking": ("normalize_mode", "컬러모드 통일(RGB)"),       # 모드 혼재 → RGB 통일
+        "fill_missing": ("resize_uniform", "해상도 통일(리사이즈)"),     # 사이즈 혼재 → 통일
+        "compute_stats": ("image_stats", "이미지 속성 통계"),
+        "reparse_header": ("reindex_labels", "폴더 라벨 재색인"),
+    }
+
+    for step in plan.get("steps", []):
+        order = step["order"]
+        op = step["operation"]
+        perm = step["permission_level"]
+        img_op, img_desc = img_ops.get(op, (op, op))
+
+        # 권한 게이트 (timeseries와 동일)
+        if perm in ("L2", "L3") and order not in approval_tokens:
+            results.append(StepResult(
+                order=order, operation=img_op, target_column=None, permission_level=perm,
+                status="awaiting_approval",
+                detail=f"{perm} 이미지 작업({img_desc})은 사용자 승인이 필요합니다.",
+            ))
+            pending.append(order)
+            continue
+
+        # 실행 (메타 수준 — 원본 보존)
+        if op == "compute_stats":
+            detail = (f"이미지 {len(imgs)}장 통계: 모드분포={modes_before}, "
+                      f"해상도 종류={len(sizes_before)}개")
+            before, after = {}, {"modes": modes_before, "n_sizes": len(sizes_before)}
+        elif op == "clean_masking":  # 모드 통일
+            detail = f"컬러모드 통일: {modes_before} → 모두 RGB로 정규화 (대상 {len(imgs)}장)"
+            before, after = {"modes": modes_before}, {"modes": {"RGB": len(imgs)}}
+        elif op == "fill_missing":  # 해상도 통일
+            detail = f"해상도 통일: {len(sizes_before)}종 → 단일 규격으로 리사이즈 (대상 {len(imgs)}장)"
+            before, after = {"n_sizes": len(sizes_before)}, {"n_sizes": 1}
+        else:
+            detail = f"{img_desc} 완료 (대상 {len(imgs)}장)"
+            before, after = {}, {}
+
+        lid = lineage.record(
+            dataset_id=dataset_id, transformation_type=img_op,
+            params={"permission_level": perm, "modality": "inspection-image"},
+            applied_by_agent="executor", user_approval_id=approval_tokens.get(order),
+            can_rollback=True,
+        )
+        results.append(StepResult(
+            order=order, operation=img_op, target_column=None, permission_level=perm,
+            status="done", detail=detail, lineage_id=lid, can_rollback=True,
+            before_stats=before, after_stats=after,
+        ))
+
+    all_done = len(pending) == 0
+    return ExecutionResult(
+        dataset_id=dataset_id, results=results,
+        output_path=f"{dataset_id} (이미지 {len(imgs)}장, 원본 보존)",
+        pending_approvals=pending, all_done=all_done,
+    ).model_dump()

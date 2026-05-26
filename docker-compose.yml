@@ -40,6 +40,17 @@ services:
     ports: ["8101:8101"]
     restart: unless-stopped
 
+  mcp-inspection-image:
+    build: ./mcp-servers/inspection-image
+    container_name: mfg-mcp-inspection-image
+    environment:
+      IMAGE_DATA_ROOT: /data/inspection-image
+    volumes:
+      - ./mcp-servers/inspection-image:/app                            # 코드 마운트
+      - ./data/synthetic/inspection-image:/data/inspection-image:ro    # 이미지 더미 마운트
+    ports: ["8102:8102"]
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: mfg-backend
@@ -47,11 +58,13 @@ services:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}                 # .env로 교체 (e4b↔26b)
       MCP_TIMESERIES_URL: http://mcp-timeseries:8101
+      MCP_IMAGE_URL: http://mcp-inspection-image:8102
+      IMAGE_DATA_ROOT: /repo/data/synthetic/inspection-image
     volumes:
       - .:/repo                                                # 레포 전체 마운트 (agents/harness import)
     working_dir: /repo/backend
     ports: ["8000:8000"]
-    depends_on: [ollama, postgres, mcp-timeseries]
+    depends_on: [ollama, postgres, mcp-timeseries, mcp-inspection-image]
     restart: unless-stopped
 
 volumes:

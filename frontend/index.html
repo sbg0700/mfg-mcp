@@ -125,6 +125,7 @@
 
 <main>
   <div class="controls">
+    <select id="modality" title="모달리티 선택" style="border-color:var(--accent)"><option>모달리티...</option></select>
     <select id="dataset"><option>로딩 중...</option></select>
     <select id="model" title="LLM 모델 선택"><option>모델 로딩...</option></select>
     <button id="run">▶ INSPECT</button>
@@ -155,6 +156,29 @@ function setBadge(id, label, up) {
   el.className = 'badge ' + (up ? 'up' : 'down');
 }
 
+async function loadModalities() {
+  try {
+    const m = await (await fetch(`${API}/api/modalities`)).json();
+    const sel = document.getElementById('modality');
+    sel.innerHTML = '';
+    (m.modalities || []).forEach(item => {
+      const o = document.createElement('option');
+      o.value = item.modality;
+      const dot = item.status === 'ok' ? ' ●' : ' ○';
+      o.textContent = item.modality + dot;
+      sel.appendChild(o);
+    });
+    // 모달리티 바뀌면 데이터셋 목록 갱신
+    sel.addEventListener('change', loadDatasets);
+  } catch (e) {
+    document.getElementById('modality').innerHTML = '<option value="timeseries">timeseries</option>';
+  }
+}
+function selectedModality() {
+  const v = document.getElementById('modality').value;
+  return (v && v.includes('image')) ? 'inspection-image' : 'timeseries';
+}
+
 async function loadModels() {
   try {
     const m = await (await fetch(`${API}/api/models`)).json();
@@ -181,7 +205,7 @@ function selectedModel() {
 
 async function loadDatasets() {
   try {
-    const d = await (await fetch(`${API}/api/datasets`)).json();
+    const d = await (await fetch(`${API}/api/datasets?modality=${encodeURIComponent(selectedModality())}`)).json();
     const sel = document.getElementById('dataset');
     sel.innerHTML = '';
     (d.datasets || []).forEach(name => {
@@ -213,7 +237,7 @@ async function runExecute(approvedSteps) {
   try {
     const r = await (await fetch(`${API}/api/execute`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({dataset_id: ds, approved_steps: approvedSteps, model: selectedModel()})
+      body: JSON.stringify({dataset_id: ds, approved_steps: approvedSteps, model: selectedModel(), modality: selectedModality()})
     })).json();
     render(r.profile);
     renderPlan(r.plan);
@@ -287,12 +311,12 @@ async function runInspect(withPlan) {
   try {
     if (withPlan) {
       const mq = selectedModel() ? `&model=${encodeURIComponent(selectedModel())}` : '';
-      const r = await (await fetch(`${API}/api/plan?dataset_id=${encodeURIComponent(ds)}${mq}`)).json();
+      const r = await (await fetch(`${API}/api/plan?dataset_id=${encodeURIComponent(ds)}${mq}&modality=${encodeURIComponent(selectedModality())}`)).json();
       render(r.profile);
       renderPlan(r.plan);
     } else {
       const mq = selectedModel() ? `&model=${encodeURIComponent(selectedModel())}` : '';
-      const p = await (await fetch(`${API}/api/inspect?dataset_id=${encodeURIComponent(ds)}${mq}`)).json();
+      const p = await (await fetch(`${API}/api/inspect?dataset_id=${encodeURIComponent(ds)}${mq}&modality=${encodeURIComponent(selectedModality())}`)).json();
       render(p);
     }
   } catch (e) {
@@ -363,7 +387,7 @@ function render(p) {
     </div>`;
 }
 
-loadHealth(); loadDatasets(); loadModels();
+loadHealth(); loadModalities(); loadDatasets(); loadModels();
 setInterval(loadHealth, 8000);
 </script>
 </body>

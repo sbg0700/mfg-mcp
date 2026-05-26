@@ -5,4 +5,4 @@ __pycache__/
 *.parquet
 # 더미 데이터는 생성물이므로 추적 제외 (generate.py로 재생성)
 data/synthetic/timeseries/*.csv
-.DS_Store
+data/synthetic/inspection-image/

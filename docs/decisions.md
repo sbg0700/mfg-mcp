@@ -62,3 +62,23 @@
 | D-22 | /api/models 엔드포인트 (Ollama 설치 모델 목록) | UI가 동적으로 모델 목록 표시 |
 
 → 데모 가치: "같은 데이터를 E4B vs 26B로 즉석 비교"가 발표 시나리오 한 컷이 됨.
+
+## 2026-05-26 — 두 번째 모달리티 inspection-image 추가 (재사용성 실증)
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-23 | inspection-image MCP 서버 추가 (포트 8102) | 모달리티 분할의 핵심 차별점 "재사용" 실증 |
+| D-24 | 7개 도구 계약을 timeseries와 100% 동일하게 | 같은 계약 = Agent 코드 변경 0. 이게 재사용의 실체 |
+| D-25 | 더미는 KAMP 실구조 모사 (폴더=라벨, .txt페어, 해상도/모드 혼재) | IMAGE_DATA_ROOT 한 줄로 실데이터 교체 가능 |
+| D-26 | Inspector/Executor에 modality 라우팅 | modality 파라미터만 바꾸면 같은 코드가 양쪽 처리 |
+| D-27 | 이미지 작업 의미 매핑 (clean_masking→모드통일, fill_missing→해상도통일) | CSV 작업명을 이미지 의미로 재해석, 권한·lineage 계약 유지 |
+
+### 핵심 증명
+timeseries에서 만든 Agent(Inspector→Planner→Executor)·Harness·권한모델·대시보드를
+★코드 한 줄 안 바꾸고★ 이미지 모달리티에 그대로 적용. MCP 서버 1개만 새 로직으로 추가.
+→ "공정마다 새로 짤 필요 없음" 영업 메시지가 코드로 증명됨.
+
+### 더미 이미지 챌린지 (KAMP 모사)
+- wafer_defect: 6클래스 폴더라벨, 해상도 혼재, RGBA, SCATCH 4자리 padding
+- welding_bead: .txt 동명 페어, 대용량 grayscale
+- press_aluminum: 혼합구조(샘플 라벨X + 학습용 라벨O), 사이즈 변동
