@@ -30,7 +30,7 @@ async def _mcp_get(path: str, **params) -> dict:
         return r.json()
 
 
-async def inspect(dataset_id: str) -> dict:
+async def inspect(dataset_id: str, model: str | None = None) -> dict:
     """dataset_id를 받아 DataProfile을 생성한다.
 
     1) MCP 도구(결정론적)로 프로파일 수집
@@ -85,7 +85,7 @@ async def inspect(dataset_id: str) -> dict:
         f"deterministic_flags: {flags}\n"
         f"sample(first rows): {json.dumps(profile['sample_rows'], ensure_ascii=False)[:800]}\n"
     )
-    raw = await generate(prompt, system=system, fmt_json=True)
+    raw = await generate(prompt, system=system, fmt_json=True, model=model)
     try:
         interpretation = json.loads(raw)
     except (json.JSONDecodeError, TypeError):

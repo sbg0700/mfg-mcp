@@ -22,7 +22,7 @@ for p in (str(ROOT), str(ROOT / "agents" / "planner"), str(ROOT / "backend")):
         sys.path.insert(0, p)
 
 from harness.guardrails import OPERATION_PERMISSION, Permission  # noqa: E402
-from schemas import PlanStep, PreprocessingPlan                  # noqa: E402
+from planner_schemas import PlanStep, PreprocessingPlan  # noqa: E402
 
 
 def _permission_for(operation: str) -> str:
@@ -65,7 +65,7 @@ def _candidate_operations(profile: dict) -> list[dict]:
     return candidates
 
 
-async def plan(data_profile: dict, constraints: dict | None = None) -> dict:
+async def plan(data_profile: dict, constraints: dict | None = None, model: str | None = None) -> dict:
     """DataProfile → PreprocessingPlan."""
     constraints = constraints or {}
     dataset_id = data_profile.get("dataset_id", "unknown")
@@ -88,7 +88,7 @@ async def plan(data_profile: dict, constraints: dict | None = None) -> dict:
         f"flags: {data_profile.get('deterministic_flags', [])}\n"
         f"candidate_operations: {json.dumps(candidates, ensure_ascii=False)}\n"
     )
-    raw = await generate(prompt, system=system, fmt_json=True)
+    raw = await generate(prompt, system=system, fmt_json=True, model=model)
     llm_order: list[str] = []      # LLM이 제안한 operation 실행 순서
     llm_rationale: dict = {}        # operation -> 다듬어진 이유
     summary = ""

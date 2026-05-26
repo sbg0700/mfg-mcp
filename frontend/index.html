@@ -100,6 +100,17 @@
   .perm.L2 { background: #3a2e17; color: var(--warn); }
   .perm.L3 { background: #3a1f1c; color: var(--accent); }
   .approval-banner { padding: 10px 14px; background: #3a2e17; border-left: 3px solid var(--warn); font-size: 12px; margin-bottom: 12px; }
+  /* 실행 결과 + 승인 */
+  .exec-step { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  .exec-step:last-child { border-bottom: none; }
+  .st { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 2px; min-width: 60px; text-align: center; }
+  .st.done { background: #173a2a; color: var(--ok); }
+  .st.awaiting_approval { background: #3a2e17; color: var(--warn); }
+  .st.skipped { background: var(--panel-2); color: var(--muted); }
+  .st.failed { background: #3a1f1c; color: var(--accent); }
+  .approve-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: #2a2017; font-size: 12px; }
+  .approve-row input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .lineage-tag { font-size: 10px; color: var(--muted); font-family: var(--mono); }
 </style>
 </head>
 <body>
@@ -115,8 +126,10 @@
 <main>
   <div class="controls">
     <select id="dataset"><option>로딩 중...</option></select>
+    <select id="model" title="LLM 모델 선택"><option>모델 로딩...</option></select>
     <button id="run">▶ INSPECT</button>
     <button id="runplan" style="background:var(--panel-2);color:var(--text);border:1px solid var(--accent)">▶ INSPECT + PLAN</button>
+    <button id="runexec" style="background:var(--panel-2);color:var(--text);border:1px solid var(--ok)">▶ EXECUTE</button>
     <span id="status" style="color:var(--muted);font-size:11px"></span>
   </div>
 
@@ -142,6 +155,30 @@ function setBadge(id, label, up) {
   el.className = 'badge ' + (up ? 'up' : 'down');
 }
 
+async def loadModels() {
+  try {
+    const m = await (await fetch(`${API}/api/models`)).json();
+    const sel = document.getElementById('model');
+    sel.innerHTML = '';
+    (m.installed || []).forEach(name => {
+      const o = document.createElement('option');
+      o.value = name;
+      // 모델별 속도 힌트 라벨
+      const hint = name.includes('e4b') ? ' (빠름)' : name.includes('26b') ? ' (정밀·느림)' : '';
+      o.textContent = name + hint;
+      if (name === m.default) o.selected = true;
+      sel.appendChild(o);
+    });
+    if (!m.installed || !m.installed.length) sel.innerHTML = '<option value="">모델 없음</option>';
+  } catch (e) {
+    document.getElementById('model').innerHTML = '<option value="">로딩 실패</option>';
+  }
+}
+function selectedModel() {
+  const v = document.getElementById('model').value;
+  return v && !v.includes('없음') && !v.includes('실패') ? v : null;
+}
+
 async function loadDatasets() {
   try {
     const d = await (await fetch(`${API}/api/datasets`)).json();
@@ -159,6 +196,84 @@ async function loadDatasets() {
 
 document.getElementById('run').addEventListener('click', () => runInspect(false));
 document.getElementById('runplan').addEventListener('click', () => runInspect(true));
+document.getElementById('runexec').addEventListener('click', () => runExecute([]));
+
+// 승인된 step order를 모아 재실행
+let lastDataset = null;
+async function runExecute(approvedSteps) {
+  const ds = approvedSteps.length ? lastDataset : document.getElementById('dataset').value;
+  lastDataset = ds;
+  const btns = document.querySelectorAll('.controls button');
+  const status = document.getElementById('status');
+  btns.forEach(b => b.disabled = true);
+  status.textContent = approvedSteps.length
+    ? `승인된 ${approvedSteps.length}개 단계 실행 중...`
+    : 'Inspector → Planner → Executor 전체 체인 실행 중...';
+  status.className = 'pulse';
+  try {
+    const r = await (await fetch(`${API}/api/execute`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({dataset_id: ds, approved_steps: approvedSteps, model: selectedModel()})
+    })).json();
+    render(r.profile);
+    renderPlan(r.plan);
+    renderExecution(r.execution);
+  } catch (e) {
+    document.getElementById('result').innerHTML = `<div class="panel"><div class="empty">실패: ${e}</div></div>`;
+  } finally {
+    btns.forEach(b => b.disabled = false); status.textContent = ''; status.className = '';
+  }
+}
+
+function renderExecution(ex) {
+  const results = ex.results || [];
+  const pending = ex.pending_approvals || [];
+  const stepsHtml = results.map(s => `
+    <div class="exec-step">
+      <span class="ord">${s.order}</span>
+      <span class="perm ${s.permission_level}">${s.permission_level}</span>
+      <span class="st ${s.status}">${s.status === 'awaiting_approval' ? '승인대기' : s.status === 'done' ? '완료' : s.status === 'skipped' ? '건너뜀' : '실패'}</span>
+      <span class="op" style="min-width:120px">${s.operation}</span>
+      <span class="rat">${s.detail || ''} ${s.lineage_id ? `<span class="lineage-tag">· lineage:${s.lineage_id.slice(0,8)}</span>` : ''}</span>
+    </div>`).join('');
+
+  // 승인 대기 단계가 있으면 1-click 승인 UI
+  let approveHtml = '';
+  if (pending.length) {
+    const checks = pending.map(o => {
+      const step = results.find(r => r.order === o);
+      return `<div class="approve-row">
+        <input type="checkbox" id="apv-${o}" value="${o}" checked>
+        <label for="apv-${o}">단계 ${o} (${step.operation}, ${step.permission_level}) 승인</label>
+      </div>`;
+    }).join('');
+    approveHtml = `
+      <div style="margin-top:14px">
+        <div style="color:var(--warn);font-size:11px;margin-bottom:8px">⚠ 아래 ${pending.length}개 단계는 승인이 필요합니다. 검토 후 승인하고 실행하세요.</div>
+        ${checks}
+        <button onclick="approveAndRun()" style="margin-top:10px;background:var(--accent);color:#0b0e11">✓ 승인하고 실행</button>
+      </div>`;
+  }
+
+  const statusLine = ex.all_done
+    ? `<span style="color:var(--ok)">✓ 모든 단계 완료</span> · 결과 저장: ${(ex.output_path||'').split('/').pop()}`
+    : `<span style="color:var(--warn)">⏸ ${pending.length}개 단계 승인 대기 중</span>`;
+
+  const panel = `
+    <div class="panel">
+      <h2>Execution Result · Executor</h2>
+      <p style="color:var(--muted);font-size:12px;margin-bottom:12px">${statusLine}</p>
+      ${stepsHtml}
+      ${approveHtml}
+    </div>`;
+  document.getElementById('result').insertAdjacentHTML('beforeend', panel);
+}
+
+window.approveAndRun = function() {
+  const checked = Array.from(document.querySelectorAll('.approve-row input:checked'))
+    .map(el => parseInt(el.value));
+  runExecute(checked);
+};
 
 async function runInspect(withPlan) {
   const ds = document.getElementById('dataset').value;
@@ -171,11 +286,13 @@ async function runInspect(withPlan) {
   status.className = 'pulse';
   try {
     if (withPlan) {
-      const r = await (await fetch(`${API}/api/plan?dataset_id=${encodeURIComponent(ds)}`)).json();
+      const mq = selectedModel() ? `&model=${encodeURIComponent(selectedModel())}` : '';
+      const r = await (await fetch(`${API}/api/plan?dataset_id=${encodeURIComponent(ds)}${mq}`)).json();
       render(r.profile);
       renderPlan(r.plan);
     } else {
-      const p = await (await fetch(`${API}/api/inspect?dataset_id=${encodeURIComponent(ds)}`)).json();
+      const mq = selectedModel() ? `&model=${encodeURIComponent(selectedModel())}` : '';
+      const p = await (await fetch(`${API}/api/inspect?dataset_id=${encodeURIComponent(ds)}${mq}`)).json();
       render(p);
     }
   } catch (e) {
@@ -246,7 +363,7 @@ function render(p) {
     </div>`;
 }
 
-loadHealth(); loadDatasets();
+loadHealth(); loadDatasets(); loadModels();
 setInterval(loadHealth, 8000);
 </script>
 </body>

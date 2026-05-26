@@ -20,10 +20,11 @@ TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "120"))
 
 
 async def generate(prompt: str, system: str | None = None,
-                   fmt_json: bool = False) -> str:
-    """Ollama /api/generate 호출. fmt_json=True면 JSON 출력 강제."""
+                   fmt_json: bool = False, model: str | None = None) -> str:
+    """Ollama /api/generate 호출. fmt_json=True면 JSON 출력 강제.
+    model 지정 시 그 모델로 (UI 선택용). 미지정이면 환경변수 기본값."""
     payload: dict = {
-        "model": OLLAMA_MODEL,
+        "model": model or OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
     }
