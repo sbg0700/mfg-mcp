@@ -24,6 +24,7 @@ OPERATION_PERMISSION = {
     "remove_outlier": Permission.L2,
     "create_feature": Permission.L2,
     "balance_classes": Permission.L2,   # 클래스 불균형 보정 (샘플링 변경)
+    "normalize_group": Permission.L2,   # 의미 그룹 단위 정규화 (값 변경)
     "drop_column": Permission.L3,
     "relabel": Permission.L3,
     "merge_external": Permission.L3,

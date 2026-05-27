@@ -242,6 +242,7 @@ async function runExecute(approvedSteps) {
     render(r.profile);
     renderPlan(r.plan);
     renderExecution(r.execution);
+    renderValidation(r.validation);
   } catch (e) {
     document.getElementById('result').innerHTML = `<div class="panel"><div class="empty">실패: ${e}</div></div>`;
   } finally {
@@ -289,6 +290,44 @@ function renderExecution(ex) {
       <p style="color:var(--muted);font-size:12px;margin-bottom:12px">${statusLine}</p>
       ${stepsHtml}
       ${approveHtml}
+    </div>`;
+  document.getElementById('result').insertAdjacentHTML('beforeend', panel);
+}
+
+function renderValidation(v) {
+  if (!v) return;
+  const labels = {compliance:'컴플라이언스', transform:'변환결과', integrity:'계획무결성', regression:'회귀'};
+  const checks = v.checks || {};
+  const badges = Object.keys(labels).map(k => {
+    const ok = checks[k];
+    const color = ok ? 'var(--ok)' : 'var(--danger, #e5484d)';
+    const mark = ok ? '✓' : '✗';
+    return `<span style="display:inline-block;padding:4px 10px;margin:3px;border-radius:6px;
+      border:1px solid ${color};color:${color};font-size:12px">${mark} ${labels[k]}</span>`;
+  }).join('');
+
+  const sevColor = {high:'var(--danger,#e5484d)', medium:'var(--warn)', low:'var(--muted)'};
+  const issuesHtml = (v.issues || []).map(i => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+      <span style="color:${sevColor[i.severity]||'var(--muted)'};font-weight:600">[${i.severity}]</span>
+      <span style="color:var(--muted)">${i.kind}</span> · ${i.message}
+    </div>`).join('');
+
+  const actionLabel = {
+    ready_for_ml: '✓ 검증 통과 — ML 단계 준비 완료',
+    review_recommended: '⚠ 검토 권장 — 경미한 이슈 있음',
+    await_approval: '⏸ 승인 대기 중',
+    retry_or_human: '✗ 재시도/사람 개입 필요 — 심각한 이슈',
+  }[v.next_action] || v.next_action;
+  const actionColor = v.passed ? 'var(--ok)' : (v.next_action==='review_recommended' ? 'var(--warn)' : 'var(--danger,#e5484d)');
+
+  const panel = `
+    <div class="panel">
+      <h2>Validation Result · Validator</h2>
+      <p style="color:${actionColor};font-size:13px;font-weight:600;margin-bottom:10px">${actionLabel}</p>
+      <div style="margin-bottom:12px">${badges}</div>
+      ${issuesHtml ? `<div style="color:var(--muted);font-size:11px;margin-bottom:4px">발견된 이슈 ${v.issues.length}개 (심각 ${v.n_high}, 중간 ${v.n_medium}, 경미 ${v.n_low})</div>${issuesHtml}`
+        : '<div style="color:var(--ok);font-size:12px">검출된 이슈 없음 — 4종 검증 모두 통과</div>'}
     </div>`;
   document.getElementById('result').insertAdjacentHTML('beforeend', panel);
 }

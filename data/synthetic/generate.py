@@ -123,6 +123,39 @@ def gen_imbalance(n: int = 10000) -> str:
     return path
 
 
+def gen_injection_machine(n: int = 800) -> str:
+    """6) [우려 1] 공정 의미 그룹이 풍부한 사출 성형 데이터.
+    실제 KAMP L1_cnc_machine_optimize 구조 모사:
+    - 사출 시퀀스 (1ST~10TH INJECTION VELOCITY) — 시퀀스 보존 정규화 대상
+    - 보압 프로파일 (PACK PRESSURE 1~6, PACK TIME 1~6) — 프로파일 그룹
+    - 메타 (LOT No., TimeStamp, EQP_ID) — 정규화 제외
+    - 단독 (BACK PRESSURE)"""
+    data = {
+        "LOT No.": [f"LOT{2024000+i}" for i in range(n)],
+        "TimeStamp": pd.date_range("2024-01-08 11:20", periods=n, freq="min").astype(str),
+        "EQP_ID": [f"EQP{RNG.integers(1,6)}" for _ in range(n)],
+    }
+    # 사출 시퀀스: 1차→10차 점증 추세 (시퀀스 의미 — 독립정규화하면 소실)
+    for step in range(1, 11):
+        base = 40 + step * 3  # 단계별 점증
+        suffix = {1:"1ST",2:"2ND",3:"3RD"}.get(step, f"{step}TH")
+        data[f"{suffix} INJECTION VELOCITY"] = RNG.normal(base, 4, n).round(2)
+    # 사출 스위치 위치 (9단계)
+    for step in range(1, 10):
+        suffix = {1:"1ST",2:"2ND",3:"3RD"}.get(step, f"{step}TH")
+        data[f"{suffix} INJECTION SWITCH POS"] = RNG.normal(20 + step*2, 2, n).round(2)
+    # 보압 프로파일 (1~6)
+    for i in range(1, 7):
+        data[f"PACK PRESSURE {i}"] = RNG.normal(100 - i*5, 6, n).round(2)
+        data[f"PACK TIME {i}"] = RNG.normal(2 + i*0.5, 0.3, n).round(2)
+    # 단독
+    data["BACK PRESSURE"] = RNG.normal(80, 10, n).round(2)
+    df = pd.DataFrame(data)
+    path = os.path.join(OUT_DIR, "cnc_machine_injection.csv")
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+    return path
+
+
 def main() -> None:
     _ensure_dir()
     results = [
@@ -131,6 +164,7 @@ def main() -> None:
         ("챌린지3 마스킹+dtype혼재", gen_masked()),
         ("챌린지1 CP949+한글", gen_cp949_order()),
         ("챌린지6 극심불균형 2.85%", gen_imbalance()),
+        ("우려1 공정의미그룹(사출시퀀스)", gen_injection_machine()),
     ]
     print("=" * 60)
     print("더미 timeseries 데이터 생성 완료")

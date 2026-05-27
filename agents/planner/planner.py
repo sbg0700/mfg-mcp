@@ -67,6 +67,29 @@ def _candidate_operations(profile: dict) -> list[dict]:
                                "rationale": f"'{c['name']}' 소수클래스 {ratio*100:.2f}%로 극심 불균형. "
                                             f"클래스 가중치 또는 리샘플링 보정 필요."})
 
+    # ★우려1: 의미 그룹 단위 정규화 (그룹당 1작업 — 시퀀스/프로파일 보존 + 중복 방지)
+    #   semantic_groups 요약을 우선 사용, 없으면 컬럼별 strategy로 폴백.
+    sem_groups = profile.get("semantic_groups", {}).get("groups", {})
+    for gname, gdata in sem_groups.items():
+        strategy = gdata.get("strategy", "single_zscore")
+        members = gdata.get("members", [])
+        # passthrough(메타)·label·unknown은 정규화 안 함
+        if strategy in ("passthrough", "label") or gname in ("unknown", "metadata", "label"):
+            continue
+        if not members:
+            continue
+        # 그룹 1개 = normalize_group 작업 1개 (멤버가 10개여도 1작업)
+        kind = ("시퀀스 보존" if strategy == "sequence_preserve" else
+                "프로파일 그룹" if strategy == "profile_group" else "단독")
+        candidates.append({
+            "operation": "normalize_group", "target_column": None,
+            "semantic_group": gname, "group_members": members, "strategy": strategy,
+            "rationale": f"'{gname}' 그룹({len(members)}개 컬럼)을 {kind} 방식으로 정규화. "
+                         + ("1→N 시퀀스 추세를 보존합니다." if strategy == "sequence_preserve"
+                            else "프로파일 형상을 보존합니다." if strategy == "profile_group"
+                            else "단독 표준화합니다."),
+        })
+
     # 항상 기초 통계 (L1)
     candidates.append({"operation": "compute_stats", "target_column": None,
                        "rationale": "전처리 전후 비교를 위한 기초 통계."})
@@ -130,6 +153,10 @@ async def plan(data_profile: dict, constraints: dict | None = None, model: str |
             order=i, operation=op, target_column=cand.get("target_column"),
             permission_level=_permission_for(op),
             rationale=llm_rationale.get(op, cand.get("rationale", "")),
+            # ★우려1: 의미 그룹 정보 전달 (normalize_group이면 채워짐)
+            semantic_group=cand.get("semantic_group"),
+            group_members=cand.get("group_members", []),
+            strategy=cand.get("strategy"),
         ))
 
     requires_approval = any(s.permission_level in ("L2", "L3") for s in steps)

@@ -91,20 +91,29 @@ def _is_number(s: str) -> bool:
 # 도구 2: list_columns  [L1]
 # ---------------------------------------------------------------------------
 def list_columns(dataset_id: str) -> dict[str, Any]:
-    """컬럼명·dtype·기초 통계 + dtype 혼재 의심 플래그."""
+    """컬럼명·dtype·기초 통계 + dtype 혼재 의심 플래그 + ★의미 그룹(semantic_group)★."""
+    import semantic  # 같은 디렉터리 (우려 1: 공정 의미 분류)
     path = _resolve(dataset_id)
     df, notes = _smart_read(path)
+    col_names = [str(c) for c in df.columns]
+    sem = semantic.classify_columns(col_names)  # {name: {semantic_group, strategy, is_grouped...}}
+
     cols = []
     for c in df.columns:
         series = df[c]
+        cname = str(c)
+        s_info = sem.get(cname, {})
         info: dict[str, Any] = {
-            "name": str(c),
+            "name": cname,
             "dtype": str(series.dtype),
             "null_count": int(series.isna().sum()),
             "n_unique": int(series.nunique(dropna=True)),
+            # ★의미 그룹 (규칙 기반 분류)
+            "semantic_group": s_info.get("semantic_group", "unknown"),
+            "strategy": s_info.get("strategy", "single_zscore"),
+            "is_grouped": s_info.get("is_grouped", False),
         }
-        # [챌린지 3] 텍스트 컬럼인데 일부가 숫자면 dtype 혼재 의심.
-        # pandas 2.2+ 는 문자열을 object 또는 새 'str'/'string' dtype 으로 추론하므로 둘 다 본다.
+        # [챌린지 3] dtype 혼재 의심
         is_textual = (series.dtype == object
                       or str(series.dtype) in ("str", "string")
                       or pd.api.types.is_string_dtype(series))
@@ -115,8 +124,11 @@ def list_columns(dataset_id: str) -> dict[str, Any]:
                 info["mixed_dtype_suspected"] = True
                 info["numeric_ratio"] = round(float(num_ratio), 3)
         cols.append(info)
+
+    group_summary = semantic.summarize_groups(col_names)
     return {"dataset_id": dataset_id, "n_rows": int(df.shape[0]),
-            "n_cols": int(df.shape[1]), "columns": cols, "read_notes": notes}
+            "n_cols": int(df.shape[1]), "columns": cols, "read_notes": notes,
+            "semantic_groups": group_summary}
 
 
 # ---------------------------------------------------------------------------

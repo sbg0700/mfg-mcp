@@ -24,6 +24,7 @@ OperationType = Literal[
     "drop_column",       # L3 — 컬럼 삭제
     "relabel",           # L3 — 라벨 재정의
     "balance_classes",   # L2 — 클래스 불균형 보정
+    "normalize_group",   # L2 — ★의미 그룹 단위 정규화 (우려1: 시퀀스/프로파일 보존)
 ]
 
 
@@ -35,6 +36,10 @@ class PlanStep(BaseModel):
     permission_level: Literal["L1", "L2", "L3"] # 권한 등급 (가드레일이 결정)
     rationale: str = ""                         # 왜 이 단계가 필요한가 (LLM 설명, 한국어)
     params: dict[str, Any] = Field(default_factory=dict)
+    # ★우려1: 의미 그룹 단위 작업이면 그룹명·멤버·전략을 담는다 (컬럼 1개씩 아님)
+    semantic_group: str | None = None
+    group_members: list[str] = Field(default_factory=list)
+    strategy: str | None = None
 
 
 class PreprocessingPlan(BaseModel):

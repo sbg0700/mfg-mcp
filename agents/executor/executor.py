@@ -102,6 +102,37 @@ def _op_compute_stats(df: pd.DataFrame, col: str | None) -> tuple[pd.DataFrame, 
     return df, {}, {"summary": brief}
 
 
+def _normalize_group(df, members, strategy, gname):
+    """[우려1] 의미 그룹을 전략별로 정규화.
+    - sequence_preserve: 그룹 전체의 공통 평균/표준편차로 정규화 (1→N 시퀀스 추세 보존)
+    - profile_group: 동일 (프로파일 형상 보존)
+    - single_zscore: 컬럼별 독립 z-score
+    """
+    import numpy as np
+    num_members = [m for m in members if pd.api.types.is_numeric_dtype(df[m])]
+    if not num_members:
+        return df, f"'{gname}' 그룹에 수치 컬럼 없음 (정규화 생략)"
+
+    if strategy in ("sequence_preserve", "profile_group"):
+        # 그룹 전체를 하나의 분포로 보고 공통 mean/std 사용 → 컬럼 간 상대관계(추세/형상) 보존
+        block = df[num_members].to_numpy(dtype=float)
+        mu, sigma = np.nanmean(block), np.nanstd(block)
+        if sigma == 0 or np.isnan(sigma):
+            return df, f"'{gname}' 표준편차 0 (정규화 생략)"
+        for m in num_members:
+            df[m] = (df[m] - mu) / sigma
+        kind = "시퀀스 추세 보존" if strategy == "sequence_preserve" else "프로파일 형상 보존"
+        return df, (f"'{gname}' 그룹 {len(num_members)}개 컬럼을 공통 정규화 "
+                    f"(평균 {mu:.2f}, 표준편차 {sigma:.2f}) — {kind}")
+    else:
+        # single_zscore: 컬럼별 독립
+        for m in num_members:
+            mu, sigma = df[m].mean(), df[m].std()
+            if sigma and not pd.isna(sigma):
+                df[m] = (df[m] - mu) / sigma
+        return df, f"'{gname}' {len(num_members)}개 컬럼 독립 z-score 정규화"
+
+
 _OPERATIONS = {
     "clean_masking": _op_clean_masking,
     "fill_missing": _op_fill_missing,
@@ -169,6 +200,37 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
             continue
 
         # --- 실행 ---
+        # ★우려1: normalize_group은 그룹 멤버를 전략별로 정규화 (단일 컬럼 함수와 다름)
+        if op == "normalize_group":
+            members = step.get("group_members", [])
+            strategy = step.get("strategy", "single_zscore")
+            gname = step.get("semantic_group", "?")
+            present = [m for m in members if m in df.columns]
+            if not present:
+                results.append(StepResult(
+                    order=order, operation=op, target_column=None, permission_level=perm,
+                    semantic_group=gname, status="failed",
+                    detail=f"그룹 '{gname}' 컬럼이 데이터에 없음.",
+                ))
+                continue
+            before = {"members": len(present), "strategy": strategy}
+            df, detail = _normalize_group(df, present, strategy, gname)
+            after = {"normalized": len(present)}
+            lid = lineage.record(
+                dataset_id=dataset_id, transformation_type=f"normalize_group:{strategy}",
+                source_column=",".join(present[:3]) + ("..." if len(present) > 3 else ""),
+                params={"permission_level": perm, "semantic_group": gname,
+                        "strategy": strategy, "n_members": len(present)},
+                applied_by_agent="executor",
+                user_approval_id=approval_tokens.get(order), can_rollback=True,
+            )
+            results.append(StepResult(
+                order=order, operation=op, target_column=None, permission_level=perm,
+                semantic_group=gname, status="done", detail=detail,
+                lineage_id=lid, can_rollback=True, before_stats=before, after_stats=after,
+            ))
+            continue
+
         fn = _OPERATIONS.get(op)
         if fn is None:
             results.append(StepResult(

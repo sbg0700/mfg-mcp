@@ -135,3 +135,20 @@ timeseries / inspection-image / event-log / order 모두 동작.
 같은 Agent·Harness·권한·대시보드로 4가지 데이터 형태(CSV/이미지폴더/Excel멀티시트/CP949) 처리.
 → "어떤 라인 데이터가 와도 처리 가능" = 공장 단위 통합(2층)의 전제 조건 충족.
 다음: Harness 검증 강화 → 공장 통합·목적·ML/RAG (2층).
+
+## 2026-05-27 — STEP 1: Validator 완성 + 우려1(의미 그룹) 동시 구현
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-32 | 의미 그룹 패턴을 모달리티별 MCP 서버 안에 (semantic.py) | "전용 공구함" 개념 일치. 각 도메인 패턴은 그 서버가 앎 |
+| D-33 | 규칙(정규식) 우선 + LLM은 unknown만 보조 | modality_guess 오판 교훈 — LLM 분류는 못 믿음 |
+| D-34 | normalize_group: 그룹당 1작업 (멤버 N개여도) | 중복 방지 + 시퀀스/프로파일 의미 보존 |
+| D-35 | 시퀀스/프로파일은 그룹 공통 mean/std 정규화 | 컬럼 독립 정규화 시 추세·형상 소실 방지 (우려1 핵심) |
+| D-36 | Validator 4종 검증 (컴플라이언스/변환/무결성/회귀) | "LLM이 틀려도 시스템이 잡는다" — Q1 약점 해결 |
+| D-37 | Validator를 /api/execute에 연결 + 대시보드 표시 | 4단계(Inspector→Planner→Executor→Validator) 실동작 완성 |
+
+### STEP 1 완료 — 4단계 Agentic Flow 진짜 완성
+- 우려1: cnc_machine_injection 35컬럼→6그룹, 사출시퀀스10개→1작업(추세보존)
+- Validator: 정상통과 + 결함4종(중복/누락/손실/변환실패) 모두 잡음 검증
+- width/height 중복 버그 = 계획무결성 검증으로 잡힘 (우려1+Validator 동시효과)
+- 다음: STEP 2 (Planner OptionTree — 우려2)

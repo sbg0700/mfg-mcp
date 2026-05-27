@@ -88,6 +88,7 @@ async def inspect(dataset_id: str, model: str | None = None,
         "n_rows": columns.get("n_rows"),
         "n_cols": columns.get("n_cols"),
         "columns": columns.get("columns"),
+        "semantic_groups": columns.get("semantic_groups", {}),
         "sample_rows": sample.get("rows"),
         "deterministic_flags": flags,
     }
