@@ -8,3 +8,4 @@ data/synthetic/timeseries/*.csv
 data/synthetic/inspection-image/
 data/synthetic/event-log/
 data/synthetic/order/
+*.patch
