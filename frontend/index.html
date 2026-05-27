@@ -176,7 +176,7 @@ async function loadModalities() {
 }
 function selectedModality() {
   const v = document.getElementById('modality').value;
-  return (v && v.includes('image')) ? 'inspection-image' : 'timeseries';
+  return v || 'timeseries';
 }
 
 async function loadModels() {
