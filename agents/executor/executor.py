@@ -141,22 +141,22 @@ _OPERATIONS = {
 }
 
 
-async def execute(plan: dict, approval_tokens: dict | None = None,
+async def execute(plan: dict, approved_keys: set | None = None,
                   modality: str = "timeseries") -> dict:
     """PreprocessingPlan 실행.
 
-    approval_tokens: {step_order: token} — 사용자가 승인한 단계들.
-                     L2/L3는 여기 토큰이 있어야 실행됨.
+    approved_keys: 사용자가 승인한 step_key 집합 (order 대신 안정적 식별자).
+                   L2/L3는 step_key가 이 집합에 있어야 실행됨.
     modality: timeseries는 실제 CSV 변환. inspection-image는 이미지 전처리 경로.
     """
-    approval_tokens = approval_tokens or {}
+    approved_keys = approved_keys or set()
     dataset_id = plan.get("dataset_id", "unknown")
 
     # ★모달리티 분기: 이미지는 CSV가 아니므로 전용 실행 경로
     if modality == "inspection-image":
-        return await _execute_image(plan, approval_tokens, dataset_id)
+        return await _execute_image(plan, approved_keys, dataset_id)
     if modality == "event-log":
-        return await _execute_eventlog(plan, approval_tokens, dataset_id)
+        return await _execute_eventlog(plan, approved_keys, dataset_id)
 
     # order는 CSV라 timeseries 경로 재사용 (DATA_ROOT만 order로)
     path = _resolve(dataset_id, modality)
@@ -190,9 +190,9 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
         perm = step["permission_level"]
 
         # --- 권한 게이트 ---
-        if perm in ("L2", "L3") and order not in approval_tokens:
+        if perm in ("L2", "L3") and step.get("step_key") not in approved_keys:
             results.append(StepResult(
-                order=order, operation=op, target_column=col, permission_level=perm,
+                order=order, step_key=step.get("step_key"), operation=op, target_column=col, permission_level=perm,
                 status="awaiting_approval",
                 detail=f"{perm} 작업은 사용자 승인이 필요합니다. 승인 후 실행됩니다.",
             ))
@@ -208,7 +208,7 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
             present = [m for m in members if m in df.columns]
             if not present:
                 results.append(StepResult(
-                    order=order, operation=op, target_column=None, permission_level=perm,
+                    order=order, step_key=step.get("step_key"), operation=op, target_column=None, permission_level=perm,
                     semantic_group=gname, status="failed",
                     detail=f"그룹 '{gname}' 컬럼이 데이터에 없음.",
                 ))
@@ -222,10 +222,10 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
                 params={"permission_level": perm, "semantic_group": gname,
                         "strategy": strategy, "n_members": len(present)},
                 applied_by_agent="executor",
-                user_approval_id=approval_tokens.get(order), can_rollback=True,
+                user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None, can_rollback=True,
             )
             results.append(StepResult(
-                order=order, operation=op, target_column=None, permission_level=perm,
+                order=order, step_key=step.get("step_key"), operation=op, target_column=None, permission_level=perm,
                 semantic_group=gname, status="done", detail=detail,
                 lineage_id=lid, can_rollback=True, before_stats=before, after_stats=after,
             ))
@@ -234,7 +234,7 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
         fn = _OPERATIONS.get(op)
         if fn is None:
             results.append(StepResult(
-                order=order, operation=op, target_column=col, permission_level=perm,
+                order=order, step_key=step.get("step_key"), operation=op, target_column=col, permission_level=perm,
                 status="skipped", detail=f"'{op}'는 아직 미구현 (Sprint 2+).",
             ))
             continue
@@ -245,7 +245,7 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
             else:
                 if not col or col not in df.columns:
                     results.append(StepResult(
-                        order=order, operation=op, target_column=col, permission_level=perm,
+                        order=order, step_key=step.get("step_key"), operation=op, target_column=col, permission_level=perm,
                         status="failed", detail=f"대상 컬럼 '{col}' 없음.",
                     ))
                     continue
@@ -256,10 +256,10 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
                 dataset_id=dataset_id, transformation_type=op,
                 source_column=col, result_column=col,
                 params={"permission_level": perm}, applied_by_agent="executor",
-                user_approval_id=approval_tokens.get(order), can_rollback=True,
+                user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None, can_rollback=True,
             )
             results.append(StepResult(
-                order=order, operation=op, target_column=col, permission_level=perm,
+                order=order, step_key=step.get("step_key"), operation=op, target_column=col, permission_level=perm,
                 status="done",
                 detail=_describe(op, col, before, after),
                 lineage_id=lid, can_rollback=True,
@@ -267,7 +267,7 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
             ))
         except Exception as e:
             results.append(StepResult(
-                order=order, operation=op, target_column=col, permission_level=perm,
+                order=order, step_key=step.get("step_key"), operation=op, target_column=col, permission_level=perm,
                 status="failed", detail=f"실행 오류: {e}",
             ))
 
@@ -306,7 +306,7 @@ IMAGE_DATA_ROOT = os.environ.get(
 )
 
 
-async def _execute_image(plan: dict, approval_tokens: dict, dataset_id: str) -> dict:
+async def _execute_image(plan: dict, approved_keys: set, dataset_id: str) -> dict:
     """inspection-image 전처리 실행.
 
     timeseries와 ★동일한 권한 게이트 + lineage 계약★을 따른다.
@@ -351,9 +351,9 @@ async def _execute_image(plan: dict, approval_tokens: dict, dataset_id: str) -> 
         img_op, img_desc = img_ops.get(op, (op, op))
 
         # 권한 게이트 (timeseries와 동일)
-        if perm in ("L2", "L3") and order not in approval_tokens:
+        if perm in ("L2", "L3") and step.get("step_key") not in approved_keys:
             results.append(StepResult(
-                order=order, operation=img_op, target_column=None, permission_level=perm,
+                order=order, step_key=step.get("step_key"), operation=img_op, target_column=None, permission_level=perm,
                 status="awaiting_approval",
                 detail=f"{perm} 이미지 작업({img_desc})은 사용자 승인이 필요합니다.",
             ))
@@ -378,11 +378,11 @@ async def _execute_image(plan: dict, approval_tokens: dict, dataset_id: str) -> 
         lid = lineage.record(
             dataset_id=dataset_id, transformation_type=img_op,
             params={"permission_level": perm, "modality": "inspection-image"},
-            applied_by_agent="executor", user_approval_id=approval_tokens.get(order),
+            applied_by_agent="executor", user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None,
             can_rollback=True,
         )
         results.append(StepResult(
-            order=order, operation=img_op, target_column=None, permission_level=perm,
+            order=order, step_key=step.get("step_key"), operation=img_op, target_column=None, permission_level=perm,
             status="done", detail=detail, lineage_id=lid, can_rollback=True,
             before_stats=before, after_stats=after,
         ))
@@ -433,7 +433,7 @@ def _load_eventlog(dataset_id: str):
     return pd.read_csv(path), path, 0
 
 
-async def _execute_eventlog(plan: dict, approval_tokens: dict, dataset_id: str) -> dict:
+async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str) -> dict:
     """event-log 전처리. timeseries와 동일 권한 게이트+lineage.
     특유 작업: 멀티시트 통합(로드시 자동), balance_classes(불균형 보정)."""
     try:
@@ -451,8 +451,8 @@ async def _execute_eventlog(plan: dict, approval_tokens: dict, dataset_id: str) 
     for step in plan.get("steps", []):
         order, op, col, perm = step["order"], step["operation"], step.get("target_column"), step["permission_level"]
 
-        if perm in ("L2", "L3") and order not in approval_tokens:
-            results.append(StepResult(order=order, operation=op, target_column=col,
+        if perm in ("L2", "L3") and step.get("step_key") not in approved_keys:
+            results.append(StepResult(order=order, step_key=step.get("step_key"), operation=op, target_column=col,
                 permission_level=perm, status="awaiting_approval",
                 detail=f"{perm} 작업은 사용자 승인이 필요합니다."))
             pending.append(order)
@@ -487,13 +487,13 @@ async def _execute_eventlog(plan: dict, approval_tokens: dict, dataset_id: str) 
             lid = lineage.record(dataset_id=dataset_id, transformation_type=op,
                 source_column=col, result_column=col,
                 params={"permission_level": perm, "modality": "event-log"},
-                applied_by_agent="executor", user_approval_id=approval_tokens.get(order),
+                applied_by_agent="executor", user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None,
                 can_rollback=True)
-            results.append(StepResult(order=order, operation=op, target_column=col,
+            results.append(StepResult(order=order, step_key=step.get("step_key"), operation=op, target_column=col,
                 permission_level=perm, status="done", detail=detail,
                 lineage_id=lid, can_rollback=True, before_stats=before, after_stats=after))
         except Exception as e:
-            results.append(StepResult(order=order, operation=op, target_column=col,
+            results.append(StepResult(order=order, step_key=step.get("step_key"), operation=op, target_column=col,
                 permission_level=perm, status="failed", detail=f"실행 오류: {e}"))
 
     out = os.path.join(OUTPUT_ROOT, f"{dataset_id}__processed.parquet")

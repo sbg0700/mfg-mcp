@@ -152,3 +152,26 @@ timeseries / inspection-image / event-log / order 모두 동작.
 - Validator: 정상통과 + 결함4종(중복/누락/손실/변환실패) 모두 잡음 검증
 - width/height 중복 버그 = 계획무결성 검증으로 잡힘 (우려1+Validator 동시효과)
 - 다음: STEP 2 (Planner OptionTree — 우려2)
+
+## 2026-05-27 (이어서) — 승인 반복 버그 수정 (step_key 기반)
+
+### 버그: "승인하고 실행"이 무한 반복
+증상: 사출 데이터(normalize_group 5개) EXECUTE 시 승인해도 일부만 완료, 나머지 계속 대기.
+원인: 승인이 order(순서번호) 기준인데, Planner가 매 EXECUTE마다 LLM으로 계획 재생성 →
+      LLM이 작업 순서를 비결정적으로 배열 → 승인한 order가 다른 작업을 가리킴.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-38 | 승인을 order(가변) → step_key(안정) 기반으로 변경 | LLM 순서 비결정성에도 승인이 안 어긋남 |
+| D-39 | step_key = "operation:semantic_group(or target_column)" | 순서 무관 안정적 식별자 |
+| D-40 | modality_guess 검증은 자동분류 기능과 한 묶음으로 미룸 | 지금은 사용자가 모달리티 명시 → guess는 참고용. 자동분류 때 검증 동반 |
+
+수정 범위: planner_schemas(step_key property), planner(plan에 주입),
+backend(approved_keys), executor(approved_keys set 기반 전 경로), frontend(step_key 체크박스).
+검증: LLM 순서 바꿔도 승인 유지(all_done=True), 4개 모달리티 회귀 없음.
+
+### STEP 1.5 예고 (팀원 검토 반영 — Module Catalog)
+의미그룹화는 "이 컬럼이 무엇"까지만. "정상범위/공정소속/추천모델" 도메인지식 = Module Catalog 필요.
+조정: ① Catalog는 규칙이 쓰는 지식(LLM 판단재료 아님) ② slot contract는 YAML 필드만(자동분류때 활성화)
+③ STEP1 닫고 Module Catalog는 STEP 1.5 분리 ④ 노드 5개(사출/CNC/프레스/검사/PdM)로 시작
+→ Validator에 5번째 "도메인 범위 검증" 추가 예정. 드래그앤드롭 UI는 STEP 3.

@@ -165,4 +165,8 @@ async def plan(data_profile: dict, constraints: dict | None = None, model: str |
         summary=summary or f"{len(steps)}개 단계 전처리 계획",
         requires_approval=requires_approval,
     )
-    return plan_obj.model_dump()
+    out = plan_obj.model_dump()
+    # step_key를 각 step dict에 명시적으로 주입 (model_dump는 property 미포함)
+    for step_dict, step_obj in zip(out["steps"], steps):
+        step_dict["step_key"] = step_obj.step_key
+    return out

@@ -19,6 +19,7 @@ class StepResult(BaseModel):
     permission_level: Literal["L1", "L2", "L3"]
     status: Literal["done", "awaiting_approval", "skipped", "failed"]
     semantic_group: str | None = None  # 우려1: 그룹 단위 작업이면 그룹명
+    step_key: str | None = None         # 승인 매칭용 안정적 식별자
     detail: str = ""                         # 사람이 읽을 결과 설명 (한국어)
     lineage_id: str | None = None            # harness.lineage에 기록된 ID
     can_rollback: bool = False

@@ -124,7 +124,7 @@ async def plan_endpoint(dataset_id: str, model: str | None = None,
 
 class ExecuteReq(BaseModel):
     dataset_id: str
-    approved_steps: list[int] = []   # 사용자가 1-click 승인한 step order 목록
+    approved_keys: list[str] = []     # 사용자가 승인한 step_key 목록 (order 대신 안정적 식별자)
     model: str | None = None          # UI에서 선택한 모델
     modality: str = "timeseries"      # UI에서 선택한 모달리티
 
@@ -132,7 +132,7 @@ class ExecuteReq(BaseModel):
 @app.post("/api/execute")
 async def execute_endpoint(req: ExecuteReq) -> dict:
     """Inspector → Planner → Executor → Validator 전체 체인 (Agentic Flow 1→2→3→4단).
-    approved_steps에 든 단계만 L2/L3 실행 (1-click 승인 시뮬레이션)."""
+    approved_keys에 든 작업만 L2/L3 실행 (step_key 기반 — order 비결정성 회피)."""
     from inspector import inspect as run_inspect
     from planner import plan as run_plan
     from executor import execute as run_execute
@@ -140,9 +140,8 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
     try:
         profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality)
         plan_result = await run_plan(profile, model=req.model)
-        # 승인된 step order → approval_token 딕셔너리로 변환
-        tokens = {order: f"ui-approved-{order}" for order in req.approved_steps}
-        exec_result = await run_execute(plan_result, approval_tokens=tokens, modality=req.modality)
+        exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
+                                        modality=req.modality)
         # ★4단 Validator: 실행 결과를 plan·profile과 함께 검증
         validation = await run_validate(exec_result, plan=plan_result, profile=profile)
         return {"profile": profile, "plan": plan_result,

@@ -224,20 +224,20 @@ document.getElementById('runexec').addEventListener('click', () => runExecute([]
 
 // 승인된 step order를 모아 재실행
 let lastDataset = null;
-async function runExecute(approvedSteps) {
-  const ds = approvedSteps.length ? lastDataset : document.getElementById('dataset').value;
+async function runExecute(approvedKeys) {
+  const ds = approvedKeys.length ? lastDataset : document.getElementById('dataset').value;
   lastDataset = ds;
   const btns = document.querySelectorAll('.controls button');
   const status = document.getElementById('status');
   btns.forEach(b => b.disabled = true);
-  status.textContent = approvedSteps.length
-    ? `승인된 ${approvedSteps.length}개 단계 실행 중...`
-    : 'Inspector → Planner → Executor 전체 체인 실행 중...';
+  status.textContent = approvedKeys.length
+    ? `승인된 ${approvedKeys.length}개 작업 실행 중...`
+    : 'Inspector → Planner → Executor → Validator 전체 체인 실행 중...';
   status.className = 'pulse';
   try {
     const r = await (await fetch(`${API}/api/execute`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({dataset_id: ds, approved_steps: approvedSteps, model: selectedModel(), modality: selectedModality()})
+      body: JSON.stringify({dataset_id: ds, approved_keys: approvedKeys, model: selectedModel(), modality: selectedModality()})
     })).json();
     render(r.profile);
     renderPlan(r.plan);
@@ -262,19 +262,22 @@ function renderExecution(ex) {
       <span class="rat">${s.detail || ''} ${s.lineage_id ? `<span class="lineage-tag">· lineage:${s.lineage_id.slice(0,8)}</span>` : ''}</span>
     </div>`).join('');
 
-  // 승인 대기 단계가 있으면 1-click 승인 UI
+  // 승인 대기 단계가 있으면 1-click 승인 UI (step_key 기반 — order 비결정성 회피)
   let approveHtml = '';
-  if (pending.length) {
-    const checks = pending.map(o => {
-      const step = results.find(r => r.order === o);
+  const pendingSteps = results.filter(r => r.status === 'awaiting_approval');
+  if (pendingSteps.length) {
+    const checks = pendingSteps.map(step => {
+      const key = step.step_key || `${step.operation}:${step.semantic_group||step.target_column||'global'}`;
+      const label = step.semantic_group ? `${step.operation} · ${step.semantic_group}`
+                                        : (step.target_column ? `${step.operation} · ${step.target_column}` : step.operation);
       return `<div class="approve-row">
-        <input type="checkbox" id="apv-${o}" value="${o}" checked>
-        <label for="apv-${o}">단계 ${o} (${step.operation}, ${step.permission_level}) 승인</label>
+        <input type="checkbox" class="apv-check" value="${key}" checked>
+        <label>${label} (${step.permission_level}) 승인</label>
       </div>`;
     }).join('');
     approveHtml = `
       <div style="margin-top:14px">
-        <div style="color:var(--warn);font-size:11px;margin-bottom:8px">⚠ 아래 ${pending.length}개 단계는 승인이 필요합니다. 검토 후 승인하고 실행하세요.</div>
+        <div style="color:var(--warn);font-size:11px;margin-bottom:8px">⚠ 아래 ${pendingSteps.length}개 작업은 승인이 필요합니다. 검토 후 승인하고 실행하세요.</div>
         ${checks}
         <button onclick="approveAndRun()" style="margin-top:10px;background:var(--accent);color:#0b0e11">✓ 승인하고 실행</button>
       </div>`;
@@ -333,8 +336,8 @@ function renderValidation(v) {
 }
 
 window.approveAndRun = function() {
-  const checked = Array.from(document.querySelectorAll('.approve-row input:checked'))
-    .map(el => parseInt(el.value));
+  const checked = Array.from(document.querySelectorAll('.apv-check:checked'))
+    .map(el => el.value);
   runExecute(checked);
 };
 

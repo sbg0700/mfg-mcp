@@ -41,6 +41,13 @@ class PlanStep(BaseModel):
     group_members: list[str] = Field(default_factory=list)
     strategy: str | None = None
 
+    @property
+    def step_key(self) -> str:
+        """순서(order)와 무관한 안정적 식별자. 승인 매칭에 사용.
+        order는 LLM이 매번 다르게 배열할 수 있어 승인이 어긋남 → operation+대상으로 고정."""
+        target = self.semantic_group or self.target_column or "global"
+        return f"{self.operation}:{target}"
+
 
 class PreprocessingPlan(BaseModel):
     """Planner → Executor 로 넘어가는 표준 메시지 (A2A)."""
