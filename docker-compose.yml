@@ -51,6 +51,28 @@ services:
     ports: ["8102:8102"]
     restart: unless-stopped
 
+  mcp-event-log:
+    build: ./mcp-servers/event-log
+    container_name: mfg-mcp-event-log
+    environment:
+      EVENTLOG_DATA_ROOT: /data/event-log
+    volumes:
+      - ./mcp-servers/event-log:/app                          # 코드 마운트
+      - ./data/synthetic/event-log:/data/event-log:ro         # event-log 더미 마운트
+    ports: ["8103:8103"]
+    restart: unless-stopped
+
+  mcp-order:
+    build: ./mcp-servers/order
+    container_name: mfg-mcp-order
+    environment:
+      ORDER_DATA_ROOT: /data/order
+    volumes:
+      - ./mcp-servers/order:/app                              # 코드 마운트
+      - ./data/synthetic/order:/data/order:ro                 # order 더미 마운트
+    ports: ["8104:8104"]
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: mfg-backend
@@ -59,12 +81,16 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}                 # .env로 교체 (e4b↔26b)
       MCP_TIMESERIES_URL: http://mcp-timeseries:8101
       MCP_IMAGE_URL: http://mcp-inspection-image:8102
+      MCP_EVENTLOG_URL: http://mcp-event-log:8103
+      MCP_ORDER_URL: http://mcp-order:8104
       IMAGE_DATA_ROOT: /repo/data/synthetic/inspection-image
+      EVENTLOG_DATA_ROOT: /repo/data/synthetic/event-log
+      ORDER_DATA_ROOT: /repo/data/synthetic/order
     volumes:
       - .:/repo                                                # 레포 전체 마운트 (agents/harness import)
     working_dir: /repo/backend
     ports: ["8000:8000"]
-    depends_on: [ollama, postgres, mcp-timeseries, mcp-inspection-image]
+    depends_on: [ollama, postgres, mcp-timeseries, mcp-inspection-image, mcp-event-log, mcp-order]
     restart: unless-stopped
 
 volumes:

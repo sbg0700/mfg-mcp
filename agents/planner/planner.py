@@ -59,6 +59,14 @@ def _candidate_operations(profile: dict) -> list[dict]:
             candidates.append({"operation": "fill_missing", "target_column": c["name"],
                                "rationale": f"'{c['name']}'에 결측치 존재."})
 
+    # ★클래스 불균형 → balance_classes (L2). event-log의 핵심 작업.
+    for c in columns:
+        if c.get("imbalance_suspected"):
+            ratio = c.get("minority_ratio", 0)
+            candidates.append({"operation": "balance_classes", "target_column": c["name"],
+                               "rationale": f"'{c['name']}' 소수클래스 {ratio*100:.2f}%로 극심 불균형. "
+                                            f"클래스 가중치 또는 리샘플링 보정 필요."})
+
     # 항상 기초 통계 (L1)
     candidates.append({"operation": "compute_stats", "target_column": None,
                        "rationale": "전처리 전후 비교를 위한 기초 통계."})

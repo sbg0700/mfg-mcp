@@ -53,6 +53,8 @@ async def health() -> dict:
 MCP_SERVERS = {
     "timeseries": os.environ.get("MCP_TIMESERIES_URL", "http://mcp-timeseries:8101"),
     "inspection-image": os.environ.get("MCP_IMAGE_URL", "http://mcp-inspection-image:8102"),
+    "event-log": os.environ.get("MCP_EVENTLOG_URL", "http://mcp-event-log:8103"),
+    "order": os.environ.get("MCP_ORDER_URL", "http://mcp-order:8104"),
 }
 
 

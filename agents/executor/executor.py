@@ -38,11 +38,13 @@ DATA_ROOT = os.environ.get(
 # 정제 결과·백업 저장 위치
 OUTPUT_ROOT = os.environ.get("PROCESSED_ROOT", str(ROOT / "data" / "processed"))
 MASK_TOKENS = {"*", "**", "***", "-", "N/A", "n/a", "null", "NULL", ""}
+ORDER_DATA_ROOT = os.environ.get("ORDER_DATA_ROOT", str(ROOT / "data" / "synthetic" / "order"))
 
 
-def _resolve(dataset_id: str) -> str:
+def _resolve(dataset_id: str, modality: str = "timeseries") -> str:
     name = dataset_id if dataset_id.endswith(".csv") else f"{dataset_id}.csv"
-    return os.path.join(DATA_ROOT, name)
+    root = ORDER_DATA_ROOT if modality == "order" else DATA_ROOT
+    return os.path.join(root, name)
 
 
 def _col_stats(s: pd.Series) -> dict[str, Any]:
@@ -122,8 +124,11 @@ async def execute(plan: dict, approval_tokens: dict | None = None,
     # ★모달리티 분기: 이미지는 CSV가 아니므로 전용 실행 경로
     if modality == "inspection-image":
         return await _execute_image(plan, approval_tokens, dataset_id)
+    if modality == "event-log":
+        return await _execute_eventlog(plan, approval_tokens, dataset_id)
 
-    path = _resolve(dataset_id)
+    # order는 CSV라 timeseries 경로 재사용 (DATA_ROOT만 order로)
+    path = _resolve(dataset_id, modality)
 
     if not os.path.exists(path):
         return ExecutionResult(dataset_id=dataset_id, all_done=False,
@@ -326,3 +331,111 @@ async def _execute_image(plan: dict, approval_tokens: dict, dataset_id: str) -> 
         output_path=f"{dataset_id} (이미지 {len(imgs)}장, 원본 보존)",
         pending_approvals=pending, all_done=all_done,
     ).model_dump()
+
+
+# ---------------------------------------------------------------------------
+# event-log 모달리티 전용 실행 경로
+# ---------------------------------------------------------------------------
+EVENTLOG_DATA_ROOT = os.environ.get(
+    "EVENTLOG_DATA_ROOT",
+    str(ROOT / "data" / "synthetic" / "event-log"),
+)
+
+
+def _load_eventlog(dataset_id: str):
+    """CSV/Excel(멀티시트 통합) 로드."""
+    name = dataset_id
+    path = os.path.join(EVENTLOG_DATA_ROOT, name)
+    if not os.path.exists(path):
+        for ext in (".csv", ".xlsx"):
+            p = os.path.join(EVENTLOG_DATA_ROOT, name + ext)
+            if os.path.exists(p):
+                path = p
+                break
+    if path.endswith(".xlsx"):
+        sheets = pd.read_excel(path, sheet_name=None)
+        if len(sheets) > 1:
+            dfs = list(sheets.values())
+            if all("LOT_NO" in d.columns for d in dfs):
+                merged = dfs[0]
+                for d in dfs[1:]:
+                    merged = merged.merge(d, on="LOT_NO", how="outer", suffixes=("", "_dup"))
+                return merged, path, len(sheets)
+            return pd.concat(dfs, ignore_index=True), path, len(sheets)
+        return list(sheets.values())[0], path, 1
+    for enc in ("utf-8-sig", "cp949", "latin1"):
+        try:
+            return pd.read_csv(path, encoding=enc), path, 0
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return pd.read_csv(path), path, 0
+
+
+async def _execute_eventlog(plan: dict, approval_tokens: dict, dataset_id: str) -> dict:
+    """event-log 전처리. timeseries와 동일 권한 게이트+lineage.
+    특유 작업: 멀티시트 통합(로드시 자동), balance_classes(불균형 보정)."""
+    try:
+        df, path, n_sheets = _load_eventlog(dataset_id)
+    except Exception as e:
+        return ExecutionResult(dataset_id=dataset_id, all_done=False,
+                               results=[]).model_dump() | {"error": f"load failed: {e}"}
+
+    os.makedirs(OUTPUT_ROOT, exist_ok=True)
+    df.to_parquet(os.path.join(OUTPUT_ROOT, f"{dataset_id}__backup.parquet"), index=False)
+
+    results: list[StepResult] = []
+    pending: list[int] = []
+
+    for step in plan.get("steps", []):
+        order, op, col, perm = step["order"], step["operation"], step.get("target_column"), step["permission_level"]
+
+        if perm in ("L2", "L3") and order not in approval_tokens:
+            results.append(StepResult(order=order, operation=op, target_column=col,
+                permission_level=perm, status="awaiting_approval",
+                detail=f"{perm} 작업은 사용자 승인이 필요합니다."))
+            pending.append(order)
+            continue
+
+        try:
+            if op == "balance_classes" and col and col in df.columns:
+                vc = df[col].value_counts()
+                dist = {str(k): int(v) for k, v in vc.items()}
+                ratios = {str(k): round(int(v)/len(df), 4) for k, v in vc.items()}
+                detail = (f"'{col}' 클래스 불균형 분석: {dist}. "
+                          f"보정전략: class_weight 또는 SMOTE (ML 단계 적용). 비율={ratios}")
+                before, after = {"distribution": dist}, {"ratios": ratios,
+                              "strategy": "class_weight/SMOTE"}
+            elif op == "fill_missing" and col and col in df.columns:
+                before = {"nulls": int(df[col].isna().sum())}
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    df[col] = df[col].fillna(df[col].median())
+                else:
+                    m = df[col].mode()
+                    if len(m): df[col] = df[col].fillna(m.iloc[0])
+                after = {"nulls": int(df[col].isna().sum())}
+                detail = f"'{col}': 결측 {before['nulls']}→{after['nulls']}개"
+            elif op == "compute_stats":
+                sheet_note = f" (멀티시트 {n_sheets}개 통합)" if n_sheets > 1 else ""
+                detail = f"기초 통계 산출{sheet_note}. 행={len(df)}, 컬럼={len(df.columns)}"
+                before, after = {}, {"n_rows": len(df), "n_cols": len(df.columns)}
+            else:
+                detail = f"{op} 완료"
+                before, after = {}, {}
+
+            lid = lineage.record(dataset_id=dataset_id, transformation_type=op,
+                source_column=col, result_column=col,
+                params={"permission_level": perm, "modality": "event-log"},
+                applied_by_agent="executor", user_approval_id=approval_tokens.get(order),
+                can_rollback=True)
+            results.append(StepResult(order=order, operation=op, target_column=col,
+                permission_level=perm, status="done", detail=detail,
+                lineage_id=lid, can_rollback=True, before_stats=before, after_stats=after))
+        except Exception as e:
+            results.append(StepResult(order=order, operation=op, target_column=col,
+                permission_level=perm, status="failed", detail=f"실행 오류: {e}"))
+
+    out = os.path.join(OUTPUT_ROOT, f"{dataset_id}__processed.parquet")
+    df.to_parquet(out, index=False)
+    all_done = len(pending) == 0
+    return ExecutionResult(dataset_id=dataset_id, results=results, output_path=out,
+        pending_approvals=pending, all_done=all_done).model_dump()

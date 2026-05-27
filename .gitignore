@@ -6,3 +6,5 @@ __pycache__/
 # 더미 데이터는 생성물이므로 추적 제외 (generate.py로 재생성)
 data/synthetic/timeseries/*.csv
 data/synthetic/inspection-image/
+data/synthetic/event-log/
+data/synthetic/order/

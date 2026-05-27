@@ -23,7 +23,8 @@ import httpx
 MCP_SERVERS = {
     "timeseries": os.environ.get("MCP_TIMESERIES_URL", "http://mcp-timeseries:8101"),
     "inspection-image": os.environ.get("MCP_IMAGE_URL", "http://mcp-inspection-image:8102"),
-    # event-log, order 는 Sprint에서 추가
+    "event-log": os.environ.get("MCP_EVENTLOG_URL", "http://mcp-event-log:8103"),
+    "order": os.environ.get("MCP_ORDER_URL", "http://mcp-order:8104"),
 }
 DEFAULT_MODALITY = "timeseries"
 
@@ -66,6 +67,19 @@ async def inspect(dataset_id: str, model: str | None = None,
                 flags.append(f"'{c['name']}' 혼재 (이미지 {c['name']} 불일치: {dist})")
             else:
                 flags.append(f"mixed dtype in '{c['name']}' (마스킹/혼재 의심)")
+        # ★event-log: 클래스 불균형 감지 (balance_classes 트리거)
+        if c.get("imbalance_suspected"):
+            ratio = c.get("minority_ratio", 0)
+            flags.append(f"class imbalance in '{c['name']}' (소수클래스 {ratio*100:.2f}%, 보정 필요)")
+        # NaN 다수 컬럼 (LOT 메타 등)
+        if c.get("null_count", 0) > 0 and modality == "event-log":
+            flags.append(f"missing values in '{c['name']}' ({c['null_count']}개, LOT 메타 의심)")
+
+    # ★event-log: 멀티시트 통합 감지
+    rn = columns.get("read_notes", {})
+    if rn.get("multi_sheet_merged"):
+        sheets = list(rn.get("sheets", {}).keys())
+        flags.append(f"multi-sheet merged (시트 {len(sheets)}개 통합: {sheets})")
 
     profile = {
         "dataset_id": dataset_id,
