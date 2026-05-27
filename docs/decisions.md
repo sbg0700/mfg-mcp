@@ -175,3 +175,19 @@ backend(approved_keys), executor(approved_keys set 기반 전 경로), frontend(
 조정: ① Catalog는 규칙이 쓰는 지식(LLM 판단재료 아님) ② slot contract는 YAML 필드만(자동분류때 활성화)
 ③ STEP1 닫고 Module Catalog는 STEP 1.5 분리 ④ 노드 5개(사출/CNC/프레스/검사/PdM)로 시작
 → Validator에 5번째 "도메인 범위 검증" 추가 예정. 드래그앤드롭 UI는 STEP 3.
+
+## 2026-05-27 (이어서) — lineage/데이터셋 저장 검증 + 조회 엔드포인트
+
+### 검증 결과
+- 데이터셋 저장: data/processed/에 <ds>__backup.parquet + <ds>__processed.parquet (4개 데이터셋 8파일 확인)
+- lineage: 인메모리 _STORE에 변환별 기록 (의미그룹/전략/멤버수/승인ID/롤백여부) — 7건 정상
+- 사출 정규화 검증: 1ST INJECTION VELOCITY 평균=-1.412 (0 아님) = 그룹공통 정규화로 시퀀스 추세 보존 증명
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-41 | /api/lineage 조회 엔드포인트 추가 | lineage가 기록만 되고 볼 수 없던 문제. 추적가능성(SI 컴플라이언스) 가시화 |
+| D-42 | backend도 from harness import lineage (executor와 동일 경로) | 같은 _STORE 공유 보장 (경로 다르면 별도 store 생성됨) |
+
+### 알려진 한계 (추후)
+- lineage 인메모리 → 컨테이너 재시작 시 소실. Sprint 2에서 PostgreSQL로 이전 (D-41 관련)
+- processed parquet 다운로드/미리보기 UI 없음 → 2층에서

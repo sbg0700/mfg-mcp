@@ -150,6 +150,15 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
         raise HTTPException(500, f"execute failed: {e}")
 
 
+@app.get("/api/lineage")
+async def lineage_endpoint(dataset_id: str) -> dict:
+    """데이터셋의 변환 이력(lineage) 전체 조회. SI 컴플라이언스 — 추적 가능성 증명.
+    각 변환의 무엇을/언제/누가/승인여부/롤백가능 여부를 시간순으로 반환."""
+    from harness.lineage import get_chain  # executor와 동일 경로 (같은 _STORE 공유)
+    chain = get_chain(dataset_id)
+    return {"dataset_id": dataset_id, "n_records": len(chain), "chain": chain}
+
+
 @app.get("/")
 async def root() -> FileResponse:
     """더미 대시보드 서빙."""
