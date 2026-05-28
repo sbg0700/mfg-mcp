@@ -30,12 +30,14 @@ def _permission_for(operation: str) -> str:
     return OPERATION_PERMISSION.get(operation, Permission.L3).value
 
 
-def _candidate_operations(profile: dict) -> list[dict]:
-    """[규칙 단계] Inspector가 잡은 flags를 보고 '후보 작업'을 결정론적으로 추린다.
-    LLM에게 빈 캔버스를 주지 않기 위함 (Harness: 도구 스키마 검증 정신)."""
+def _candidate_operations(profile: dict, constraints: dict | None = None) -> list[dict]:
+    """[규칙 단계] Inspector가 잡은 flags + 사용자 constraints를 보고 '후보 작업'을 결정론적으로 추린다.
+    LLM에게 빈 캔버스를 주지 않기 위함 (Harness: 도구 스키마 검증 정신).
+    constraints는 사용자가 Page 3에서 입력한 값(예: {"injection_velocity": [40, 70]})."""
     candidates: list[dict] = []
     flags = profile.get("deterministic_flags", [])
     columns = profile.get("columns", [])
+    constraints = constraints or {}
 
     # 인코딩 비정상 → 인코딩 정규화 (L1)
     if any("non-utf8" in f or "encoding" in f for f in flags):
@@ -90,19 +92,48 @@ def _candidate_operations(profile: dict) -> list[dict]:
                             else "단독 표준화합니다."),
         })
 
+    # ★사용자 제약(constraints) → remove_outlier 후보 (L2)
+    #   constraint 키와 일치하는 컬럼이 데이터에 있으면 outlier 제거 후보 추가.
+    #   "위반 판정 자체"는 Validator가 결정론(산수)으로 한다 — 여기선 후보만 등록 (LLM 아님).
+    if constraints:
+        column_names = {str(c.get("name")): c.get("name") for c in columns}
+        column_names_lower = {str(c.get("name")).lower(): c.get("name") for c in columns}
+        already = {(c.get("operation"), c.get("target_column")) for c in candidates}
+        for key, bounds in constraints.items():
+            actual = column_names.get(key) or column_names_lower.get(str(key).lower())
+            if not actual:
+                continue   # 데이터에 일치 컬럼 없음 — 후보 추가 안 함
+            if ("remove_outlier", actual) in already:
+                continue
+            candidates.append({
+                "operation": "remove_outlier", "target_column": actual,
+                "rationale": f"사용자 제약: '{actual}' 범위 {bounds}. "
+                             f"범위 밖 이상치 제거 후보 (위반 판정은 Validator가 결정론으로).",
+            })
+            already.add(("remove_outlier", actual))
+
     # 항상 기초 통계 (L1)
     candidates.append({"operation": "compute_stats", "target_column": None,
                        "rationale": "전처리 전후 비교를 위한 기초 통계."})
     return candidates
 
 
-async def plan(data_profile: dict, constraints: dict | None = None, model: str | None = None) -> dict:
-    """DataProfile → PreprocessingPlan."""
+async def plan(data_profile: dict, constraints: dict | None = None,
+               module_context: dict | None = None, model: str | None = None) -> dict:
+    """DataProfile → PreprocessingPlan.
+
+    constraints: 사용자가 Page 3에서 입력한 제약 (예: {"injection_velocity": [40, 70]}).
+                 → 규칙이 remove_outlier 후보를 추가 (위반 판정은 Validator가 결정론으로).
+    module_context: Page 2에서 정해진 공정 맥락 (예: {"node_id":"injection_molding",
+                    "function":"process", "constraint_keys":[...]}).
+                    → LLM에 '참고 맥락'으로만 전달 (판단 재료 아님). 후보를 늘리지 않음.
+                    헌법 §환각방어: LLM이 새 작업을 만들거나 권한을 바꾸면 안 됨 (가드레일이 차단).
+    """
     constraints = constraints or {}
     dataset_id = data_profile.get("dataset_id", "unknown")
 
-    # 1) 규칙으로 후보 작업 추리기
-    candidates = _candidate_operations(data_profile)
+    # 1) 규칙으로 후보 작업 추리기 (constraints 위반 가능 컬럼 → remove_outlier 후보 포함)
+    candidates = _candidate_operations(data_profile, constraints)
 
     # 2) LLM에게 '순서 정하기 + 이유 다듬기'만 요청 (자유도 제한)
     from llm import generate  # backend/llm.py
@@ -119,6 +150,14 @@ async def plan(data_profile: dict, constraints: dict | None = None, model: str |
         f"flags: {data_profile.get('deterministic_flags', [])}\n"
         f"candidate_operations: {json.dumps(candidates, ensure_ascii=False)}\n"
     )
+    # ★module_context는 '참고 맥락'으로만 주입 — LLM이 순서·이유를 더 잘 정하게 돕는 용도.
+    #   판단 재료가 아니며, 새 작업을 만들 수 없음 (후보가 진실의 원천).
+    if module_context:
+        node_id = module_context.get("node_id", "?")
+        function = module_context.get("function", "?")
+        prompt += (
+            f"context: 이 데이터는 '{node_id}' 공정의 '{function}' 목적 데이터입니다. (참고용)\n"
+        )
     raw = await generate(prompt, system=system, fmt_json=True, model=model)
     llm_order: list[str] = []      # LLM이 제안한 operation 실행 순서
     llm_rationale: dict = {}        # operation -> 다듬어진 이유
