@@ -571,7 +571,7 @@ const [selectedModule, setSelectedModule] = useState<{
 | order_cp949 | — | — | ⭕ | CP949 인코딩 |
 | wafer_defect | — | — | ⭕ | 6 클래스 이미지 + CNN |
 
-★베타 환경 분리★: 시연용 4 시나리오 (사용자 합의)를 별도 환경(예: `docker-compose.beta.yml` 또는 같은 환경 다른 session_id) 에서 운영. 실제 운영 코드와 코드 자체는 동일, 데이터/세션만 분리.
+**베타 환경 분리**: 시연용 4 시나리오 (사용자 합의)를 별도 환경(예: `docker-compose.beta.yml` 또는 같은 환경 다른 session_id) 에서 운영. 실제 운영 코드와 코드 자체는 동일, 데이터/세션만 분리.
 
 ---
 

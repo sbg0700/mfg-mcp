@@ -1,8 +1,8 @@
 # 0_variable_index_v5 — manufacturing-mcp 변수 목차 (v5)
 
-> **목적**: 추후 공정·MCP 도구·작업·API·컴포넌트 등 ★확장 가능한 항목★ 추가 시 한눈에 영향 범위 파악. 책의 목차처럼 변수명 list + 각 변수의 정의/사용 위치 인덱스.
+> **목적**: 추후 공정·MCP 도구·작업·API·컴포넌트 등 확장 가능한 항목 추가 시 한눈에 영향 범위 파악. 책의 목차처럼 변수명 list + 각 변수의 정의/사용 위치 인덱스.
 >
-> **갱신 정책**: 변수 추가/제거/이동 시 본 파일 ★즉시 갱신★ + `0_CHANGELOG_v5.md` 에 변경 사유 + 영향 파일 + 기초 설계도 정합 기록.
+> **갱신 정책**: 변수 추가/제거/이동 시 본 파일 즉시 갱신 + `0_CHANGELOG_v5.md` 에 변경 사유 + 영향 파일 + 기초 설계도 정합 기록.
 >
 > **작성일**: 2026-05-27 (Phase 1+2+3 완료 + 재구조화 요청 반영)
 
@@ -30,10 +30,10 @@
 
 | 모달리티 | 정의 위치 (서버) | 도구 위치 | 데이터 위치 | 명세 |
 |---|---|---|---|---|
-| `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/kamp/L1_press_forming/`, `L1_cnc_lathe_quality/` 등 | spec-1.md Part 1-3 |
-| `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/kamp/L2_wafer_defect/`, `L2_welding_bead/` 등 | 〃 |
-| `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/kamp/<event-log 더미>/` | 〃 |
-| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/kamp/order_cp949/` | 〃 |
+| `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/kamp/L1_press_forming/`, `L1_cnc_lathe_quality/` 등 (시나리오 A 가정, spec-1 Part 1-9-1 결정 대기) | spec-1.md Part 1-3 |
+| `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/kamp/L2_wafer_defect/`, `L2_welding_bead/` 등 (시나리오 A 가정) | 〃 |
+| `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/kamp/<event-log 더미>/` (시나리오 A 가정) | 〃 |
+| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/kamp/order_cp949/` (시나리오 A 가정) | 〃 |
 
 각 MCP 서버 = FastAPI HTTP, 같은 7도구 계약 (CLAUDE.md §4).
 
@@ -50,7 +50,7 @@
 | `maintenance` | 〃 | 〃 | 〃 |
 | `reference` | 〃 | 〃 | 〃 |
 
-★주의★: 코드의 권한 등급 (L1/L2/L3) 과 ★완전히 다른 차원★. blueprint Part 6-3 참조.
+주의: 코드의 권한 등급 (L1/L2/L3) 과 완전히 다른 차원. blueprint Part 6-3 참조.
 
 ---
 
@@ -104,7 +104,7 @@
 
 ---
 
-## 5. 페이지 + Prefix (6종, ★새 명명 규칙★)
+## 5. 페이지 + Prefix (6종, 새 명명 규칙)
 
 > **확장 정책**: 페이지 추가 시 prefix 형식 `step<N>_<주제>` 유지.
 
@@ -167,8 +167,8 @@ backend/routers/
   ├── step1_line.py             # GET /api/lines, POST /api/sessions/create
   ├── step2_user_input_pipeline.py  # PUT /api/sessions/{id}/structure
   ├── step3_user_input_data.py  # /api/datalake/*, PUT /api/sessions/{id}/full
-  ├── step4_standardize.py      # /api/execute_pipeline, /api/pipeline/{id}/*
-  ├── step5_analyze.py          # /api/aggregate_context/{id}, /api/analyze/{id}/*
+  ├── step4_standardize.py      # /api/execute_pipeline, /api/pipeline/{id}/*, /api/aggregate_context/{id} (Page 4 완료 시 자동 트리거)
+  ├── step5_analyze.py          # /api/analyze/{id}/*
   └── step6_modeling.py         # /api/model/{id}/*
 ```
 
@@ -176,7 +176,7 @@ backend/routers/
 
 ## 6. OPERATION_PERMISSION (12종)
 
-> **단일 소스**: `harness/guardrails.py`. ★Planner 와 양쪽 동기화 필수★.
+> **단일 소스**: `harness/guardrails.py`. Planner 와 양쪽 동기화 필수.
 > **확장 정책**: 새 작업 추가 시 `harness/guardrails.py` + `agents/planner/planner_schemas.py` (OperationType) 둘 다 갱신. Planner LLM이 새 작업 생성 ❌ (가드레일이 차단).
 
 ### L1 (자동 실행, 3종)
@@ -219,7 +219,7 @@ backend/routers/
 | **`apply_preprocessing`** | L1/L2/L3 | **POST** | 〃 | 〃 |
 | `lineage` | L1 | GET | 〃 | 〃 |
 
-★POST 2개★ (check_constraints, apply_preprocessing) — body 에 dataset_id + constraints/operations 전달.
+POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + constraints/operations 전달.
 
 ---
 
@@ -255,7 +255,7 @@ backend/routers/
 | `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` |
 | `step6_modeling` | `GET /api/model/{id}/recommend`, `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` |
 
-★추가 정책★: 새 엔드포인트 추가 시 본 파일 + spec Part 1-3/9 + 해당 라우터 파일 갱신.
+**추가 정책**: 새 엔드포인트 추가 시 본 파일 + spec Part 1-3/9 + 해당 라우터 파일 갱신.
 
 ---
 
@@ -265,13 +265,13 @@ backend/routers/
 
 | Prefix | 컴포넌트 |
 |---|---|
-| (공통, 모든 페이지) | `ModelDropdown`, `Breadcrumb` |
+| (공통, 모든 페이지 — `frontend/step_common/`) | `ModelDropdown`, `Breadcrumb`, `ProgressBar` (Page 4·6 진행률 공용) |
 | `step1_line` | `LineRadioGroup` |
 | `step2_user_input_pipeline` | `StageBox` (DnD), `ModuleCard` (draggable), `CatalogPanel` |
 | `step3_user_input_data` | `ModuleCard` (expandable), `DatasetSelector`, `ConstraintForm`, `UploadModal` |
-| `step4_standardize` | `ApprovalCard`, `NaturalInput`, `AlarmBanner`, `LLMInterpretationPanel`, `ProgressBar` |
+| `step4_standardize` | `ApprovalCard`, `NaturalInput` (Page 4·5 공용), `AlarmBanner`, `LLMInterpretationPanel` |
 | `step5_analyze` | `QuestionRadioGroup`, `ChartPanel`, `DataGuardWrapper` |
-| `step6_modeling` | `ModelCard`, `TwoDepthDecisionModal`, `TrainingProgress`, `ResultsDashboard`, `SHAPModal` |
+| `step6_modeling` | `ModelCard`, `TwoDepthDecisionModal`, `TrainingProgress`, `ResultsDashboard`, `SHAPModal`, `ModuleCard` (재사용) |
 
 ---
 
@@ -281,7 +281,7 @@ backend/routers/
 
 | 파일 | 내용 | 우선순위 | 명세 정의 |
 |---|---|---|---|
-| `catalogs/lines.yaml` | Line 3 × Stage × Node × Module 슬롯 (위 §3, §4) | ★1순위★ | spec-1.md Part 1-2 (가), 부록 A |
+| `catalogs/lines.yaml` | Line 3 × Stage × Node × Module 슬롯 (위 §3, §4) | 1순위 | spec-1.md Part 1-2 (가), 부록 A |
 | `catalogs/modules.yaml` | Node 별 도메인 지식 (constraint_keys, recommended_models — v4: typical_ranges 디폴트 제거) | 1순위 | spec-1.md Part 1-2 (가) constraint_keys |
 | `catalogs/modalities.yaml` | 4 모달리티 정의 (UI 메타) | 2순위 | 위 §1 |
 | `catalogs/functions.yaml` | 4 Function 축 + 분석 목적 매핑 | 2순위 | 위 §2 + 부록 B |
@@ -305,7 +305,7 @@ backend/routers/
 
 ## 12. 환각 방어 메커니즘 위치
 
-> **확장 정책**: 새 LLM 호출 지점 추가 시 ★반드시 환각 방어 메커니즘★ 명시 + 본 표 갱신.
+> **확장 정책**: 새 LLM 호출 지점 추가 시 반드시 환각 방어 메커니즘 명시 + 본 표 갱신.
 
 | 위치 | 메커니즘 | 명세 위치 |
 |---|---|---|
@@ -328,7 +328,7 @@ backend/routers/
 
 | 단계 | 데이터 | 사용자 | 검증 우선 |
 |---|---|---|---|
-| 알파 | KAMP 더미 (`data/lake/kamp/`) | 개발자 본인 | Phase 3 의 8 검증 항목 모두 (컴포넌트/API/에러/테스트/데모/부록 A·B·C) + LLM 모니터링 7 지표 |
+| 알파 | KAMP 더미 (`data/lake/kamp/` — 시나리오 A 가정, 알파 시 1-9-1 결정 확정) | 개발자 본인 | Phase 3 의 8 검증 항목 모두 (컴포넌트/API/에러/테스트/데모/부록 A·B·C) + LLM 모니터링 7 지표 + 데이터 경로 시나리오 A/B 최종 결정 |
 | 베타 | 4 시나리오 (B/D/A/C) | 팀원 시연 | UX + 시연 흐름 + 차별점 5가지 전달 |
 | 운영 | 고객 자기 데이터 (`data/lake/registered/`) | 공장 관리자 | 실용성 + 가치 + KAMP 등록 시나리오 A/B 결정 |
 
@@ -336,7 +336,7 @@ backend/routers/
 
 ## 14. 문서 인덱스
 
-본 프로젝트의 ★문서 파일★ 들 (v5 통일):
+본 프로젝트의 문서 파일들 (v5 통일):
 
 진입 가이드: **`0_README_v5.md`** (가장 먼저 읽기)
 
@@ -354,7 +354,7 @@ backend/routers/
 
 ### 단계 진입 시 필독 (사용자 합의)
 
-각 Phase 진입 시 ★3 파일★ 필독:
+각 Phase 진입 시 3 파일 필독:
 1. `0_project_blueprint_v5.md` (청사진)
 2. `0_CHANGELOG_v5.md` (변경 로그)
 3. 해당 Phase 명세서 (`0_pipeline_ui_spec-1_v5.md` / `-2.md` / `-3.md`)

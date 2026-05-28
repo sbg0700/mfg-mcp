@@ -270,7 +270,7 @@ Stage 처리 시작 시 자동 호출:
 skip 시:
 - 해당 모듈 처리 skip
 - Validator.next_action: `validation_concern`
-- Page 6 모델 추천 시 ★낮은 신뢰도★ 표시
+- Page 6 모델 추천 시 낮은 신뢰도 표시
 
 ### 5-8. Context Aggregator 자동 트리거
 
@@ -667,7 +667,7 @@ body: { "model_name": str, "mode": "quick"|"full"|"skip", "options": dict }
 [+ 풀 대시보드] 클릭 시 추가:
 - ROC Curve (binary 분류)
 - 예측 샘플 (실제 vs 예측 표)
-- SHAP 분석 (★시간 추가 — 모달 확인)
+- SHAP 분석 (시간 추가 — 모달 확인)
 - Precision-Recall Curve (불균형 강조)
 - 학습 곡선 (train/val loss)
 
