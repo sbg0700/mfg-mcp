@@ -1,0 +1,64 @@
+# catalogs/modules.yaml
+# ──────────────────────────────────────
+# 정의: Node별 도메인 지식 (constraint_keys 구조 + recommended_models)
+# 사용처: agents/planner (module_context), Validator (constraint 검증), Page 3 ConstraintForm, Page 6 모델추천
+# 확장 정책: typical_ranges 값 디폴트 금지(D-43). 구조(키)만. 값은 사용자 입력.
+# 정합: blueprint Part 4-3, variable_index §11
+# ──────────────────────────────────────
+
+injection_molding:
+  display_name: "사출 성형"
+  function_hints: [process, quality, maintenance]
+  constraint_keys:
+    - { key: injection_velocity, unit: "mm/s", type: range }
+    - { key: pack_pressure,      unit: "MPa",  type: range }
+    - { key: cycle_time,         unit: "sec",  type: range }
+    - { key: mold_temperature,   unit: "°C",   type: range }
+  recommended_models:
+    - { name: "RandomForestRegressor", task: regression,     when: "process 최적화" }
+    - { name: "IsolationForest",       task: anomaly,        when: "maintenance 이상감지" }
+    - { name: "XGBoostClassifier",     task: classification, when: "quality 양/불 판정" }
+
+cnc_cutting:
+  display_name: "CNC 절삭"
+  function_hints: [process, maintenance]
+  constraint_keys:
+    - { key: servo_load,    unit: "%",      type: range }
+    - { key: spindle_speed, unit: "rpm",    type: range }
+    - { key: feed_rate,     unit: "mm/min", type: range }
+  recommended_models:
+    - { name: "RandomForestClassifier", task: classification, when: "품질 판정" }
+    - { name: "IsolationForest",        task: anomaly,        when: "공구 마모 감지" }
+
+press_forming:
+  display_name: "프레스 성형"
+  function_hints: [process, quality]
+  constraint_keys:
+    - { key: press_force,     unit: "kN",   type: range }
+    - { key: stroke_speed,    unit: "mm/s", type: range }
+    - { key: die_temperature, unit: "°C",   type: range }
+  recommended_models:
+    - { name: "RandomForestRegressor",  task: regression,     when: "성형력 예측" }
+    - { name: "RandomForestClassifier", task: classification, when: "결함 판정" }
+
+semiconductor_inspect:
+  display_name: "반도체 검사"
+  function_hints: [quality]
+  constraint_keys:
+    - { key: defect_class_imbalance, unit: "%",  type: range }
+    - { key: image_resolution_min,   unit: "px", type: range }
+    - { key: pass_rate,              unit: "%",  type: range }
+  recommended_models:
+    - { name: "CNNClassifier",          task: classification, when: "결함 분류 (이미지)" }
+    - { name: "RandomForestClassifier", task: classification, when: "메타 기반 결함 판정" }
+
+pdm:
+  display_name: "PdM 설비"
+  function_hints: [maintenance]
+  constraint_keys:
+    - { key: vibration_rms,       unit: "mm/s", type: range }
+    - { key: bearing_temperature, unit: "°C",   type: range }
+    - { key: motor_current,       unit: "A",    type: range }
+  recommended_models:
+    - { name: "IsolationForest",       task: anomaly,    when: "이상 진동/온도 감지" }
+    - { name: "RandomForestRegressor", task: regression, when: "잔여수명(RUL) 예측" }

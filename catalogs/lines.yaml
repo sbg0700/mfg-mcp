@@ -1,0 +1,128 @@
+# catalogs/lines.yaml
+# ──────────────────────────────────────
+# 정의: 3 Line × Node × Module 슬롯 카탈로그 (사전정의 파이프라인 구조)
+# 사용처: backend /api/lines, agents/planner (module_context), Page 2 CatalogPanel
+# 확장 정책: 새 Line/Node 추가 가능. 5번째 모달리티는 금지(무관 — 여긴 공정축).
+# 정합: blueprint 부록 A, variable_index §3·§4
+# ──────────────────────────────────────
+
+- line_id: module_1_metal_processing
+  display_name: "금속 가공·검사 라인"
+  max_stages: 6
+  stages:
+    - node_id: primary_forming
+      display_name: "1차 성형"
+      max_modules: 2
+      available_modules:
+        - { function: maintenance, hint_dataset: "L3_mold_condition" }
+        - { function: maintenance, hint_dataset: "L3_mold_anomaly" }
+    - node_id: cnc_cutting
+      display_name: "CNC 절삭"
+      max_modules: 2
+      available_modules:
+        - { function: process,     hint_dataset: "L1_cnc_lathe_quality" }
+        - { function: maintenance, hint_dataset: "L3_cnc_roughing" }
+    - node_id: mct_machining
+      display_name: "MCT 가공"
+      max_modules: 3
+      available_modules:
+        - { function: process,     hint_dataset: "L1_mct_tool_manage" }
+        - { function: process,     hint_dataset: "L1_mct_tool_improve" }
+        - { function: maintenance, hint_dataset: "L3_mct_condition_inspect" }
+    - node_id: precision_inspect
+      display_name: "정밀 가공·치수 검사"
+      max_modules: 2
+      available_modules:
+        - { function: quality,     hint_dataset: "L2_cnc_load_dimension" }
+        - { function: maintenance, hint_dataset: "L3_precision_machine" }
+    - node_id: surface_inspect
+      display_name: "표면 검사"
+      max_modules: 1
+      available_modules:
+        - { function: quality, hint_dataset: "L2_inspection_image" }
+    - node_id: pdm
+      display_name: "PdM 설비"
+      max_modules: 3
+      available_modules:
+        - { function: maintenance, hint_dataset: "L3_rotary_drill" }
+        - { function: maintenance, hint_dataset: "L3_solenoid_roughing" }
+        - { function: maintenance, hint_dataset: "L3_guideloader_drill" }
+
+- line_id: module_2_forming_joining
+  display_name: "성형·접합·표면처리·회전기 라인"
+  max_stages: 5
+  stages:
+    - node_id: press_forming
+      display_name: "프레스 성형"
+      max_modules: 2
+      available_modules:
+        - { function: process, hint_dataset: "L1_press_forming" }
+        - { function: quality, hint_dataset: "L2_press_aluminum" }
+    - node_id: welding
+      display_name: "용접"
+      max_modules: 2
+      available_modules:
+        - { function: process, hint_dataset: "L1_welding_auto" }
+        - { function: process, hint_dataset: "L1_welding_condition" }
+    - node_id: welding_inspect
+      display_name: "용접 검사"
+      max_modules: 2
+      available_modules:
+        - { function: quality, hint_dataset: "L2_welding_bead" }
+        - { function: quality, hint_dataset: "L2_welding_electrode" }
+    - node_id: surface_treatment
+      display_name: "표면 처리·테이핑"
+      max_modules: 1
+      available_modules:
+        - { function: quality, hint_dataset: "L2_vision_taping" }
+    - node_id: rotary_pdm
+      display_name: "회전기 PdM"
+      max_modules: 2
+      available_modules:
+        - { function: maintenance, hint_dataset: "L3_blower_vibration" }
+        - { function: maintenance, hint_dataset: "L3_elevator_vibration" }
+
+- line_id: module_3_polymer_electronic
+  display_name: "폴리머 성형·전자 검사·진동 신호 라인"
+  max_stages: 7
+  stages:
+    - node_id: order_planning
+      display_name: "주문 계획"
+      max_modules: 1
+      available_modules:
+        - { function: reference, hint_dataset: "order_cp949" }
+    - node_id: injection_molding
+      display_name: "사출 성형"
+      max_modules: 3
+      available_modules:
+        - { function: process, hint_dataset: "L1_injection_optimize" }
+        - { function: process, hint_dataset: "L1_injection_production" }
+        - { function: process, hint_dataset: "L1_cnc_machine_optimize" }
+    - node_id: extrusion
+      display_name: "압출"
+      max_modules: 1
+      available_modules:
+        - { function: maintenance, hint_dataset: "L3_extrusion_pdm" }
+    - node_id: precision_parts
+      display_name: "정밀 부품"
+      max_modules: 1
+      available_modules:
+        - { function: maintenance, hint_dataset: "L3_vacuum_pump" }
+    - node_id: semiconductor_inspect
+      display_name: "반도체 검사"
+      max_modules: 2
+      available_modules:
+        - { function: quality, hint_dataset: "L2_auto_console_detect" }
+        - { function: quality, hint_dataset: "L2_wafer_defect" }
+    - node_id: ict_inspection
+      display_name: "ICT 검사"
+      max_modules: 2
+      available_modules:
+        - { function: reference, hint_dataset: "L4_ict_checker" }
+        - { function: reference, hint_dataset: "L4_ict_inspection" }
+    - node_id: vibration_simulation
+      display_name: "진동 시뮬"
+      max_modules: 2
+      available_modules:
+        - { function: maintenance, hint_dataset: "L3_vibration_fault_sim" }
+        - { function: maintenance, hint_dataset: "L3_vibration_fault_sim2" }
