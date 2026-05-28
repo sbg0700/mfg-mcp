@@ -191,3 +191,40 @@ backend(approved_keys), executor(approved_keys set 기반 전 경로), frontend(
 ### 알려진 한계 (추후)
 - lineage 인메모리 → 컨테이너 재시작 시 소실. Sprint 2에서 PostgreSQL로 이전 (D-41 관련)
 - processed parquet 다운로드/미리보기 UI 없음 → 2층에서
+
+## 2026-05-28 — STEP 1B-1: Module Catalog (lines.yaml + modules.yaml) + Planner·Validator 확장
+
+명세: `docs/specs/STEP_1B-1_module_catalog.md` (claude.ai 세션에서 확정).
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-43 | 카탈로그에 typical_ranges 디폴트 값 금지, constraint_keys 구조만 | 정상범위는 공장·설비·재료마다 달라 디폴트가 틀리면 잘못된 판단 유발. "규칙이 결정"의 연장 — 카탈로그는 구조 제안, 값은 사용자 입력 |
+| D-44 | `catalogs/lines.yaml` = blueprint 부록 A 그대로 (3 Line × 18 Node × 34 Module) | 사전정의 파이프라인 구조 단일 소스. Page 2 CatalogPanel + /api/lines가 이 파일 하나만 읽음 |
+| D-45 | `catalogs/modules.yaml` 5 Node부터 시작 (injection_molding/cnc_cutting/press_forming/semiconductor_inspect/pdm) | 4 모달리티 더미를 커버하는 최소셋. 나머지 13 Node는 한 줄씩 점진 확장 |
+| D-46 | `module_context`는 LLM '참고 맥락'으로만 주입 (판단 재료 아님) | 후보(candidates)가 진실의 원천 유지. LLM이 module_context로 새 작업/권한 못 만듦 (가드레일 유지) |
+| D-47 | constraints는 규칙(`_candidate_operations`)이 후보 추가에 사용, LLM 아님 | constraint 키와 일치하는 컬럼이 데이터에 있으면 remove_outlier 후보 추가 — 결정론 |
+| D-48 | Validator 5번째 검증 `_check_constraint_violation` — 처리 후 parquet에서 범위 위반 행 수 산수 | 사용자 입력 constraints 기준 (카탈로그 typical_ranges 아님 — 없음). LLM 안 씀 |
+| D-49 | constraints 비면(1층 단일모드) 5번째 검증 skip | 기존 4 모달리티 회귀 0 — checks.constraint=True (위반 없음으로 통과) |
+| D-50 | `/api/execute`에 constraints/module_context 옵션 필드 추가 (기본 None) | UI 없이도 endpoint로 검증 가능. 기존 호출(`{dataset_id,modality,approved_keys}`)는 그대로 동작 |
+
+### 구현 산출물
+- `catalogs/lines.yaml` (3 Line × 18 Node × 34 Module — 부록 A 그대로)
+- `catalogs/modules.yaml` (5 Node, constraint_keys 구조만, typical_ranges 0)
+- `agents/planner/planner.py` — `_candidate_operations(profile, constraints)`, `plan(...,module_context=...)`
+- `agents/validator/validator.py` — `_check_constraint_violation`, `validate(...,constraints=...)`
+- `backend/main.py` — `GET /api/lines`; `POST /api/execute`에 constraints/module_context 옵션
+- `backend/requirements.txt` — PyYAML 명시 (런타임 컨테이너는 이미 보유 중)
+
+### 검증 결과 (명세 §9 체크리스트)
+- 3 Line / 18 Node / 34 Module 모두 정의, yaml.safe_load 파싱 성공
+- modules.yaml 5 Node, typical_ranges 부재(코드 검사로 확인)
+- `GET /api/lines` 200 + 카탈로그 JSON 반환 (실 endpoint hit)
+- `plan(profile, constraints, module_context)`: constraints 위반 가능 컬럼 → remove_outlier 후보 추가, module_context는 프롬프트에 '참고용' 라인으로만 들어감, 옵션 빈 호출은 기존대로 동작
+- `_check_constraint_violation`: cnc_machine_injection의 1ST INJECTION VELOCITY [40,70] → 172/800행 위반 결정론 검출, severity=medium
+- 4 모달리티(timeseries/inspection-image/event-log/order) 회귀 0 — passed=True, checks 5종 모두 통과
+
+### STEP 1B-1 완료 마일스톤
+1층(모달리티 표준화) 위에 ★공정 축(Line/Node/Module)이 처음으로 카탈로그로 정의★됨.
+이게 2층(공장 단위 통합)으로 가는 가교 — 사용자는 이제 "어떤 라인의 어떤 노드 데이터인지" 명시 가능,
+시스템은 그 맥락에서 constraints를 받아 결정론적으로 검증.
+다음: STEP 1B-2 (Resumable Orchestrator + Context Aggregator) → STEP 1B-3 (Mini UI 6페이지).

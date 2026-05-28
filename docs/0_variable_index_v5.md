@@ -60,7 +60,7 @@
 
 | Line ID | Display | Max Stages | 정의 |
 |---|---|---|---|
-| `module_1_metal_processing` | 금속 가공·검사 라인 | 6 | `catalogs/lines.yaml` (예정) |
+| `module_1_metal_processing` | 금속 가공·검사 라인 | 6 | `catalogs/lines.yaml` (STEP 1B-1, 실재) |
 | `module_2_forming_joining` | 성형·접합·표면처리·회전기 라인 | 5 | 〃 |
 | `module_3_polymer_electronic` | 폴리머 성형·전자 검사·진동 신호 라인 | 7 | 〃 |
 
@@ -275,18 +275,18 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 
 ---
 
-## 11. 카탈로그 파일 (`catalogs/`, 예정)
+## 11. 카탈로그 파일 (`catalogs/`)
 
-> **알파 단계에서 작성 권장**. 사용자 검증 후 운영 진입.
+> **STEP 1B-1에서 1순위 2개 실재화** (lines.yaml + modules.yaml). 나머지는 단계별 추가.
 
-| 파일 | 내용 | 우선순위 | 명세 정의 |
-|---|---|---|---|
-| `catalogs/lines.yaml` | Line 3 × Stage × Node × Module 슬롯 (위 §3, §4) | 1순위 | spec-1.md Part 1-2 (가), 부록 A |
-| `catalogs/modules.yaml` | Node 별 도메인 지식 (constraint_keys, recommended_models — v4: typical_ranges 디폴트 제거) | 1순위 | spec-1.md Part 1-2 (가) constraint_keys |
-| `catalogs/modalities.yaml` | 4 모달리티 정의 (UI 메타) | 2순위 | 위 §1 |
-| `catalogs/functions.yaml` | 4 Function 축 + 분석 목적 매핑 | 2순위 | 위 §2 + 부록 B |
-| `catalogs/data_guards.yaml` | Page 5 데이터 규모 가드 7종 | 3순위 | spec-2.md Part 6-5 |
-| `catalogs/recommended_models.yaml` | 모델 추천 풀 | 3순위 | spec-2.md Part 7-2 |
+| 파일 | 상태 | 내용 | 우선순위 | 명세 정의 |
+|---|---|---|---|---|
+| `catalogs/lines.yaml` | ★실재 (STEP 1B-1)★ | Line 3 × Stage × Node × Module 슬롯 (위 §3, §4) | 1순위 | spec-1.md Part 1-2 (가), blueprint 부록 A |
+| `catalogs/modules.yaml` | ★실재 (STEP 1B-1, 5 Node)★ | Node 별 도메인 지식 (constraint_keys 구조만, **typical_ranges 디폴트 금지** — D-43) | 1순위 | spec-1.md Part 1-2 (가) constraint_keys |
+| `catalogs/modalities.yaml` | 예정 | 4 모달리티 정의 (UI 메타) | 2순위 | 위 §1 |
+| `catalogs/functions.yaml` | 예정 | 4 Function 축 + 분석 목적 매핑 | 2순위 | 위 §2 + blueprint 부록 B |
+| `catalogs/data_guards.yaml` | 예정 | Page 5 데이터 규모 가드 7종 | 3순위 | spec-2.md Part 6-5 |
+| `catalogs/recommended_models.yaml` | 예정 | 모델 추천 풀 | 3순위 | spec-2.md Part 7-2 |
 
 각 파일 헤더 권장 형식:
 ```yaml
@@ -319,6 +319,23 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | Page 6 모델 추천 | `available_models` 만 + fit_score 1-5 범위 강제 | spec-2.md Part 7-2 |
 | LLM judge (미업로드 알람) | 알람/스킵 판단만, 결정은 사용자 | spec-1.md Part 4-5 |
 | LLM judge (constraint_keys 필수성) | 알람만, 입력은 사용자 | spec-1.md Part 4-5 |
+
+---
+
+## 12.5. Validator 검증 종류 (5종, STEP 1B-1 갱신)
+
+> **단일 소스**: `agents/validator/validator.py`.
+> **확장 정책**: 6번째 검증 추가 시 본 표 + Validator 본 파일 + 명세 갱신.
+
+| 검증 | 헬퍼 | 입력 | 무엇을 보나 | 도입 |
+|---|---|---|---|---|
+| 1. 컴플라이언스 | `_check_compliance` | results | done 단계의 lineage 누락 | D-36 (STEP 1) |
+| 2. 변환 결과 | `_check_transform_result` | results | fill_missing 결측 감소, normalize 멤버 수 등 | D-36 |
+| 3. 계획 무결성 | `_check_plan_integrity` | results, plan | 같은 작업 중복(operation+target) | D-36 |
+| 4. 회귀 | `_check_regression` | results, profile | 행 급감(50% 이상 손실) | D-36 |
+| 5. ★constraint | `_check_constraint_violation` | execution, constraints | 사용자 입력 constraints의 범위 위반 행 수 (processed parquet 결정론 산수) — typical_ranges 디폴트 아님 (D-43) | ★D-48 (STEP 1B-1)★ |
+
+`validate(execution, plan=None, profile=None, constraints=None)` — constraints가 비면 5번 검증 skip (회귀 0).
 
 ---
 
@@ -368,3 +385,4 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 > 상세 이력은 `0_CHANGELOG_v5.md` 참조.
 
 - 2026-05-27: 신규 작성 (Phase 1+2+3 완료 + 사용자 재구조화 요청 반영)
+- 2026-05-28: STEP 1B-1 반영 — catalogs/lines.yaml·modules.yaml 실재화 (§11), Validator 5번째 검증 표 추가 (§12.5), D-43~D-50 결정
