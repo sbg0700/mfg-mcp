@@ -127,23 +127,29 @@ class ExecuteReq(BaseModel):
     approved_keys: list[str] = []     # 사용자가 승인한 step_key 목록 (order 대신 안정적 식별자)
     model: str | None = None          # UI에서 선택한 모델
     modality: str = "timeseries"      # UI에서 선택한 모달리티
+    # ★STEP 1B-1: 사용자 입력 constraints + 공정 맥락 (둘 다 옵션 — 빈 값이면 기존 동작)
+    constraints: dict | None = None        # 예: {"injection_velocity": [40, 70]}
+    module_context: dict | None = None     # 예: {"node_id":"injection_molding","function":"process"}
 
 
 @app.post("/api/execute")
 async def execute_endpoint(req: ExecuteReq) -> dict:
     """Inspector → Planner → Executor → Validator 전체 체인 (Agentic Flow 1→2→3→4단).
-    approved_keys에 든 작업만 L2/L3 실행 (step_key 기반 — order 비결정성 회피)."""
+    approved_keys에 든 작업만 L2/L3 실행 (step_key 기반 — order 비결정성 회피).
+    constraints/module_context는 옵션 — 안 주면 기존 동작 그대로 (회귀 없음, STEP 1B-1)."""
     from inspector import inspect as run_inspect
     from planner import plan as run_plan
     from executor import execute as run_execute
     from validator import validate as run_validate
     try:
         profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality)
-        plan_result = await run_plan(profile, model=req.model)
+        plan_result = await run_plan(profile, constraints=req.constraints,
+                                     module_context=req.module_context, model=req.model)
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
                                         modality=req.modality)
-        # ★4단 Validator: 실행 결과를 plan·profile과 함께 검증
-        validation = await run_validate(exec_result, plan=plan_result, profile=profile)
+        # ★4단 Validator: 실행 결과를 plan·profile·constraints와 함께 검증 (5종)
+        validation = await run_validate(exec_result, plan=plan_result, profile=profile,
+                                        constraints=req.constraints)
         return {"profile": profile, "plan": plan_result,
                 "execution": exec_result, "validation": validation}
     except Exception as e:
@@ -157,6 +163,18 @@ async def lineage_endpoint(dataset_id: str) -> dict:
     from harness.lineage import get_chain  # executor와 동일 경로 (같은 _STORE 공유)
     chain = get_chain(dataset_id)
     return {"dataset_id": dataset_id, "n_records": len(chain), "chain": chain}
+
+
+@app.get("/api/lines")
+async def lines_endpoint() -> dict:
+    """Line·Node·Module 카탈로그 조회 (STEP 1B-1, Page 2 CatalogPanel 향). lines.yaml 파싱.
+    UI는 STEP 1B-3 — 여기선 카탈로그 JSON 반환만."""
+    import yaml
+    path = ROOT / "catalogs" / "lines.yaml"
+    if not path.exists():
+        raise HTTPException(500, f"catalog not found: {path}")
+    with open(path, encoding="utf-8") as f:
+        return {"lines": yaml.safe_load(f)}
 
 
 @app.get("/")
