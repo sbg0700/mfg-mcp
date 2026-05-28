@@ -4,14 +4,16 @@ agents/validator/validator.py — 4단 Validator (검증 강화).
 역할: Executor가 한 일이 올바른지 ★사후 검증★한다. Agentic Flow의 마지막 4단.
 헌법 "LLM은 제안, 규칙이 결정"의 후반부 — LLM/규칙이 만든 결과를 결정론적으로 검증.
 
-4종 검증:
+5종 검증:
   1. 컴플라이언스  — 모든 done 단계에 lineage가 있는가 (기록 없는 변환 = 추적 불가 = 위반)
   2. 변환 결과    — 변환이 의도대로 됐는가 (fill_missing 후 결측이 줄었나? normalize 됐나?)
   3. 계획 무결성  — 같은 작업이 중복 제안됐나 (width/height 중복 같은 것), 그룹 이중 처리?
   4. 회귀         — 전처리가 데이터를 망치진 않았나 (행 급감 등)
+  5. ★constraint — 사용자 입력 constraints를 처리 결과가 지키는가 (STEP 1B-1).
+                  카탈로그 typical_ranges 디폴트 아님 — 사용자 입력 기준 (D-43).
 
 검증 실패 시 → next_action으로 라우팅 (재시도/사람개입/검토권고).
-입력: ExecutionResult + (선택) PreprocessingPlan, DataProfile — 더 풍부한 검증을 위해.
+입력: ExecutionResult + (선택) PreprocessingPlan, DataProfile, constraints.
 """
 from __future__ import annotations
 from typing import Any
@@ -102,10 +104,81 @@ def _check_regression(results: list[dict], profile: dict | None) -> list[dict]:
     return issues
 
 
+def _bounds(spec: Any) -> tuple[float | None, float | None]:
+    """constraint 값을 (min, max) 튜플로 정규화. 지원 형식: [min,max] 리스트 또는 {"min":..,"max":..} 딕트.
+    None은 '제약 없음'으로 간주. 숫자가 아니면 None으로 변환."""
+    def _num(v: Any) -> float | None:
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+    if isinstance(spec, dict):
+        return _num(spec.get("min")), _num(spec.get("max"))
+    if isinstance(spec, (list, tuple)) and len(spec) >= 2:
+        return _num(spec[0]), _num(spec[1])
+    return None, None
+
+
+def _check_constraint_violation(execution: dict, constraints: dict | None) -> list[dict]:
+    """검증5 — 사용자가 Page 3에서 입력한 constraints를 처리 결과가 지키는가.
+    ★카탈로그 디폴트(typical_ranges)가 아니라 사용자 입력 constraints 기준★ (D-43, §2 spec).
+    위반 판정은 결정론(산수). LLM 안 씀. 1층 단일 모드(constraints 빈)는 skip."""
+    issues: list[dict] = []
+    if not constraints:
+        return issues
+    output_path = execution.get("output_path") or ""
+    if not isinstance(output_path, str) or not output_path.endswith(".parquet"):
+        return issues   # 이미지 등 비-parquet 경로는 컬럼 범위 검증 대상 아님
+
+    import os
+    if not os.path.exists(output_path):
+        return issues
+
+    try:
+        import pandas as pd
+        df = pd.read_parquet(output_path)
+    except Exception as e:
+        issues.append({"kind": "constraint", "severity": "low",
+                       "message": f"constraint 검증 스킵 (processed 로드 실패: {e})"})
+        return issues
+
+    col_names = {str(c).lower(): str(c) for c in df.columns}
+    for key, spec in constraints.items():
+        lo, hi = _bounds(spec)
+        if lo is None and hi is None:
+            continue
+        actual = col_names.get(str(key).lower())
+        if not actual:
+            issues.append({"kind": "constraint", "severity": "low",
+                           "message": f"constraint '{key}': 일치 컬럼 없음 (검증 스킵)"})
+            continue
+        series = pd.to_numeric(df[actual], errors="coerce")
+        n_total = int(series.notna().sum())
+        if n_total == 0:
+            continue
+        viol_mask = pd.Series(False, index=series.index)
+        if lo is not None:
+            viol_mask |= series < lo
+        if hi is not None:
+            viol_mask |= series > hi
+        n_viol = int(viol_mask.fillna(False).sum())
+        if n_viol > 0:
+            bound_str = f"[{lo if lo is not None else '-∞'}, {hi if hi is not None else '∞'}]"
+            issues.append({
+                "kind": "constraint", "severity": "medium",
+                "column": actual, "n_violations": n_viol, "n_total": n_total,
+                "bounds": [lo, hi],
+                "message": f"'{actual}' 범위 {bound_str} 위반 {n_viol}/{n_total}행 — 사용자 검토 권장",
+            })
+    return issues
+
+
 async def validate(execution: dict, plan: dict | None = None,
-                   profile: dict | None = None) -> dict:
-    """ExecutionResult 검증 → ValidationReport. 4종 검증 수행.
-    plan/profile을 주면 무결성·회귀 검증이 강화됨 (없어도 기본 검증은 동작)."""
+                   profile: dict | None = None,
+                   constraints: dict | None = None) -> dict:
+    """ExecutionResult 검증 → ValidationReport. 5종 검증 수행.
+    plan/profile을 주면 무결성·회귀 검증이 강화됨.
+    constraints를 주면 5번째 검증(constraint 위반) 동작. 안 주면 skip (회귀 없음)."""
     results = execution.get("results", [])
 
     done = [r for r in results if r.get("status") == "done"]
@@ -113,10 +186,11 @@ async def validate(execution: dict, plan: dict | None = None,
     pending = [r for r in results if r.get("status") == "awaiting_approval"]
 
     issues: list[dict] = []
-    issues += _check_compliance(results)            # 1. 컴플라이언스
-    issues += _check_transform_result(results)      # 2. 변환 결과
-    issues += _check_plan_integrity(results, plan)  # 3. 계획 무결성
-    issues += _check_regression(results, profile)   # 4. 회귀
+    issues += _check_compliance(results)                        # 1. 컴플라이언스
+    issues += _check_transform_result(results)                  # 2. 변환 결과
+    issues += _check_plan_integrity(results, plan)              # 3. 계획 무결성
+    issues += _check_regression(results, profile)               # 4. 회귀
+    issues += _check_constraint_violation(execution, constraints)  # 5. ★사용자 constraint
 
     high = [i for i in issues if i.get("severity") == "high"]
     medium = [i for i in issues if i.get("severity") == "medium"]
@@ -136,6 +210,7 @@ async def validate(execution: dict, plan: dict | None = None,
         "transform": not any(i["kind"] == "transform" for i in issues),
         "integrity": not any(i["kind"] == "integrity" for i in issues),
         "regression": not any(i["kind"] == "regression" for i in issues),
+        "constraint": not any(i["kind"] == "constraint" for i in issues),
     }
 
     return {
