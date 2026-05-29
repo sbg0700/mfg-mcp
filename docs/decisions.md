@@ -228,3 +228,50 @@ backend(approved_keys), executor(approved_keys set 기반 전 경로), frontend(
 이게 2층(공장 단위 통합)으로 가는 가교 — 사용자는 이제 "어떤 라인의 어떤 노드 데이터인지" 명시 가능,
 시스템은 그 맥락에서 constraints를 받아 결정론적으로 검증.
 다음: STEP 1B-2 (Resumable Orchestrator + Context Aggregator) → STEP 1B-3 (Mini UI 6페이지).
+
+## 2026-05-28 — STEP 1B-2a: Resumable Orchestrator (폴링형) + 미업로드 알람
+
+명세: `docs/specs/STEP_1B-2a_orchestrator.md` (claude.ai 세션에서 확정).
+스코프 분할: 1B-2a(이번, Orchestrator+judge) / 1B-2b(다음, Context Aggregator) / 1B-3(이후, UI+SSE).
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-51 | suspend-and-return + 폴링 (blueprint의 blocking awaiter `wait_for_approval` 채택 안 함) | SSE/이벤트루프 awaiter는 디버깅 복잡. 폴링은 상태머신을 dict로 직접 관찰 가능, 1B-3에서 UI가 SSE를 얹기 전까지 단순함 우선 |
+| D-52 | 세션 상태는 인메모리 dict (`backend/session_store.py`, `_SESSIONS`) | lineage 패턴(D-41) 동일. postgres 이전은 Sprint 2 |
+| D-53 | `pipeline_full.modules[].datalake_id` = 기존 dataset_id 직접 사용 (Data Lake catalog 미도입) | 카탈로그 레이어는 1B-3 이후. 지금은 4 모달리티 더미 dataset_id로 충분 |
+| D-54 | modality 결정 — module.modality 명시 > node_id 매핑(검사/주문) > timeseries 폴백 | 자동 modality 분류(D-40)는 여전히 미룸. 명시/매핑이 안전 |
+| D-55 | `llm_judge_data_necessity`는 알람 문구만 생성, 흐름 제어 0 | 환각 방어 연장(D-13, D-46) — 알람은 session["alarms"] 기록만, missing 모듈은 무조건 skip하고 진행. 판단 실패 시 likely_essential=False 안전 폴백 |
+| D-56 | `/approve`는 step_key 단건 누적, resume은 클라이언트가 `/execute_pipeline` 재호출로 트리거 | blocking 모델의 awaiter release(`notify_approval`) 안 씀. completed_module_keys/completed_stage_orders로 멱등 skip |
+| D-57 | 1층 `/api/execute`(단일 데이터셋) 시그니처 보존, 파이프라인은 별도 엔드포인트로 분리 | 회귀 0 보장 — 4 모달리티 검증된 1층 경로 그대로 |
+| D-58 | 세션 응답에 `public_view(session)` — `pipeline_full` 포함, JSON 직렬화 가능 형태만 | 디버그/폴링 시 UI에 풍부한 진행 정보 제공 |
+
+### 구현 산출물
+- `backend/session_store.py` (신규) — `create_session`/`get_session`/`save_session`/`public_view`
+- `agents/planner/data_necessity.py` (신규) — `llm_judge_data_necessity(stage, missing, uploaded, model)`
+- `backend/main.py` — 4 엔드포인트 추가:
+  - `POST /api/sessions/create` (pipeline_full 주입 → session_id)
+  - `POST /api/execute_pipeline` (resumable, suspend-and-return)
+  - `GET  /api/pipeline/{session_id}/status` (폴링)
+  - `POST /api/pipeline/{session_id}/approve` (step_key 누적)
+- `backend/main.py` 내부 헬퍼: `_resolve_modality(module, node_id)`
+
+### 검증 결과 (명세 §9 체크리스트)
+- `POST /api/sessions/create` → uuid4 session_id 반환
+- 1차 `/api/execute_pipeline`: cnc_machine_injection (constraints `{"1ST INJECTION VELOCITY":[40,70]}`) → `status=awaiting_approval`, pending 6 step_keys(remove_outlier + normalize_group ×5), alarm 1건(stage 0, missing maintenance 모듈)
+- `/approve` ×6 → `approved_step_keys` 누적 [1..6]
+- 2차 `/api/execute_pipeline` → 멈췄던 module 0.0부터 resume → `status=completed`, completed_stage_orders=[0], 알람 1건 유지(재알람 없음), validation.passed=True
+- `/api/pipeline/{id}/status` 폴링 → completed/pending=None/alarms=1 그대로
+- 1층 `/api/execute` 회귀 0 (mct_tool_manage_clean → passed=True, 5종 checks 모두 통과)
+- 2번째 모달리티(order/order_demand_cp949) 파이프라인 단일 호출 완료(L1만, passed=True)
+- `python3 -m py_compile` 통과 (main, session_store, data_necessity, planner, validator, executor, inspector)
+- 외부 API 호출 0, 모달리티 4종 유지 (5번째 미추가)
+
+### LLM judge 실제 출력 (참고)
+입력: stage `injection_molding`, missing `maintenance/?`, uploaded `process/cnc_machine_injection`
+LLM 응답(요약): `{"likely_essential": false, "alarm_ko": "현재 'process/cnc_machine_injection' 모듈만 업로드되어 주입 성형 공정 자체의 작동 과정에 대한 정보는 충분합니다. 따..."}`
+→ 흐름은 missing 모듈을 그대로 skip하고 진행 (LLM이 결정 못 함).
+
+### STEP 1B-2a 완료 마일스톤
+세션 상태 머신이 처음으로 실동작. 다중 Stage·Module을 ★suspend ↔ approve ↔ resume★으로
+폴링 처리. 1층 단일 데이터셋 경로(`/api/execute`)와 공존. 1B-3 UI에서 SSE 얹기 직전 단계.
+다음: STEP 1B-2b (Context Aggregator — 4단 판단 기록을 EDA/모델링으로 전파).

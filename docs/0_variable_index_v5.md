@@ -229,16 +229,31 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 
 | 자료구조 | 정의 | 생성 시점 | 저장 |
 |---|---|---|---|
-| `LineCatalog` | spec-1.md Part 1-2 (가) | 시스템 정적 | `catalogs/lines.yaml` (예정) |
+| `LineCatalog` | spec-1.md Part 1-2 (가) | 시스템 정적 | `catalogs/lines.yaml` (실재, STEP 1B-1) |
 | `PipelineStructure` | spec-1.md Part 1-2 (나) | Page 2 출력 | DB `sessions.structure` (JSONB) |
 | `PipelineFull` | spec-1.md Part 1-2 (다) | Page 3 출력 | DB `sessions.full_data` + 파일 시스템 |
+| ★`PipelineSession` | STEP 1B-2a 명세 §2 | `/api/sessions/create` 시점 | ★`backend/session_store.py::_SESSIONS` 인메모리★ (D-52, Sprint 2에 postgres) |
 | `PipelineResults` | spec-1.md Part 1-2 (라) | Page 4 출력 | DB `sessions.results` + `lineage.transformations` |
-| `PipelineStatus` | spec-2.md Part 5-2 | Page 4 실시간 | 메모리 (SSE 또는 폴링) |
+| `PipelineStatus` | spec-2.md Part 5-2 | Page 4 실시간 | 메모리 (현재 폴링; SSE는 1B-3) |
 | `AnalysisQuestion` | spec-1.md Part 1-2 (마) | Page 5 자동 생성 | DB `sessions.analysis` |
 | `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록 시점 | DB `datalake.entries` |
-| `AggregatedContext` | spec-1.md Part 1-2 (바) | Page 4 완료 후 자동 | DB `sessions.results` 확장 |
+| `AggregatedContext` | spec-1.md Part 1-2 (바) | Page 4 완료 후 자동 | DB `sessions.results` 확장 (1B-2b) |
 
 특히 `AggregatedContext` 의 `agent_records` 필드 = MCP 4단 판단 기록 보존 (사용자 비전 핵심).
+
+### `PipelineSession` 필드 (STEP 1B-2a 실재 인메모리)
+| 필드 | 타입 | 역할 |
+|---|---|---|
+| `session_id` | str(uuid4) | 키 |
+| `pipeline_full` | dict | 1-1 + 1-2 출력 (`line_id`, `stages[]`) |
+| `status` | str | `created`/`running`/`awaiting_approval`/`completed`/`error` |
+| `approved_step_keys` | list[str] | 누적 승인 (set은 JSON 직렬화 안 됨 → list) |
+| `completed_stage_orders` | list[int] | resume 시 skip |
+| `completed_module_keys` | list[str] | "stage.idx" 형식, resume 시 skip |
+| `pending` | dict\|None | suspend 시 멈춘 지점 (`{stage_order, module_key, dataset_id, plan, pending_steps[]}`) |
+| `module_results` | dict | `module_key → {profile, plan, execution, validation, modality, dataset_id}` |
+| `accumulated_context` | list[dict] | Stage 요약 누적 (1B-2b Aggregator 입력) |
+| `alarms` | list[dict] | `llm_judge_data_necessity` 기록 (stage당 1회) |
 
 ---
 
@@ -248,14 +263,22 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 
 | Prefix | API 엔드포인트 |
 |---|---|
-| `step1_line` | `GET /api/lines`, `GET /api/models`, `POST /api/sessions/create` |
-| `step2_user_input_pipeline` | `GET /api/sessions/{id}`, `PUT /api/sessions/{id}/structure` |
-| `step3_user_input_data` | `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}`, `PUT /api/sessions/{id}/full` |
-| `step4_standardize` | `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `GET /api/pipeline/{id}/stream` (SSE), `POST /api/pipeline/{id}/approve`, `POST /api/pipeline/{id}/natural_input`, `GET /api/aggregate_context/{id}` |
-| `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` |
-| `step6_modeling` | `GET /api/model/{id}/recommend`, `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` |
+| `step1_line` | `GET /api/lines` ★실재 (STEP 1B-1)★, `GET /api/models`, `POST /api/sessions/create` ★실재 (STEP 1B-2a)★ |
+| `step2_user_input_pipeline` | `GET /api/sessions/{id}` (예정), `PUT /api/sessions/{id}/structure` (예정) |
+| `step3_user_input_data` | `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}`, `PUT /api/sessions/{id}/full` (모두 예정) |
+| `step4_standardize` | ★실재 (STEP 1B-2a)★ `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input`, `GET /api/aggregate_context/{id}` (1B-2b) |
+| `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` (예정) |
+| `step6_modeling` | `GET /api/model/{id}/recommend`, `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` (예정) |
 
 **추가 정책**: 새 엔드포인트 추가 시 본 파일 + spec Part 1-3/9 + 해당 라우터 파일 갱신.
+
+### STEP 1B-2a 4 엔드포인트 (Resumable Orchestrator, 폴링형)
+| 메서드 | 경로 | 입력 | 반환 | 비고 |
+|---|---|---|---|---|
+| POST | `/api/sessions/create` | `{pipeline_full}` | `{session_id, status:"created"}` | uuid4 |
+| POST | `/api/execute_pipeline` | `{session_id, model?}` | `{status, pending?, session}` | suspend-and-return (D-51). 재호출로 resume |
+| GET  | `/api/pipeline/{sid}/status` | (path) | `public_view(session)` | 폴링 — SSE 미사용 |
+| POST | `/api/pipeline/{sid}/approve` | `{step_key, stage_order?, module_index?}` | `{approved, approved_count, ...}` | step_key 누적, resume 트리거 안 함 (D-56) |
 
 ---
 
@@ -386,3 +409,4 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 
 - 2026-05-27: 신규 작성 (Phase 1+2+3 완료 + 사용자 재구조화 요청 반영)
 - 2026-05-28: STEP 1B-1 반영 — catalogs/lines.yaml·modules.yaml 실재화 (§11), Validator 5번째 검증 표 추가 (§12.5), D-43~D-50 결정
+- 2026-05-28: STEP 1B-2a 반영 — `PipelineSession` 실재 (§8), 폴링형 4 엔드포인트 표 (§9), D-51~D-58 결정
