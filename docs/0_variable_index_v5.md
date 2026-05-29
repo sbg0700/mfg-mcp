@@ -237,7 +237,7 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `PipelineStatus` | spec-2.md Part 5-2 | Page 4 실시간 | 메모리 (현재 폴링; SSE는 1B-3) |
 | `AnalysisQuestion` | spec-1.md Part 1-2 (마) | Page 5 자동 생성 | DB `sessions.analysis` |
 | `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록 시점 | DB `datalake.entries` |
-| `AggregatedContext` | spec-1.md Part 1-2 (바) | Page 4 완료 후 자동 | DB `sessions.results` 확장 (1B-2b) |
+| ★`AggregatedContext` | spec-1.md Part 1-2 (바) | execute_pipeline 완료 직후 자동 트리거 (D-63) | ★실재 (STEP 1B-2b): `session["aggregated_context"]` 인메모리 캐시, Sprint 2에 postgres★ |
 
 특히 `AggregatedContext` 의 `agent_records` 필드 = MCP 4단 판단 기록 보존 (사용자 비전 핵심).
 
@@ -254,6 +254,20 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `module_results` | dict | `module_key → {profile, plan, execution, validation, modality, dataset_id}` |
 | `accumulated_context` | list[dict] | Stage 요약 누적 (1B-2b Aggregator 입력) |
 | `alarms` | list[dict] | `llm_judge_data_necessity` 기록 (stage당 1회) |
+| ★`aggregated_context` | dict | STEP 1B-2b — Context Aggregator 결과 캐시 (`completed` 직후 자동 생성, 결정론) |
+
+### `AggregatedContext` 필드 (STEP 1B-2b 실재, 5영역 + user_intent)
+spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::aggregate(session)` (결정론, LLM 0).
+
+| 영역 | 필드 | 비고 |
+|---|---|---|
+| A | `pipeline_structure` | session.pipeline_full 그대로 (1-1 + 1-2 입력 보존) |
+| A | `pipeline_constraints` | `{"stage.idx": {...constraints}}` — D-65 표기 |
+| B | `key_findings` | 결정론 추출 (Inspector flags + Executor done steps + Validator issues). type ∈ {class_imbalance, missing_values, dtype_mixed, transformation_applied, sequence_normalized, constraint_violation, validation_concern} |
+| C | `function_axis_summary` | `{process,quality,maintenance,reference}` 4키 고정, finding 분류 |
+| D | `stage_chain` | `[{stage_order, node_id, main_findings, downstream_implication}]` — 함의는 사전정의 7종 템플릿 매핑 |
+| E | `agent_records` | 4단 기록 원본 보존 (Inspector/Planner/Executor/Validator 손실 0) |
+| F | `user_intent` | 이번 범위 항상 `None` (Page 5 미구현, D-64) |
 
 ---
 
@@ -266,7 +280,7 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `step1_line` | `GET /api/lines` ★실재 (STEP 1B-1)★, `GET /api/models`, `POST /api/sessions/create` ★실재 (STEP 1B-2a)★ |
 | `step2_user_input_pipeline` | `GET /api/sessions/{id}` (예정), `PUT /api/sessions/{id}/structure` (예정) |
 | `step3_user_input_data` | `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}`, `PUT /api/sessions/{id}/full` (모두 예정) |
-| `step4_standardize` | ★실재 (STEP 1B-2a)★ `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input`, `GET /api/aggregate_context/{id}` (1B-2b) |
+| `step4_standardize` | ★실재 (STEP 1B-2a)★ `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · ★실재 (STEP 1B-2b)★ `GET /api/aggregate_context/{id}` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input` |
 | `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` (예정) |
 | `step6_modeling` | `GET /api/model/{id}/recommend`, `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` (예정) |
 
@@ -276,9 +290,14 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | 메서드 | 경로 | 입력 | 반환 | 비고 |
 |---|---|---|---|---|
 | POST | `/api/sessions/create` | `{pipeline_full}` | `{session_id, status:"created"}` | uuid4 |
-| POST | `/api/execute_pipeline` | `{session_id, model?}` | `{status, pending?, session}` | suspend-and-return (D-51). 재호출로 resume |
+| POST | `/api/execute_pipeline` | `{session_id, model?}` | `{status, pending?, session, aggregated_context?}` | suspend-and-return (D-51). 재호출로 resume. completed 시 `aggregated_context` 포함 (D-63) |
 | GET  | `/api/pipeline/{sid}/status` | (path) | `public_view(session)` | 폴링 — SSE 미사용 |
 | POST | `/api/pipeline/{sid}/approve` | `{step_key, stage_order?, module_index?}` | `{approved, approved_count, ...}` | step_key 누적, resume 트리거 안 함 (D-56) |
+
+### STEP 1B-2b 1 엔드포인트 (Context Aggregator, 결정론)
+| 메서드 | 경로 | 입력 | 반환 | 비고 |
+|---|---|---|---|---|
+| GET | `/api/aggregate_context/{sid}` | (path) | `AggregatedContext` (5영역 + user_intent=None) | LLM 호출 0 (D-59). 캐시 있으면 그대로 반환. 같은 입력 → 같은 출력 100% |
 
 ---
 
@@ -410,3 +429,4 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 - 2026-05-27: 신규 작성 (Phase 1+2+3 완료 + 사용자 재구조화 요청 반영)
 - 2026-05-28: STEP 1B-1 반영 — catalogs/lines.yaml·modules.yaml 실재화 (§11), Validator 5번째 검증 표 추가 (§12.5), D-43~D-50 결정
 - 2026-05-28: STEP 1B-2a 반영 — `PipelineSession` 실재 (§8), 폴링형 4 엔드포인트 표 (§9), D-51~D-58 결정
+- 2026-05-28: STEP 1B-2b 반영 — `AggregatedContext` 실재 (§8 5영역 표), `/api/aggregate_context` 엔드포인트 (§9), D-59~D-65 결정 (LLM 호출 0 생명선)

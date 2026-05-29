@@ -275,3 +275,57 @@ LLM 응답(요약): `{"likely_essential": false, "alarm_ko": "현재 'process/cn
 세션 상태 머신이 처음으로 실동작. 다중 Stage·Module을 ★suspend ↔ approve ↔ resume★으로
 폴링 처리. 1층 단일 데이터셋 경로(`/api/execute`)와 공존. 1B-3 UI에서 SSE 얹기 직전 단계.
 다음: STEP 1B-2b (Context Aggregator — 4단 판단 기록을 EDA/모델링으로 전파).
+
+## 2026-05-28 — STEP 1B-2b: Context Aggregator (결정론) + AggregatedContext 전파
+
+명세: `docs/specs/STEP_1B-2b_context_aggregator.md` (claude.ai 세션에서 확정).
+1B-2의 마지막 조각 — Orchestrator(1B-2a)가 채운 세션 기록을 결정론으로 집계해
+Page 5/6 LLM 프롬프트의 컨텍스트 소스(`AggregatedContext`)를 만든다.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-59 | Context Aggregator는 LLM 호출 0 (생명선) — 추론 엔진 import 0, 모델 호출 0 | blueprint Part 4-4 "환각 위험 0" 메커니즘의 핵심. LLM이 1줄이라도 끼면 본 컴포넌트 존재 이유가 무너짐. `grep "from llm\|import llm\|generate("` 0건으로 검증 |
+| D-60 | `agent_records`는 원본 거의 그대로 보존 (요약 X) | Page 5/6 LLM이 직접 활용하는 컨텍스트. 손실 0이 spec-1 §1-9-7의 검증 기준 |
+| D-61 | `key_findings` 추출은 규칙·임계 비교·정규식만 | 같은 입력 → 같은 출력 100% 재현. 직접 호출 2회 deepequal 통과 |
+| D-62 | `downstream_implication`은 finding type → 한 줄 함의 템플릿 매핑 | 사전정의 7종 템플릿 (`class_imbalance`/`missing_values`/`dtype_mixed`/`transformation_applied`/`constraint_violation`/`validation_concern`/`sequence_normalized`). finding 없으면 "특이사항 없음." |
+| D-63 | execute_pipeline 완료 직후 자동 트리거 + 캐시 (`session["aggregated_context"]`) | blueprint Part 2-5 마지막 줄 정합. 결정론이라 재호출 안전, 캐시는 성능용 |
+| D-64 | `user_intent`는 이번 범위 항상 None (Page 5 미구현) | 스키마 자리만 두고 채우지 않음 — 1B-3 이후 Page 5 분석목적 UI에서 채움 |
+| D-65 | `pipeline_constraints` 키 형식 = `"stage_order.module_index"` (module_key 형식 일관) | session의 `completed_module_keys`·`pending.module_key`와 동일 표기 |
+| D-66 | 정규화(normalize_group) 후 데이터에 원시 단위 constraint를 적용하면 무의미한 위반이 나옴(예: [40,70] mm/s 제약 vs z-score 값 → 800/800 위반). 현재 Aggregator가 constraint_violation + sequence_normalized를 둘 다 기록해 충돌을 드러냄(추적가능성). Validator의 "정규화 컬럼 제약검증 skip 또는 원본 기준 적용"은 STEP 2~3에서 해결. 지금은 알려진 한계. | 1B-2b 검증 부산물 — Aggregator가 모순을 가시화한다는 사례 자체가 본 컴포넌트의 가치 증명. 즉시 해결책은 다음 단계 |
+
+### 구현 산출물
+- `agents/aggregator/__init__.py` (신규 패키지 마커)
+- `agents/aggregator/context_aggregator.py` (신규) — 핵심 함수 `aggregate(session) -> AggregatedContext`
+  - 영역 A: `pipeline_structure` + `pipeline_constraints` (앞단 입력 보존)
+  - 영역 B: `key_findings` (규칙 추출 — Inspector flags + Executor done steps + Validator issues)
+  - 영역 C: `function_axis_summary` (process/quality/maintenance/reference)
+  - 영역 D: `stage_chain` (main_findings + downstream_implication 템플릿)
+  - 영역 E: `agent_records` (4단 기록 원본 보존)
+  - 영역 F: `user_intent = None`
+- `backend/main.py` — sys.path에 `agents/aggregator` 추가 + execute_pipeline 자동 트리거 + `GET /api/aggregate_context/{session_id}` 추가
+
+### 검증 결과 (명세 §7 체크리스트, 실 HTTP 호출)
+- 자동 트리거: completed 응답에 `aggregated_context` 포함 확인
+- `GET /api/aggregate_context/{id}`: 5영역 + `user_intent=None` 반환
+- key_findings 추출: `constraint_violation` × 1 + `sequence_normalized` × 5 = 6개 (cnc_machine_injection 시연 케이스)
+- agent_records 보존 정합성: Inspector flags / Planner 7 steps / Executor 7 results / Validator passed=True 모두 원본 일치
+- function_axis_summary: `process=6`, `quality/maintenance/reference=0` (테스트 모듈이 process라 정상)
+- stage_chain.downstream_implication: 템플릿 매핑 동작 (constraint_violation + sequence_normalized 템플릿 조합)
+- 결정론 재현 100%: endpoint 2회 + 직접 호출 2회 모두 deepequal 통과
+- LLM 호출 0건: `grep "from llm\|import llm\|generate("` → exit 1, stdout 비어있음
+- 외부 HTTP 라이브러리 0건: `grep "httpx\|requests\.\|urllib\|openai\|anthropic"` → 0건
+- 1층 `/api/execute` 회귀 0 (mct_tool_manage_clean → passed=True, 5종 checks)
+- 모달리티 4종 유지 (timeseries/inspection-image/event-log/order)
+- `python3 -m py_compile` 통과
+
+### 발견된 흥미로운 사실 (검증 부산물)
+1B-1에서 본 `1ST INJECTION VELOCITY` constraint `[40, 70]` 위반은 1B-1 단독 테스트에선 172/800행이었는데,
+1B-2b 파이프라인에서는 800/800행 위반으로 나옴. 이유: `normalize_group`이 `1ST INJECTION VELOCITY`를
+포함한 `injection_sequence` 그룹을 z-score 정규화 → 원시 [40,70] 범위가 정규화된 값에 적용 불가.
+Aggregator의 stage_chain.main_findings에 `sequence_normalized(low)` + `constraint_violation(medium)`이
+같이 등장하므로 Page 5/6 LLM이 이 순서 충돌을 인지할 수 있게 됨 — 본 컴포넌트의 가치 사례.
+
+### STEP 1B-2b 완료 마일스톤
+1B-2 (Orchestrator + Aggregator) 모두 끝. 사용자가 비전했던
+★"MCP 표준화 → 4단 판단 기록 → EDA/모델링 컨텍스트"★ 전파 흐름이 결정론으로 보장됨.
+다음: STEP 1B-3 (Mini UI 6 페이지) — 지금까지 만든 모든 엔드포인트를 UI로 묶어 시연 가능 형태.
