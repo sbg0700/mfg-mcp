@@ -177,6 +177,189 @@ async def lines_endpoint() -> dict:
         return {"lines": yaml.safe_load(f)}
 
 
+# ──────────────────────────────────────────────────────────────────────
+# STEP 1B-2a — Resumable Orchestrator (폴링형)
+# ──────────────────────────────────────────────────────────────────────
+# 흐름: /api/sessions/create → /api/execute_pipeline → (awaiting_approval 시
+#   /api/pipeline/{id}/approve 후 /api/execute_pipeline 재호출로 resume)
+#
+# ★blocking awaiter 없음★ — L2/L3 만나면 상태 저장 후 즉시 반환 (D-51).
+# 1층 /api/execute(단일 데이터셋)는 보존 — pipeline은 별도 엔드포인트.
+# ──────────────────────────────────────────────────────────────────────
+
+# node_id → 대표 modality 매핑 (lines.yaml의 hint_dataset 기반 휴리스틱). module.modality 우선.
+_NODE_MODALITY: dict[str, str] = {
+    "semiconductor_inspect": "inspection-image",
+    "surface_inspect": "inspection-image",
+    "welding_inspect": "inspection-image",
+    "order_planning": "order",
+}
+
+
+def _resolve_modality(module: dict, node_id: str | None = None) -> str:
+    """모듈/노드에서 modality 결정. 우선순위:
+    1) module["modality"] 명시,
+    2) node_id 매핑(검사/주문),
+    3) 폴백 "timeseries".
+    자동 modality 분류(D-40)는 별개 — 여기선 명시/매핑만."""
+    m = module.get("modality")
+    if m:
+        return m
+    if node_id and node_id in _NODE_MODALITY:
+        return _NODE_MODALITY[node_id]
+    return "timeseries"
+
+
+class CreateSessionReq(BaseModel):
+    pipeline_full: dict   # {line_id, stages:[{stage_order, node_id, modules:[...]}, ...]}
+
+
+@app.post("/api/sessions/create")
+async def sessions_create(req: CreateSessionReq) -> dict:
+    """pipeline_full을 주입해 세션 생성 (1B-2a 폴링 사이클의 시작점).
+    Page 2(1-1) + Page 3(1-2) 통합 출력을 받는 자리. 1B-3 UI 도입 전에는 테스트가 직접 호출."""
+    from session_store import create_session
+    sid = create_session(req.pipeline_full)
+    return {"session_id": sid, "status": "created"}
+
+
+class ExecutePipelineReq(BaseModel):
+    session_id: str
+    model: str | None = None       # LLM 호출(plan/llm_judge)에 사용할 모델 (옵션)
+
+
+@app.post("/api/execute_pipeline")
+async def execute_pipeline(req: ExecutePipelineReq) -> dict:
+    """파이프라인 진행 (Resumable, suspend-and-return).
+    L2/L3 unapproved step을 만나면 상태 저장 후 즉시 awaiting_approval로 반환.
+    /approve 후 본 엔드포인트 재호출로 이전 지점부터 resume (completed_* skip).
+    """
+    from session_store import get_session, save_session, public_view
+    from inspector import inspect as run_inspect
+    from planner import plan as run_plan
+    from executor import execute as run_execute
+    from validator import validate as run_validate
+    from data_necessity import llm_judge_data_necessity
+
+    session = get_session(req.session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {req.session_id}")
+
+    session["status"] = "running"
+    session["pending"] = None
+    pipeline_full = session.get("pipeline_full") or {}
+    stages = pipeline_full.get("stages", [])
+
+    try:
+        for stage in stages:
+            so = stage.get("stage_order")
+            if so in session["completed_stage_orders"]:
+                continue   # resume: 이미 끝난 stage skip
+
+            node_id = stage.get("node_id")
+            modules_all = stage.get("modules", [])
+            missing = [m for m in modules_all if m.get("datalake_id") in (None, "")]
+            uploaded = [m for m in modules_all if m.get("datalake_id")]
+
+            # (A) 미업로드 알람 — stage당 1회만 (resume 시 재알람 없음)
+            already_alarmed = {a.get("stage_order") for a in session["alarms"]}
+            if missing and so not in already_alarmed:
+                alarm = await llm_judge_data_necessity(stage, missing, uploaded, model=req.model)
+                session["alarms"].append({"stage_order": so, "node_id": node_id, "alarm": alarm})
+                # 알람은 기록만 — 흐름은 계속 (skip된 missing은 처리 안 함)
+
+            # (B) 업로드된 모듈 순회
+            for module in uploaded:
+                module_key = f"{so}.{module.get('index')}"
+                if module_key in session["completed_module_keys"]:
+                    continue   # resume skip
+
+                dataset_id = module["datalake_id"]
+                modality = _resolve_modality(module, node_id)
+                constraints = module.get("constraints") or {}
+
+                # 1) Inspector
+                profile = await run_inspect(dataset_id, model=req.model, modality=modality)
+
+                # 2) Planner — module_context는 stage·module에서 합성 (1B-1 연장)
+                module_context = {
+                    "node_id": node_id,
+                    "function": module.get("function"),
+                    "dataset_role": module.get("dataset_role"),
+                }
+                plan_result = await run_plan(profile, constraints=constraints,
+                                             module_context=module_context, model=req.model)
+
+                # 3) 권한 게이트 — unapproved L2/L3 있으면 suspend-and-return
+                approved = set(session["approved_step_keys"])
+                unapproved = [
+                    s for s in plan_result.get("steps", [])
+                    if s.get("permission_level") in ("L2", "L3")
+                    and s.get("step_key") not in approved
+                ]
+                if unapproved:
+                    session["status"] = "awaiting_approval"
+                    session["pending"] = {
+                        "stage_order": so,
+                        "node_id": node_id,
+                        "module_index": module.get("index"),
+                        "module_key": module_key,
+                        "dataset_id": dataset_id,
+                        "modality": modality,
+                        "plan": plan_result,
+                        "pending_steps": [{
+                            "step_key": s.get("step_key"),
+                            "order": s.get("order"),
+                            "operation": s.get("operation"),
+                            "permission_level": s.get("permission_level"),
+                            "target_column": s.get("target_column"),
+                            "semantic_group": s.get("semantic_group"),
+                            "rationale": s.get("rationale"),
+                        } for s in unapproved],
+                    }
+                    save_session(req.session_id, session)
+                    return {"status": "awaiting_approval",
+                            "pending": session["pending"],
+                            "session": public_view(session)}
+
+                # 4) Executor (전부 승인됨) + Validator
+                execution = await run_execute(plan_result, approved_keys=approved,
+                                              modality=modality)
+                validation = await run_validate(execution, plan=plan_result,
+                                                profile=profile, constraints=constraints)
+                session["module_results"][module_key] = {
+                    "modality": modality,
+                    "dataset_id": dataset_id,
+                    "profile": profile,
+                    "plan": plan_result,
+                    "execution": execution,
+                    "validation": validation,
+                }
+                session["completed_module_keys"].append(module_key)
+
+            session["completed_stage_orders"].append(so)
+            # 1B-2b Aggregator가 쓸 stage 요약 (지금은 가벼운 메타만 — 결정론)
+            session["accumulated_context"].append({
+                "stage_order": so,
+                "node_id": node_id,
+                "modules_done": [m.get("index") for m in uploaded],
+                "modules_skipped_missing": [m.get("index") for m in missing],
+            })
+
+        session["status"] = "completed"
+        session["pending"] = None
+        save_session(req.session_id, session)
+        return {"status": "completed", "session": public_view(session)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session["status"] = "error"
+        session["error"] = str(e)
+        save_session(req.session_id, session)
+        raise HTTPException(500, f"execute_pipeline failed: {e}")
+
+
 @app.get("/")
 async def root() -> FileResponse:
     """더미 대시보드 서빙."""
