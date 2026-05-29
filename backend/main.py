@@ -360,6 +360,39 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
         raise HTTPException(500, f"execute_pipeline failed: {e}")
 
 
+@app.get("/api/pipeline/{session_id}/status")
+async def pipeline_status(session_id: str) -> dict:
+    """폴링 조회 — 세션 진행 상태 + pending + completed_* + alarms 반환.
+    SSE 없이 클라이언트가 주기적으로 호출 (1B-3에서 SSE 추가 검토)."""
+    from session_store import get_session, public_view
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    return public_view(session)
+
+
+class ApproveReq(BaseModel):
+    step_key: str
+    stage_order: int | None = None    # 참고/로깅용
+    module_index: int | None = None
+
+
+@app.post("/api/pipeline/{session_id}/approve")
+async def pipeline_approve(session_id: str, req: ApproveReq) -> dict:
+    """단건 승인 — step_key를 누적 승인 목록에 추가.
+    resume은 클라이언트가 /api/execute_pipeline 재호출로 트리거 (폴링형, D-51)."""
+    from session_store import get_session, save_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.step_key not in session["approved_step_keys"]:
+        session["approved_step_keys"].append(req.step_key)
+    save_session(session_id, session)
+    return {"approved": True, "step_key": req.step_key,
+            "approved_count": len(session["approved_step_keys"]),
+            "stage_order": req.stage_order, "module_index": req.module_index}
+
+
 @app.get("/")
 async def root() -> FileResponse:
     """더미 대시보드 서빙."""
