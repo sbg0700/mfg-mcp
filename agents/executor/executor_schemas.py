@@ -31,7 +31,8 @@ class ExecutionResult(BaseModel):
     """Executor → Validator 로 넘어가는 표준 메시지 (A2A)."""
     dataset_id: str
     results: list[StepResult] = []
-    output_path: str | None = None           # 정제된 데이터 저장 위치
+    output_path: str | None = None           # 정제된 데이터 저장 위치 (__processed.parquet)
+    backup_path: str | None = None           # ★STEP 1B-2c: 정제 전 원본 백업 (__backup.parquet) — constraint 원본 검증용 (D-67)
     pending_approvals: list[int] = []         # 승인 대기 중인 step order 목록
     all_done: bool = False                    # 모든 단계 완료 여부
     generated_by: str = "executor"

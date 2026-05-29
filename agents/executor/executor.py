@@ -276,8 +276,10 @@ async def execute(plan: dict, approved_keys: set | None = None,
     df.to_parquet(output_path, index=False)
 
     all_done = len(pending) == 0 and all(r.status == "done" for r in results if r.status != "skipped")
+    # ★STEP 1B-2c: backup_path를 결과에 담아 Validator의 constraint 원본 검증 가능하게 (D-67)
     return ExecutionResult(
         dataset_id=dataset_id, results=results, output_path=output_path,
+        backup_path=backup_path,
         pending_approvals=pending, all_done=all_done,
     ).model_dump()
 
@@ -443,7 +445,9 @@ async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str) -> 
                                results=[]).model_dump() | {"error": f"load failed: {e}"}
 
     os.makedirs(OUTPUT_ROOT, exist_ok=True)
-    df.to_parquet(os.path.join(OUTPUT_ROOT, f"{dataset_id}__backup.parquet"), index=False)
+    # ★STEP 1B-2c: backup_path를 변수로 추출 (constraint 원본 검증용 — D-67)
+    backup_path = os.path.join(OUTPUT_ROOT, f"{dataset_id}__backup.parquet")
+    df.to_parquet(backup_path, index=False)
 
     results: list[StepResult] = []
     pending: list[int] = []
@@ -499,5 +503,7 @@ async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str) -> 
     out = os.path.join(OUTPUT_ROOT, f"{dataset_id}__processed.parquet")
     df.to_parquet(out, index=False)
     all_done = len(pending) == 0
+    # ★STEP 1B-2c: event-log 경로도 backup_path 결과에 포함 (D-67)
     return ExecutionResult(dataset_id=dataset_id, results=results, output_path=out,
+        backup_path=backup_path,
         pending_approvals=pending, all_done=all_done).model_dump()
