@@ -1,5 +1,5 @@
 """
-agents/validator/validator.py — Validator (사전+사후 양방향, STEP 1B-2c).
+agents/validator/validator.py — Validator (사전+사후 양방향, STEP 1B-2c 강화).
 
 역할: Executor 흐름의 양쪽에서 결정론 검증한다.
 헌법 "LLM은 제안, 규칙이 결정"의 후반부 — LLM/규칙이 만든 결과를 결정론(산수·비교·규칙)으로만 검증.
@@ -7,14 +7,19 @@ agents/validator/validator.py — Validator (사전+사후 양방향, STEP 1B-2c
 ★사전 검증 (Executor 전, STEP 1B-2c 신규)★
   - `validate_plan(plan, profile)` — 순서 규칙 + 작업 충돌 + L3 안전 (결정론, blocking 가능)
 
-★사후 검증 5종 (Executor 후)★
+★사후 검증 6종 (Executor 후)★
   1. 컴플라이언스  — 모든 done 단계에 lineage가 있는가
-  2. 변환 결과    — 변환이 의도대로 됐는가
+  2. 변환 결과    — 변환이 의도대로 됐는가 (fill_missing 후 결측이 줄었나?)
   3. 계획 무결성  — 같은 작업이 중복 제안됐나
   4. 회귀         — 전처리가 데이터를 망치진 않았나 (행 급감)
   5. constraint  — 사용자 입력 constraints (D-43, D-67: ★원본 backup_path 기준★)
+  6. output_health — 출력이 명백히 고장났는지 (Inf/std==0/그룹정규화 사후조건)
+                    ★"고장 감지"만, "정상성 판단"·"분포 해석"은 안 함 (Page 5 EDA로 분리, D-68)★
 
-★생명선★: 이 모듈은 LLM을 부르지 않는다.
+검증 실패 시 → next_action으로 라우팅 (재시도/사람개입/검토권고).
+입력: ExecutionResult + (선택) PreprocessingPlan, DataProfile, constraints.
+
+★생명선★: 이 모듈은 LLM을 부르지 않는다 (추론 엔진 import 0).
 """
 from __future__ import annotations
 from typing import Any
@@ -180,6 +185,88 @@ def _check_constraint_violation(execution: dict, constraints: dict | None) -> li
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Work 3 — 출력 고장 감지 (사후, 결정론). "정상성 판단" 아님 (Page 5 EDA로 분리).
+# ─────────────────────────────────────────────────────────────────────────
+def _check_output_health(execution: dict) -> list[dict]:
+    """검증6 — 출력이 명백히 고장났는지 결정론으로 감지.
+
+    원칙 (D-68): "100% 단언 가능한 고장"만 잡는다.
+      - 표준편차 0(변환 후 다 같은 값) → 변환 실패 (고장 ✅)
+      - Inf 발생 → 0으로 나눔 등 (고장 ✅)
+      - 그룹 정규화 사후조건 이탈(블록 평균≈0/std≈1 아님) → 정규화 실패 (고장 ✅)
+    ★개별 컬럼 평균이 0이 아니어도 정상★ — 그룹 공통 정규화는 컬럼 추세를 보존하므로
+    개별 컬럼 평균이 0일 필요 없음 (1ST INJECTION VELOCITY=-1.412 등이 정상 상태).
+    "분포가 정상인가/모델링에 적합한가"는 Page 5 EDA LLM의 일 — 여기선 안 한다."""
+    import os
+    issues: list[dict] = []
+    output_path = execution.get("output_path") or ""
+    if not isinstance(output_path, str) or not output_path.endswith(".parquet"):
+        return issues   # 이미지 등 비-parquet 대상 아님
+    if not os.path.exists(output_path):
+        return issues
+
+    try:
+        import numpy as np
+        import pandas as pd
+        df = pd.read_parquet(output_path)
+    except Exception as e:
+        issues.append({"kind": "output_health", "severity": "low",
+                       "message": f"output_health 검증 스킵 (processed 로드 실패: {e})"})
+        return issues
+
+    # 어떤 컬럼이 '변환에 닿았나' 수집 — std==0 false positive 회피(원래 상수 컬럼 제외)
+    touched_cols: set[str] = set()
+    for r in execution.get("results", []):
+        if r.get("status") != "done":
+            continue
+        if r.get("target_column"):
+            touched_cols.add(str(r["target_column"]))
+        for m in r.get("group_members", []) or []:
+            touched_cols.add(str(m))
+
+    num = df.select_dtypes("number")
+    for col in num.columns:
+        s = num[col]
+        arr = s.to_numpy(dtype=float)
+        # (a) Inf 발생 — 변환 오류(0으로 나눔 등) 100% 단언
+        if bool(np.isinf(arr).any()):
+            issues.append({
+                "kind": "output_health", "severity": "high", "column": str(col),
+                "message": f"'{col}'에 Inf 발생 — 변환 오류(0으로 나눔 등) 의심",
+            })
+        # (b) 표준편차 0 — 변환이 적용된 컬럼에 한해 (원래 상수 컬럼 제외)
+        if str(col) in touched_cols and int(s.notna().sum()) > 1 and float(s.std(ddof=0)) == 0.0:
+            issues.append({
+                "kind": "output_health", "severity": "high", "column": str(col),
+                "message": f"'{col}' 변환 후 표준편차 0 — 전부 같은 값(변환 실패) 의심",
+            })
+
+    # (c) normalize_group 사후조건 — ★그룹 단위로만★ 평균≈0, std≈1 확인
+    #     개별 컬럼 평균≈0 강제 안 함 (그룹 공통 정규화는 컬럼 평균 0 아님 — 추세 보존)
+    for r in execution.get("results", []):
+        if r.get("operation") != "normalize_group" or r.get("status") != "done":
+            continue
+        members = [m for m in (r.get("group_members") or []) if m in num.columns]
+        if not members:
+            continue
+        block = num[members].to_numpy(dtype=float).ravel()
+        block = block[~np.isnan(block)]
+        if block.size <= 1:
+            continue
+        gmean = float(np.mean(block))
+        gstd = float(np.std(block, ddof=0))
+        if abs(gmean) > 0.1 or abs(gstd - 1.0) > 0.1:
+            issues.append({
+                "kind": "output_health", "severity": "medium",
+                "semantic_group": r.get("semantic_group"),
+                "group_mean": round(gmean, 4), "group_std": round(gstd, 4),
+                "message": (f"그룹 '{r.get('semantic_group')}' 정규화 사후조건 이탈 "
+                            f"(그룹 평균 {gmean:.3f}, 표준편차 {gstd:.3f} — z-score면 0/1 근처여야)"),
+            })
+    return issues
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Work 2 — 사전 검증 validate_plan (Executor 전, 결정론, sync)
 # ─────────────────────────────────────────────────────────────────────────
 # 작업 유형별 단계 순위: 작을수록 먼저 와야 함. 9는 "언제 와도 됨"(예외).
@@ -258,7 +345,7 @@ def validate_plan(plan: dict, profile: dict | None = None) -> dict:
 async def validate(execution: dict, plan: dict | None = None,
                    profile: dict | None = None,
                    constraints: dict | None = None) -> dict:
-    """ExecutionResult 검증 → ValidationReport. 5종 검증 수행.
+    """ExecutionResult 검증 → ValidationReport. 6종 검증 수행 (사후, STEP 1B-2c 확장).
     plan/profile을 주면 무결성·회귀 검증이 강화됨.
     constraints를 주면 5번째 검증(constraint 위반) 동작. 안 주면 skip (회귀 없음)."""
     results = execution.get("results", [])
@@ -273,6 +360,7 @@ async def validate(execution: dict, plan: dict | None = None,
     issues += _check_plan_integrity(results, plan)              # 3. 계획 무결성
     issues += _check_regression(results, profile)               # 4. 회귀
     issues += _check_constraint_violation(execution, constraints)  # 5. constraint (★원본 backup_path 기준 — D-67)
+    issues += _check_output_health(execution)                   # 6. ★output_health (고장 감지만, 분포 해석 X — D-68)
 
     high = [i for i in issues if i.get("severity") == "high"]
     medium = [i for i in issues if i.get("severity") == "medium"]
@@ -293,6 +381,7 @@ async def validate(execution: dict, plan: dict | None = None,
         "integrity": not any(i["kind"] == "integrity" for i in issues),
         "regression": not any(i["kind"] == "regression" for i in issues),
         "constraint": not any(i["kind"] == "constraint" for i in issues),
+        "output_health": not any(i["kind"] == "output_health" for i in issues),
     }
 
     return {
