@@ -329,3 +329,55 @@ Aggregator의 stage_chain.main_findings에 `sequence_normalized(low)` + `constra
 1B-2 (Orchestrator + Aggregator) 모두 끝. 사용자가 비전했던
 ★"MCP 표준화 → 4단 판단 기록 → EDA/모델링 컨텍스트"★ 전파 흐름이 결정론으로 보장됨.
 다음: STEP 1B-3 (Mini UI 6 페이지) — 지금까지 만든 모든 엔드포인트를 UI로 묶어 시연 가능 형태.
+
+## 2026-05-28 — STEP 1B-2c: Validator 강화 (사전+사후 양방향) + D-66 해결
+
+명세: `docs/specs/STEP_1B-2c_validator_hardening.md` (claude.ai 세션에서 확정).
+1B-2b에서 발견한 D-66(정규화 후 원시 단위 constraint 위반 misfire)을 해결하고,
+Validator를 사전(Executor 전)+사후(Executor 후) 양방향으로 강화한다.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-67 | constraint 검증은 **원본 backup_path 기준** (processed 아님) | D-66 해결. 사용자 제약은 원시 측정 단위 기준이므로 정규화 전 원본에서 검증해야 정확. z-score 정규화는 단조변환이라 "원본 제약을 원본에서 검증"과 "정규화된 제약을 정규화 데이터에서 검증"은 수학적 동치(원본이 단순). 그룹 공통 정규화로 후자는 μ/σ 어긋남 문제까지 있어 더 복잡 |
+| D-68 | Validator는 **"고장 감지"만**, "정상성 판단"·"분포 해석"은 안 함 (Page 5 EDA로) | 검증 layer 분리. 100% 단언 가능한 것(Inf/std==0/그룹 사후조건 이탈)만 결정론으로 잡고, "이 분포가 정상인가/모델링에 적합한가"는 의미 해석이라 LLM(Page 5)으로. typical_ranges 금지(D-43)의 일관성 |
+| D-69 | output_health 그룹 정규화 사후조건은 **그룹 단위로만** 검사 (개별 컬럼 평균 0 강제 ❌) | 그룹 공통 정규화는 컬럼 간 추세를 보존하기 위해 컬럼 평균 0이 아닐 수 있음(예: 1ST INJECTION VELOCITY=-1.412 정상). 개별 평균 0 강제하면 추세 보존의 증거를 고장으로 오판. 그룹 멤버 합쳐 z-score 사후조건(평균 0, std 1)만 ±0.1 허용으로 확인 |
+| D-70 | 사전 검증 `validate_plan(plan, profile)` 신규 — 결정론 (순서/충돌/L3) | Executor 전에 "계획 자체"의 타당성 한 번 더 거름. blocking 기준은 high(작업 충돌)만, 순서 의심(medium)·L3(low)은 경고만(과한 차단 회피). 영업 메시지를 "사후"에서 "사전+사후 양방향"으로 강화 |
+| D-71 | std==0 감지는 **변환에 닿은 컬럼**에 한해 — 원래 상수 컬럼 false positive 회피 | execution.results의 done step에서 target_column / group_members 집합을 만든 후 그 집합 안에서만 검사 |
+| D-72 | ExecutionResult에 `backup_path` 필드 추가 + executor가 채우기 (timeseries/order, event-log) | D-67 전제. 이미지 모달리티는 parquet 아니라 None |
+| D-73 | 사전 검증 blocking 시 — `/api/execute`는 실행 중단 + 결과 반환, `/api/execute_pipeline`은 해당 모듈 차단 + 세션 error | 1B-2a 폴링 흐름과 일관. 실 정상 계획에서는 발생 안 함(LLM이 후보 외 작업 못 만드는 환각 방어 + 가드레일 덕분) |
+
+### 구현 산출물
+- `agents/executor/executor_schemas.py` — `ExecutionResult.backup_path` 필드 추가
+- `agents/executor/executor.py` — timeseries/order, event-log 경로에서 backup_path 변수 추출 + ExecutionResult에 포함
+- `agents/validator/validator.py`:
+  - `_check_constraint_violation` 수정 — backup_path 우선, processed 폴백(레거시 안전)
+  - `validate_plan(plan, profile)` 신규 — 순서 규칙(_ORDER_RANK) + 작업 충돌(dropped 집합) + L3 정보성
+  - `_check_output_health(execution)` 신규 — Inf, std==0(touched_cols 한정), 그룹 정규화 사후조건
+  - `validate()` — 5종 → 6종(`output_health` 추가)
+- `backend/main.py`:
+  - `/api/execute` — run_plan 후 validate_plan, blocking이면 실행 중단 + 결과 반환
+  - `/api/execute_pipeline` — 모듈 루프 안에서 run_plan 후 validate_plan, blocking이면 모듈 차단 + 세션 error
+
+### 검증 결과 (명세 §6 체크리스트, 실 HTTP 호출)
+- **LLM 호출 0건**: `grep -nE "from llm|import llm|generate\("` validator.py → exit 1, stdout 비어있음 ✅
+- **D-66 해결**: cnc_machine_injection [40,70] → **172/800 위반** (1B-2b의 800/800에서 정확한 원본 기준으로 수정) ✅
+  - 결과의 `source` 필드 = `"원본(backup)"`
+- **validate_plan 정상 계획**: plan_ok=True, n_high=0
+- **validate_plan 결함주입**: drop_column + 같은 컬럼 변환 → `plan_conflict(high)`, blocking=True
+- **validate_plan 순서 역행**: normalize→encoding → `plan_order(medium)`, blocking=False (경고만, 과한 차단 회피)
+- **output_health 정상**: 1ST INJECTION VELOCITY 개별 평균=-1.412여도 통과 (그룹 평균 ≈0/std≈1 검사 통과로 추세 보존 인정)
+- **output_health 결함주입**: 상수 컬럼 정규화 시뮬 → std==0 감지(high)
+- **파이프라인 회귀**: 1B-2a/2b 시나리오에서 backup_path 사용 + Aggregator key_findings도 172/800 갱신됨
+- **4 모달리티 회귀 없음**: timeseries / order / event-log / inspection-image
+- `python3 -m py_compile` 통과
+
+### 핵심 효과
+1. D-66 흔적 제거 — 사용자 제약 검증이 의미 있는 수로 정확하게(172/800)
+2. Validator가 "사전+사후 양방향" → 영업 메시지 강화 ("LLM이 틀려도 Executor 전후 모두 잡음")
+3. 출력 고장 감지는 100% 단언 가능한 것만 — Page 5 EDA LLM 영역과 깔끔히 분리
+4. 개별 컬럼 평균 0 강제 안 함 → 그룹 정규화의 추세 보존 특성을 고장으로 오판하지 않음
+
+### STEP 1B-2c 완료 마일스톤
+1B-2 패키지(2a Orchestrator + 2b Aggregator + 2c Validator 강화) 완전 종료.
+사후뿐 아니라 사전 검증까지 가지면서 "LLM은 제안, 규칙이 결정"의 결정론 영역이 양방향으로 완비됨.
+다음: STEP 1B-3 (Mini UI 6 페이지) — 백엔드 모든 엔드포인트를 UI로 결합해 시연 가능 형태.

@@ -364,20 +364,28 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 ---
 
-## 12.5. Validator 검증 종류 (5종, STEP 1B-1 갱신)
+## 12.5. Validator 검증 (사전+사후 양방향, STEP 1B-2c 갱신)
 
-> **단일 소스**: `agents/validator/validator.py`.
-> **확장 정책**: 6번째 검증 추가 시 본 표 + Validator 본 파일 + 명세 갱신.
+> **단일 소스**: `agents/validator/validator.py`. ★LLM 호출 0★ (생명선).
+> **확장 정책**: 7번째 검증 추가 시 본 표 + Validator 본 파일 + 명세 갱신.
 
+### 사전 검증 (Executor 전, STEP 1B-2c 신규)
+| 검증 | 헬퍼 | 입력 | 무엇을 보나 | 도입 |
+|---|---|---|---|---|
+| 사전 | `validate_plan` | plan, profile | 순서 규칙(_ORDER_RANK) + 작업 충돌(drop_column+같은컬럼) + L3 정보성. blocking 기준은 high(충돌)만 | ★D-70 (STEP 1B-2c)★ |
+
+### 사후 검증 6종 (Executor 후, STEP 1B-2c 갱신)
 | 검증 | 헬퍼 | 입력 | 무엇을 보나 | 도입 |
 |---|---|---|---|---|
 | 1. 컴플라이언스 | `_check_compliance` | results | done 단계의 lineage 누락 | D-36 (STEP 1) |
 | 2. 변환 결과 | `_check_transform_result` | results | fill_missing 결측 감소, normalize 멤버 수 등 | D-36 |
 | 3. 계획 무결성 | `_check_plan_integrity` | results, plan | 같은 작업 중복(operation+target) | D-36 |
 | 4. 회귀 | `_check_regression` | results, profile | 행 급감(50% 이상 손실) | D-36 |
-| 5. ★constraint | `_check_constraint_violation` | execution, constraints | 사용자 입력 constraints의 범위 위반 행 수 (processed parquet 결정론 산수) — typical_ranges 디폴트 아님 (D-43) | ★D-48 (STEP 1B-1)★ |
+| 5. constraint | `_check_constraint_violation` | execution, constraints | 사용자 constraints 범위 위반 행 수. ★원본 backup_path 기준★ (D-43, ★D-67★) | D-48 → 수정 D-67 |
+| 6. ★output_health | `_check_output_health` | execution | Inf 발생 / 변환된 컬럼 std==0 / 그룹 정규화 사후조건 이탈(블록 mean≈0, std≈1). "고장 감지"만, "정상성 판단" X(Page 5 LLM으로) | ★D-68/D-69 (STEP 1B-2c)★ |
 
-`validate(execution, plan=None, profile=None, constraints=None)` — constraints가 비면 5번 검증 skip (회귀 0).
+`validate(execution, plan=None, profile=None, constraints=None)` — constraints 비면 5번, output_path 없으면 6번 skip (회귀 0).
+`validate_plan(plan, profile=None)` — sync. 반환 `{plan_ok, plan_issues, blocking, n_high, n_medium, n_low}`.
 
 ---
 
@@ -430,3 +438,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-05-28: STEP 1B-1 반영 — catalogs/lines.yaml·modules.yaml 실재화 (§11), Validator 5번째 검증 표 추가 (§12.5), D-43~D-50 결정
 - 2026-05-28: STEP 1B-2a 반영 — `PipelineSession` 실재 (§8), 폴링형 4 엔드포인트 표 (§9), D-51~D-58 결정
 - 2026-05-28: STEP 1B-2b 반영 — `AggregatedContext` 실재 (§8 5영역 표), `/api/aggregate_context` 엔드포인트 (§9), D-59~D-65 결정 (LLM 호출 0 생명선)
+- 2026-05-28: STEP 1B-2c 반영 — Validator 사전+사후 양방향 (§12.5 갱신), D-66 해결(constraint 원본 기준), D-67~D-73 결정. `ExecutionResult.backup_path` 신설
