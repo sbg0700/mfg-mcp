@@ -1,18 +1,20 @@
 """
-agents/validator/validator.py — 4단 Validator (검증 강화).
+agents/validator/validator.py — Validator (사전+사후 양방향, STEP 1B-2c).
 
-역할: Executor가 한 일이 올바른지 ★사후 검증★한다. Agentic Flow의 마지막 4단.
-헌법 "LLM은 제안, 규칙이 결정"의 후반부 — LLM/규칙이 만든 결과를 결정론적으로 검증.
+역할: Executor 흐름의 양쪽에서 결정론 검증한다.
+헌법 "LLM은 제안, 규칙이 결정"의 후반부 — LLM/규칙이 만든 결과를 결정론(산수·비교·규칙)으로만 검증.
 
-5종 검증:
-  1. 컴플라이언스  — 모든 done 단계에 lineage가 있는가 (기록 없는 변환 = 추적 불가 = 위반)
-  2. 변환 결과    — 변환이 의도대로 됐는가 (fill_missing 후 결측이 줄었나? normalize 됐나?)
-  3. 계획 무결성  — 같은 작업이 중복 제안됐나 (width/height 중복 같은 것), 그룹 이중 처리?
-  4. 회귀         — 전처리가 데이터를 망치진 않았나 (행 급감 등)
-  5. constraint  — 사용자 입력 constraints (D-43). ★STEP 1B-2c: 원본 backup_path 기준 (D-67)★
+★사전 검증 (Executor 전, STEP 1B-2c 신규)★
+  - `validate_plan(plan, profile)` — 순서 규칙 + 작업 충돌 + L3 안전 (결정론, blocking 가능)
 
-검증 실패 시 → next_action으로 라우팅 (재시도/사람개입/검토권고).
-입력: ExecutionResult + (선택) PreprocessingPlan, DataProfile, constraints.
+★사후 검증 5종 (Executor 후)★
+  1. 컴플라이언스  — 모든 done 단계에 lineage가 있는가
+  2. 변환 결과    — 변환이 의도대로 됐는가
+  3. 계획 무결성  — 같은 작업이 중복 제안됐나
+  4. 회귀         — 전처리가 데이터를 망치진 않았나 (행 급감)
+  5. constraint  — 사용자 입력 constraints (D-43, D-67: ★원본 backup_path 기준★)
+
+★생명선★: 이 모듈은 LLM을 부르지 않는다.
 """
 from __future__ import annotations
 from typing import Any
@@ -175,6 +177,82 @@ def _check_constraint_violation(execution: dict, constraints: dict | None) -> li
                 "message": f"'{actual}' 범위 {bound_str} 위반 {n_viol}/{n_total}행 — 사용자 검토 권장",
             })
     return issues
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Work 2 — 사전 검증 validate_plan (Executor 전, 결정론, sync)
+# ─────────────────────────────────────────────────────────────────────────
+# 작업 유형별 단계 순위: 작을수록 먼저 와야 함. 9는 "언제 와도 됨"(예외).
+_ORDER_RANK: dict[str, int] = {
+    "detect_encoding": 0, "reparse_header": 0,
+    "clean_masking": 1,
+    "fill_missing": 2, "remove_outlier": 2,
+    "normalize_group": 3, "balance_classes": 3, "create_feature": 3,
+    "drop_column": 5, "relabel": 5, "merge_external": 5,
+    "compute_stats": 9,   # 예외 — 어디 와도 됨
+}
+
+
+def validate_plan(plan: dict, profile: dict | None = None) -> dict:
+    """[사전 검증] Executor 실행 전, 계획의 타당성을 결정론으로 검증.
+
+    LLM 0. 순서 규칙 + 작업 충돌 + L3 안전 선행 정보성.
+    blocking 기준: high(작업 충돌)만 → 실행 차단 권고. 순서 의심(medium)·L3(low)은 경고만.
+
+    반환:
+      { "plan_ok": bool, "plan_issues": [{kind,severity,message,...}], "blocking": bool }
+    """
+    steps = (plan or {}).get("steps", []) or []
+    issues: list[dict] = []
+
+    # (a) 순서 규칙 — 인코딩/헤더 < 정제 < 정규화 < 결측보정 등 < (compute_stats 예외)
+    last_rank = -1
+    for s in steps:
+        op = s.get("operation")
+        r = _ORDER_RANK.get(op, 4)   # 미정의는 중간 rank
+        if op != "compute_stats" and r < last_rank:
+            issues.append({
+                "kind": "plan_order", "severity": "medium",
+                "operation": op, "rank": r, "prev_max_rank": last_rank,
+                "message": (f"순서 의심: {op}(rank {r})가 앞 작업(rank {last_rank})보다 뒤 — "
+                            f"인코딩/정제 선행 권장"),
+            })
+        if op != "compute_stats":
+            last_rank = max(last_rank, r)
+
+    # (b) 작업 충돌 — drop_column 대상 컬럼을 다른 작업도 건드리면 모순 (high → blocking)
+    dropped: set[str] = set()
+    for s in steps:
+        if s.get("operation") == "drop_column" and s.get("target_column"):
+            dropped.add(str(s["target_column"]))
+    for s in steps:
+        tgt = s.get("target_column")
+        if tgt and str(tgt) in dropped and s.get("operation") != "drop_column":
+            issues.append({
+                "kind": "plan_conflict", "severity": "high",
+                "operation": s.get("operation"), "target_column": tgt,
+                "message": (f"충돌: '{tgt}'를 drop_column 하는데 다른 작업({s.get('operation')})도 "
+                            f"그 컬럼 대상 — 어느 쪽이 먼저든 모순"),
+            })
+
+    # (c) L3 안전 — 정보성 (현재 executor가 항상 백업 뜨므로 통과하지만 plan 차원에서 기록)
+    for s in steps:
+        if s.get("permission_level") == "L3":
+            issues.append({
+                "kind": "plan_l3_notice", "severity": "low",
+                "operation": s.get("operation"), "target_column": s.get("target_column"),
+                "message": f"L3 작업({s.get('operation')}) 포함 — 백업·명시 승인 필요",
+            })
+
+    n_high = sum(1 for i in issues if i.get("severity") == "high")
+    return {
+        "plan_ok": n_high == 0,
+        "plan_issues": issues,
+        "blocking": n_high > 0,
+        "n_high": n_high,
+        "n_medium": sum(1 for i in issues if i.get("severity") == "medium"),
+        "n_low": sum(1 for i in issues if i.get("severity") == "low"),
+    }
 
 
 async def validate(execution: dict, plan: dict | None = None,

@@ -135,23 +135,32 @@ class ExecuteReq(BaseModel):
 
 @app.post("/api/execute")
 async def execute_endpoint(req: ExecuteReq) -> dict:
-    """Inspector → Planner → Executor → Validator 전체 체인 (Agentic Flow 1→2→3→4단).
+    """Inspector → Planner → ★사전 검증★ → Executor → Validator 전체 체인 (STEP 1B-2c).
     approved_keys에 든 작업만 L2/L3 실행 (step_key 기반 — order 비결정성 회피).
     constraints/module_context는 옵션 — 안 주면 기존 동작 그대로 (회귀 없음, STEP 1B-1)."""
     from inspector import inspect as run_inspect
     from planner import plan as run_plan
     from executor import execute as run_execute
-    from validator import validate as run_validate
+    from validator import validate as run_validate, validate_plan
     try:
         profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality)
         plan_result = await run_plan(profile, constraints=req.constraints,
                                      module_context=req.module_context, model=req.model)
+        # ★사전 검증 (STEP 1B-2c): Executor 전. blocking(high 충돌) 시 실행 중단
+        pre_validation = validate_plan(plan_result, profile)
+        if pre_validation.get("blocking"):
+            return {"profile": profile, "plan": plan_result,
+                    "pre_validation": pre_validation,
+                    "execution": None, "validation": None,
+                    "note": "계획 사전 검증 실패(blocking) — 실행 중단"}
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
                                         modality=req.modality)
-        # ★4단 Validator: 실행 결과를 plan·profile·constraints와 함께 검증 (5종)
+        # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
         validation = await run_validate(exec_result, plan=plan_result, profile=profile,
                                         constraints=req.constraints)
+        validation["pre_validation"] = pre_validation
         return {"profile": profile, "plan": plan_result,
+                "pre_validation": pre_validation,
                 "execution": exec_result, "validation": validation}
     except Exception as e:
         raise HTTPException(500, f"execute failed: {e}")
@@ -239,7 +248,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
     from inspector import inspect as run_inspect
     from planner import plan as run_plan
     from executor import execute as run_execute
-    from validator import validate as run_validate
+    from validator import validate as run_validate, validate_plan
     from data_necessity import llm_judge_data_necessity
 
     session = get_session(req.session_id)
@@ -291,6 +300,28 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 plan_result = await run_plan(profile, constraints=constraints,
                                              module_context=module_context, model=req.model)
 
+                # ★사전 검증 (STEP 1B-2c) — Executor 전 결정론 검증
+                pre_validation = validate_plan(plan_result, profile)
+                if pre_validation.get("blocking"):
+                    # high 충돌(예: drop_column + 같은 컬럼 변환) → 해당 모듈 차단, 세션 error
+                    session["module_results"][module_key] = {
+                        "modality": modality,
+                        "dataset_id": dataset_id,
+                        "profile": profile,
+                        "plan": plan_result,
+                        "pre_validation": pre_validation,
+                        "execution": None,
+                        "validation": None,
+                        "note": "계획 사전 검증 실패(blocking) — 실행 중단",
+                    }
+                    session["status"] = "error"
+                    session["error"] = (f"plan blocking at {module_key}: "
+                                        f"{pre_validation.get('n_high')} high issue(s)")
+                    save_session(req.session_id, session)
+                    return {"status": "error", "blocking_module": module_key,
+                            "pre_validation": pre_validation,
+                            "session": public_view(session)}
+
                 # 3) 권한 게이트 — unapproved L2/L3 있으면 suspend-and-return
                 approved = set(session["approved_step_keys"])
                 unapproved = [
@@ -323,16 +354,18 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                             "pending": session["pending"],
                             "session": public_view(session)}
 
-                # 4) Executor (전부 승인됨) + Validator
+                # 4) Executor (전부 승인됨) + Validator (사후 6종)
                 execution = await run_execute(plan_result, approved_keys=approved,
                                               modality=modality)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
+                validation["pre_validation"] = pre_validation  # 사전 결과도 첨부
                 session["module_results"][module_key] = {
                     "modality": modality,
                     "dataset_id": dataset_id,
                     "profile": profile,
                     "plan": plan_result,
+                    "pre_validation": pre_validation,
                     "execution": execution,
                     "validation": validation,
                 }
