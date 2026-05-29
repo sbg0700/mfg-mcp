@@ -9,8 +9,7 @@ agents/validator/validator.py — 4단 Validator (검증 강화).
   2. 변환 결과    — 변환이 의도대로 됐는가 (fill_missing 후 결측이 줄었나? normalize 됐나?)
   3. 계획 무결성  — 같은 작업이 중복 제안됐나 (width/height 중복 같은 것), 그룹 이중 처리?
   4. 회귀         — 전처리가 데이터를 망치진 않았나 (행 급감 등)
-  5. ★constraint — 사용자 입력 constraints를 처리 결과가 지키는가 (STEP 1B-1).
-                  카탈로그 typical_ranges 디폴트 아님 — 사용자 입력 기준 (D-43).
+  5. constraint  — 사용자 입력 constraints (D-43). ★STEP 1B-2c: 원본 backup_path 기준 (D-67)★
 
 검증 실패 시 → next_action으로 라우팅 (재시도/사람개입/검토권고).
 입력: ExecutionResult + (선택) PreprocessingPlan, DataProfile, constraints.
@@ -120,26 +119,31 @@ def _bounds(spec: Any) -> tuple[float | None, float | None]:
 
 
 def _check_constraint_violation(execution: dict, constraints: dict | None) -> list[dict]:
-    """검증5 — 사용자가 Page 3에서 입력한 constraints를 처리 결과가 지키는가.
-    ★카탈로그 디폴트(typical_ranges)가 아니라 사용자 입력 constraints 기준★ (D-43, §2 spec).
+    """검증5 — 사용자가 Page 3에서 입력한 constraints를 데이터가 지키는가.
+    ★카탈로그 디폴트(typical_ranges)가 아니라 사용자 입력 constraints 기준★ (D-43).
+    ★STEP 1B-2c: 정제 전 원본(backup_path) 기준으로 검증 — 정규화 후 무의미한 위반 회피 (D-67)★
     위반 판정은 결정론(산수). LLM 안 씀. 1층 단일 모드(constraints 빈)는 skip."""
     issues: list[dict] = []
     if not constraints:
         return issues
-    output_path = execution.get("output_path") or ""
-    if not isinstance(output_path, str) or not output_path.endswith(".parquet"):
-        return issues   # 이미지 등 비-parquet 경로는 컬럼 범위 검증 대상 아님
 
     import os
-    if not os.path.exists(output_path):
-        return issues
+    # ★D-67: 사용자 제약은 원본 측정값 기준이므로 정제 전 backup parquet에서 검증.
+    #   backup이 없으면(레거시 세션) processed로 폴백 (회귀 안전, low severity 경고는 안 함).
+    src_path = execution.get("backup_path") or ""
+    src_kind = "원본(backup)"
+    if not isinstance(src_path, str) or not src_path.endswith(".parquet") or not os.path.exists(src_path):
+        src_path = execution.get("output_path") or ""
+        src_kind = "정제(processed) — 폴백"
+        if not isinstance(src_path, str) or not src_path.endswith(".parquet") or not os.path.exists(src_path):
+            return issues   # 이미지 등 비-parquet, 또는 파일 없음 — 검증 대상 아님
 
     try:
         import pandas as pd
-        df = pd.read_parquet(output_path)
+        df = pd.read_parquet(src_path)
     except Exception as e:
         issues.append({"kind": "constraint", "severity": "low",
-                       "message": f"constraint 검증 스킵 (processed 로드 실패: {e})"})
+                       "message": f"constraint 검증 스킵 ({src_kind} 로드 실패: {e})"})
         return issues
 
     col_names = {str(c).lower(): str(c) for c in df.columns}
@@ -167,7 +171,7 @@ def _check_constraint_violation(execution: dict, constraints: dict | None) -> li
             issues.append({
                 "kind": "constraint", "severity": "medium",
                 "column": actual, "n_violations": n_viol, "n_total": n_total,
-                "bounds": [lo, hi],
+                "bounds": [lo, hi], "source": src_kind,
                 "message": f"'{actual}' 범위 {bound_str} 위반 {n_viol}/{n_total}행 — 사용자 검토 권장",
             })
     return issues
@@ -190,7 +194,7 @@ async def validate(execution: dict, plan: dict | None = None,
     issues += _check_transform_result(results)                  # 2. 변환 결과
     issues += _check_plan_integrity(results, plan)              # 3. 계획 무결성
     issues += _check_regression(results, profile)               # 4. 회귀
-    issues += _check_constraint_violation(execution, constraints)  # 5. ★사용자 constraint
+    issues += _check_constraint_violation(execution, constraints)  # 5. constraint (★원본 backup_path 기준 — D-67)
 
     high = [i for i in issues if i.get("severity") == "high"]
     medium = [i for i in issues if i.get("severity") == "medium"]
