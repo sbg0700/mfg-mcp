@@ -399,6 +399,25 @@ async def pipeline_approve(session_id: str, req: ApproveReq) -> dict:
             "stage_order": req.stage_order, "module_index": req.module_index}
 
 
+@app.get("/api/aggregate_context/{session_id}")
+async def aggregate_context_endpoint(session_id: str) -> dict:
+    """STEP 1B-2b — 세션의 4단 판단 기록을 결정론으로 집계해 AggregatedContext 반환.
+    Page 5/6 LLM 프롬프트의 컨텍스트 소스(spec-1 API 14b). LLM 호출 0 (D-59).
+    이미 집계돼 있으면 캐시 반환(결정론이라 재생성해도 동일).
+    """
+    from session_store import get_session, save_session
+    from context_aggregator import aggregate as _aggregate
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if session.get("aggregated_context"):
+        return session["aggregated_context"]
+    ctx = _aggregate(session)
+    session["aggregated_context"] = ctx
+    save_session(session_id, session)
+    return ctx
+
+
 @app.get("/")
 async def root() -> FileResponse:
     """더미 대시보드 서빙."""
