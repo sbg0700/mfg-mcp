@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "agents" / "inspector"))
 sys.path.insert(0, str(ROOT / "agents" / "planner"))
 sys.path.insert(0, str(ROOT / "agents" / "executor"))
 sys.path.insert(0, str(ROOT / "agents" / "validator"))
+sys.path.insert(0, str(ROOT / "agents" / "aggregator"))   # STEP 1B-2b
 sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
@@ -348,8 +349,13 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
 
         session["status"] = "completed"
         session["pending"] = None
+        # ★STEP 1B-2b: Context Aggregator 자동 트리거 (결정론, LLM 0)
+        #   blueprint Part 2-5 마지막 줄 정합. 같은 입력 → 같은 출력이므로 재호출 안전.
+        from context_aggregator import aggregate as _aggregate
+        session["aggregated_context"] = _aggregate(session)
         save_session(req.session_id, session)
-        return {"status": "completed", "session": public_view(session)}
+        return {"status": "completed", "session": public_view(session),
+                "aggregated_context": session["aggregated_context"]}
 
     except HTTPException:
         raise
