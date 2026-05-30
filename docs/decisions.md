@@ -381,3 +381,59 @@ Validator를 사전(Executor 전)+사후(Executor 후) 양방향으로 강화한
 1B-2 패키지(2a Orchestrator + 2b Aggregator + 2c Validator 강화) 완전 종료.
 사후뿐 아니라 사전 검증까지 가지면서 "LLM은 제안, 규칙이 결정"의 결정론 영역이 양방향으로 완비됨.
 다음: STEP 1B-3 (Mini UI 6 페이지) — 백엔드 모든 엔드포인트를 UI로 결합해 시연 가능 형태.
+
+## 2026-05-29 — STEP 1B-3a: Frontend 골격 + Page 1·2 + 세션 엔드포인트 보강
+
+명세: `docs/specs/STEP_1B-3a_frontend_page1_2.md` (claude.ai 세션에서 확정).
+1B-3 분할 — 3a(이번): React+Vite 골격 + Page 1·2 + 세션 엔드포인트, 3b: Page 3·4, 3c: Page 5·6 UI.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-74 | `/api/sessions/create`는 `line_id`와 `pipeline_full` **둘 다** 허용 (어느 하나 필수) | Page 1은 line_id만 가능, 기존 직접 호출(curl 테스트, 1B-2a 인계 검증)은 pipeline_full로 회귀 없이 동작 |
+| D-75 | 세션 dict 최상위에 `line_id` 별도 저장 | GET /sessions/{id}와 Page 2가 line_id를 즉시 조회 — pipeline_full 안에서 매번 파싱하는 번거로움 회피 |
+| D-76 | React 18 + Vite + react-router-dom 최소 의존성. Tailwind/차트 라이브러리 금지 | 빌드 의존성/빌드 시간 최소화. dev서버는 121ms 부팅, 프로덕션 빌드 173KB(57KB gzip) |
+| D-77 | 드래그앤드롭은 HTML5 native (의존성 0) | react-dnd 같은 라이브러리 추가 안 함. dataTransfer로 {function, hint_dataset, source_node_id} 전달 |
+| D-78 | Page 2 검증 규칙: 같은 노드만 / max_modules 이하 / 중복 금지 / 1+ 모듈 1+ Stage 필수 | spec-1 Part 3-6. 드롭 시 즉시 토스트로 거부, "다음" 클릭 시 최소 모듈 강제 |
+| D-79 | Function 색상: process=파랑, quality=초록, maintenance=주황, reference=회색 | spec-1 Part 3-3. CSS 변수(--c-process 등)로 단일 소스 관리 |
+| D-80 | dev 모드는 Vite 별도 컨테이너(docker-compose 미수정), 백엔드와 같은 docker network(`manufacturing-mcp_default`)로 proxy target = `http://mfg-backend:8000` | "docker compose 변경 최소화" 정책 준수. `VITE_API_TARGET` 환경변수로 호스트 직접 실행도 지원 |
+| D-81 | 기존 `frontend/index.html` 다크 대시보드 → `_legacy_dashboard.html`로 보관, 백엔드 `/` 가 그대로 서빙 | 회귀 0. 레거시 데모는 backend:8000/ 에서, 새 React 앱은 vite:5173/에서 분리 |
+
+### 구현 산출물
+- 백엔드 (`backend/main.py`):
+  - `POST /api/sessions/create` 수정 — `line_id` 또는 `pipeline_full` 둘 다 허용
+  - `GET /api/sessions/{session_id}` 신규 — public_view + line_id 보강
+  - `PUT /api/sessions/{session_id}/structure` 신규 — Page 2 출력 저장
+  - `FRONTEND` 경로를 `_legacy_dashboard.html`로 변경 (레거시 보존)
+- 프론트엔드 (`frontend/`, React+Vite):
+  ```
+  package.json, vite.config.js, index.html, .gitignore
+  src/
+    main.jsx, App.jsx, api.js, styles.css
+    components/{Breadcrumb, ModelDropdown, Toast, ModuleCard}.jsx
+    step1_line/LineSelectPage.jsx
+    step2_user_input_pipeline/{PipelineBuildPage, CatalogPanel, StageBox}.jsx
+  ```
+
+### 검증 결과 (명세 §8 체크리스트)
+- 백엔드 5개:
+  - `POST /sessions/create {line_id}` → uuid + line_id 반환
+  - `POST /sessions/create {pipeline_full}` 회귀 → 동작
+  - `GET /sessions/{id}` → 복원 (없으면 404)
+  - `PUT /sessions/{id}/structure` → status="structured", stage_count/module_count 반환
+  - `GET /api/models` 기존 그대로 (변경 없음)
+- 프론트엔드:
+  - `docker run node:20-alpine npm install` 65 packages 12초
+  - `npm run build` 성공 — 173 KB JS(57 KB gzip), 3.6 KB CSS, 빌드 667ms
+  - `npm run dev` 121ms 부팅, Vite 5173에서 React 앱 서빙
+  - Vite proxy로 `/api/lines` → 3 Line JSON 반환 정상
+  - Vite가 `/src/*.jsx` 트랜스폼해서 서빙 정상 (PipelineBuildPage.jsx 26 KB 응답)
+- 통합 Page 1 → Page 2 시뮬레이션 (curl로 Vite proxy):
+  - Page 1: POST /sessions/create {line_id} → session_id
+  - Page 2 entry: GET /sessions/{id} → status=created, stages=[]
+  - Page 2 PUT /structure: 2 stage, 3 module 저장 → status=structured
+  - Page 2 새로고침: GET → 저장한 stages·modules 그대로 복원
+  - 1B-2a 호환: pipeline_full 직접 호출도 그대로 동작
+
+### STEP 1B-3a 완료 마일스톤
+처음으로 ★브라우저 가능한 React 앱★이 등장. Page 1 라인 선택 → Page 2 드래그앤드롭으로 파이프라인 구성 → 세션에 PipelineStructure 저장까지 실동작.
+다음: STEP 1B-3b (Page 3 데이터·제약 입력 + Page 4 표준화 진행/승인) — 1B-2a 폴링 흐름을 UI로 노출.

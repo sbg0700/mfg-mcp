@@ -277,8 +277,8 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 | Prefix | API 엔드포인트 |
 |---|---|
-| `step1_line` | `GET /api/lines` ★실재 (STEP 1B-1)★, `GET /api/models`, `POST /api/sessions/create` ★실재 (STEP 1B-2a)★ |
-| `step2_user_input_pipeline` | `GET /api/sessions/{id}` (예정), `PUT /api/sessions/{id}/structure` (예정) |
+| `step1_line` | `GET /api/lines` ★실재 (1B-1)★, `GET /api/models` ★실재★, `POST /api/sessions/create` ★실재 (1B-2a, 1B-3a 확장: line_id 또는 pipeline_full)★ |
+| `step2_user_input_pipeline` | ★실재 (1B-3a)★ `GET /api/sessions/{id}`, `PUT /api/sessions/{id}/structure` |
 | `step3_user_input_data` | `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}`, `PUT /api/sessions/{id}/full` (모두 예정) |
 | `step4_standardize` | ★실재 (STEP 1B-2a)★ `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · ★실재 (STEP 1B-2b)★ `GET /api/aggregate_context/{id}` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input` |
 | `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` (예정) |
@@ -298,6 +298,14 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | 메서드 | 경로 | 입력 | 반환 | 비고 |
 |---|---|---|---|---|
 | GET | `/api/aggregate_context/{sid}` | (path) | `AggregatedContext` (5영역 + user_intent=None) | LLM 호출 0 (D-59). 캐시 있으면 그대로 반환. 같은 입력 → 같은 출력 100% |
+
+### STEP 1B-3a 2 엔드포인트 (세션 조회/구조 저장)
+| 메서드 | 경로 | 입력 | 반환 | 비고 |
+|---|---|---|---|---|
+| GET | `/api/sessions/{sid}` | (path) | `public_view(session) + line_id` | Page 2 진입/새로고침 복원. 404 처리 |
+| PUT | `/api/sessions/{sid}/structure` | `{line_id, stages[]}` | `{session_id, status:"structured", stage_count, module_count}` | Page 2 드래그앤드롭 출력 저장. 데이터/제약은 Page 3에서 |
+
+`POST /api/sessions/create` 시그니처 갱신(1B-3a, D-74): `{line_id?, pipeline_full?}` 둘 중 1개 필수. line_id만 오면 빈 stages로 초기화, pipeline_full 그대로 호출도 회귀 없음.
 
 ---
 
@@ -439,3 +447,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-05-28: STEP 1B-2a 반영 — `PipelineSession` 실재 (§8), 폴링형 4 엔드포인트 표 (§9), D-51~D-58 결정
 - 2026-05-28: STEP 1B-2b 반영 — `AggregatedContext` 실재 (§8 5영역 표), `/api/aggregate_context` 엔드포인트 (§9), D-59~D-65 결정 (LLM 호출 0 생명선)
 - 2026-05-28: STEP 1B-2c 반영 — Validator 사전+사후 양방향 (§12.5 갱신), D-66 해결(constraint 원본 기준), D-67~D-73 결정. `ExecutionResult.backup_path` 신설
+- 2026-05-29: STEP 1B-3a 반영 — React+Vite frontend 실재화 (Page 1·2), 세션 GET/PUT structure 엔드포인트 추가 (§9), D-74~D-81 결정. 기존 `frontend/index.html` → `_legacy_dashboard.html` 보존
