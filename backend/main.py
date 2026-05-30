@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-FRONTEND = ROOT / "frontend" / "index.html"
+FRONTEND = ROOT / "frontend" / "_legacy_dashboard.html"   # STEP 1B-3a: 새 React 앱은 Vite(5173)에서, 백엔드 / 는 레거시 보존
 
 
 @app.get("/api/health")
@@ -221,16 +221,62 @@ def _resolve_modality(module: dict, node_id: str | None = None) -> str:
 
 
 class CreateSessionReq(BaseModel):
-    pipeline_full: dict   # {line_id, stages:[{stage_order, node_id, modules:[...]}, ...]}
+    # ★STEP 1B-3a: 둘 다 옵션 — Page 1은 line_id만, 기존 직접 호출은 pipeline_full만 (회귀 보존, D-74)
+    line_id: str | None = None
+    pipeline_full: dict | None = None   # {line_id, stages:[{stage_order, node_id, modules:[...]}]}
 
 
 @app.post("/api/sessions/create")
 async def sessions_create(req: CreateSessionReq) -> dict:
-    """pipeline_full을 주입해 세션 생성 (1B-2a 폴링 사이클의 시작점).
-    Page 2(1-1) + Page 3(1-2) 통합 출력을 받는 자리. 1B-3 UI 도입 전에는 테스트가 직접 호출."""
-    from session_store import create_session
-    sid = create_session(req.pipeline_full)
-    return {"session_id": sid, "status": "created"}
+    """세션 생성 — Page 1(line_id 단독) 또는 직접 호출(pipeline_full)이 모두 허용된다.
+    line_id만 오면 빈 stages로 초기화 — Page 2에서 PUT /structure로 채움."""
+    from session_store import create_session, get_session, save_session
+    if not req.line_id and not req.pipeline_full:
+        raise HTTPException(400, "either line_id or pipeline_full is required")
+    skeleton = req.pipeline_full or {"line_id": req.line_id, "stages": []}
+    sid = create_session(skeleton)
+    # line_id를 세션 최상위에도 저장 (Page 2의 GET /sessions/{id}가 쉽게 읽도록)
+    session = get_session(sid)
+    if req.line_id:
+        session["line_id"] = req.line_id
+    elif req.pipeline_full and req.pipeline_full.get("line_id"):
+        session["line_id"] = req.pipeline_full["line_id"]
+    save_session(sid, session)
+    return {"session_id": sid, "status": "created", "line_id": session.get("line_id")}
+
+
+@app.get("/api/sessions/{session_id}")
+async def session_get(session_id: str) -> dict:
+    """세션 복원 (Page 2 새로고침/되돌아오기 등)."""
+    from session_store import get_session, public_view
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    out = public_view(session)
+    out["line_id"] = session.get("line_id") or (out.get("pipeline_full") or {}).get("line_id")
+    return out
+
+
+class StructureReq(BaseModel):
+    line_id: str
+    stages: list[dict]   # [{stage_order, node_id, modules:[{index, function, dataset_role}]}]
+
+
+@app.put("/api/sessions/{session_id}/structure")
+async def session_put_structure(session_id: str, req: StructureReq) -> dict:
+    """Page 2(드래그앤드롭) 출력 PipelineStructure 저장.
+    데이터(datalake_id)와 제약(constraints)은 Page 3에서 추가 — 이번은 뼈대만."""
+    from session_store import get_session, save_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    session["pipeline_full"] = {"line_id": req.line_id, "stages": req.stages}
+    session["line_id"] = req.line_id
+    session["status"] = "structured"
+    save_session(session_id, session)
+    return {"session_id": session_id, "status": "structured",
+            "stage_count": len(req.stages),
+            "module_count": sum(len(s.get("modules", [])) for s in req.stages)}
 
 
 class ExecutePipelineReq(BaseModel):
