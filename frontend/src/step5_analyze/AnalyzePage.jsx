@@ -84,9 +84,23 @@ export default function AnalyzePage() {
         <code>available_options</code> 외 추천은 환각 방어 코드가 제거합니다 (D-91).
       </p>
 
-      {questions?.error && (
+      {questions?.llm_status === 'failed' ? (
+        <div className="error-text" style={{ marginBottom: 12 }}>
+          ⚠ LLM 응답 실패 — {questions.llm_error || '알 수 없는 오류'}
+          {questions.model_used && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              시도 모델: <code>{questions.model_used}</code> · ollama 컨테이너/모델 pull/타임아웃 확인
+            </div>
+          )}
+        </div>
+      ) : questions?.error ? (
         <div className="error-text" style={{ marginBottom: 12 }}>
           ⚠ LLM 응답 오류: {questions.error}
+        </div>
+      ) : null}
+      {questions?.llm_status === 'ok' && questions?.model_used && (
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          (모델: <code>{questions.model_used}</code>)
         </div>
       )}
 

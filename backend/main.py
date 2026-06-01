@@ -725,24 +725,28 @@ async def analyze_questions(session_id: str) -> dict:
         "available_options": ANALYSIS_PURPOSES,
     }, ensure_ascii=False)
 
-    try:
-        raw = await generate(prompt, system=system, fmt_json=True, model=model)   # B1: model 전달
-        out = json.loads(raw)
-        recs = []
-        for r in out.get("recommendations", []) or []:
-            opt = r.get("option")
-            if opt in ANALYSIS_PURPOSES:
-                recs.append({
-                    "option": opt,
-                    "rank": int(r.get("rank", len(recs) + 1)),
-                    "rationale_ko": str(r.get("rationale_ko", "")),
-                })
-        recs.sort(key=lambda x: x["rank"])
-        return {"session_id": session_id, "recommendations": recs[:3],
-                "all_options": ANALYSIS_PURPOSES}
-    except Exception as e:
+    raw = await generate(prompt, system=system, fmt_json=True, model=model)   # B1: model 전달
+    # STEP 1B-3d B3 — _llm_failed 마커 + JSON 보정 (generate_json 사용)
+    from llm import _try_parse_llm
+    parsed = _try_parse_llm(raw)
+    if parsed.get("_llm_failed"):
         return {"session_id": session_id, "recommendations": [],
-                "all_options": ANALYSIS_PURPOSES, "error": str(e)}
+                "all_options": ANALYSIS_PURPOSES,
+                "llm_status": "failed", "llm_error": parsed.get("error"),
+                "model_used": model}
+    recs = []
+    for r in parsed.get("recommendations", []) or []:
+        opt = r.get("option")
+        if opt in ANALYSIS_PURPOSES:
+            recs.append({
+                "option": opt,
+                "rank": int(r.get("rank", len(recs) + 1)),
+                "rationale_ko": str(r.get("rationale_ko", "")),
+            })
+    recs.sort(key=lambda x: x["rank"])
+    return {"session_id": session_id, "recommendations": recs[:3],
+            "all_options": ANALYSIS_PURPOSES, "llm_status": "ok",
+            "model_used": model}
 
 
 class AnalyzeSelectReq(BaseModel):
@@ -810,40 +814,43 @@ async def model_recommend(session_id: str) -> dict:
         "available_models": available,
     }, ensure_ascii=False)
 
-    try:
-        raw = await generate(prompt, system=system, fmt_json=True, model=model)   # B1: model 전달
-        out = json.loads(raw)
-        name_to_meta = {m["name"]: m for m in available}
-        recs = []
-        for r in out.get("recommendations", []) or []:
-            n = r.get("name")
-            fs = r.get("fit_score")
-            if n not in name_to_meta:
-                continue
-            try:
-                fs_int = int(fs)
-            except (TypeError, ValueError):
-                continue
-            if not (1 <= fs_int <= 5):
-                continue
-            meta = name_to_meta[n]
-            recs.append({
-                "name": n,
-                "fit_score": fs_int,
-                "rationale_ko": str(r.get("rationale_ko", "")),
-                "context_reflections": list(r.get("context_reflections", []))[:5],
-                "task": meta.get("task"),
-                "when": meta.get("when"),
-                "from_node": meta.get("from_node"),
-                "advisory_only": meta.get("advisory_only", False),
-            })
-        recs.sort(key=lambda x: -x["fit_score"])
-        return {"session_id": session_id, "recommendations": recs,
-                "available_models": available, "user_purpose": user_purpose}
-    except Exception as e:
+    raw = await generate(prompt, system=system, fmt_json=True, model=model)   # B1: model 전달
+    # STEP 1B-3d B3 — _llm_failed 마커 + JSON 보정
+    from llm import _try_parse_llm
+    parsed = _try_parse_llm(raw)
+    if parsed.get("_llm_failed"):
         return {"session_id": session_id, "recommendations": [],
                 "available_models": available, "user_purpose": user_purpose,
-                "error": str(e)}
+                "llm_status": "failed", "llm_error": parsed.get("error"),
+                "model_used": model}
+    name_to_meta = {m["name"]: m for m in available}
+    recs = []
+    for r in parsed.get("recommendations", []) or []:
+        n = r.get("name")
+        fs = r.get("fit_score")
+        if n not in name_to_meta:
+            continue
+        try:
+            fs_int = int(fs)
+        except (TypeError, ValueError):
+            continue
+        if not (1 <= fs_int <= 5):
+            continue
+        meta = name_to_meta[n]
+        recs.append({
+            "name": n,
+            "fit_score": fs_int,
+            "rationale_ko": str(r.get("rationale_ko", "")),
+            "context_reflections": list(r.get("context_reflections", []))[:5],
+            "task": meta.get("task"),
+            "when": meta.get("when"),
+            "from_node": meta.get("from_node"),
+            "advisory_only": meta.get("advisory_only", False),
+        })
+    recs.sort(key=lambda x: -x["fit_score"])
+    return {"session_id": session_id, "recommendations": recs,
+            "available_models": available, "user_purpose": user_purpose,
+            "llm_status": "ok", "model_used": model}
 
 
 @app.get("/")
