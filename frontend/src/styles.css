@@ -142,3 +142,81 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 }
 .constraint-unit { font-size: 12px; min-width: 60px; }
 
+/* Page 4 — standardize */
+.status-tag {
+  padding: 2px 8px; border-radius: 4px; text-transform: uppercase; font-size: 11px;
+  background: #334155;
+}
+.status-completed { background: #16a34a; color: white; }
+.status-awaiting_approval { background: #ea580c; color: white; }
+.status-error { background: #dc2626; color: white; }
+.status-ready, .status-structured, .status-created { background: #2563eb; color: white; }
+
+.alarm-banner { margin: 16px 0; display: flex; flex-direction: column; gap: 8px; }
+.alarm-row {
+  display: flex; gap: 12px; padding: 10px 14px; align-items: flex-start;
+  background: #422006; color: #fde68a; border-left: 4px solid #f59e0b; border-radius: 6px;
+}
+.alarm-text { margin-top: 4px; }
+.alarm-actions { display: flex; gap: 8px; flex-direction: column; }
+
+.run-stages { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.run-stage {
+  background: var(--panel); padding: 12px 14px; border-radius: 8px;
+  border-left: 4px solid var(--border);
+}
+.run-stage.stage-done { border-left-color: #16a34a; }
+.run-stage.stage-pending { border-left-color: #ea580c; }
+.run-stage-header { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
+.run-modules { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+
+.badge-ok {
+  padding: 2px 8px; border-radius: 4px; background: #16a34a; color: white;
+  font-size: 11px; text-transform: uppercase;
+}
+.badge-warn {
+  padding: 2px 8px; border-radius: 4px; background: #f59e0b; color: #1f1300;
+  font-size: 11px; text-transform: uppercase;
+}
+
+/* Approval card */
+.approval-card {
+  margin-top: 16px; background: var(--panel); padding: 16px 18px;
+  border-radius: 8px; border-left: 4px solid #ea580c;
+}
+.approval-header { margin-bottom: 8px; }
+.approval-list { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.approval-step {
+  background: var(--panel-2); padding: 8px 10px; border-radius: 6px;
+}
+.approval-step.approved { opacity: 0.7; }
+.approval-step-line {
+  display: flex; align-items: center; gap: 8px;
+}
+.approval-rationale { font-size: 12px; margin-top: 4px; margin-left: 32px; }
+.approval-mark { color: #4ade80; font-weight: 600; font-size: 13px; }
+.approval-actions { display: flex; gap: 8px; margin-top: 12px; }
+.perm-badge {
+  padding: 2px 6px; border-radius: 4px; color: white;
+  font-size: 11px; font-weight: 700; min-width: 28px; text-align: center;
+}
+
+/* Findings list */
+.findings-section { margin-top: 16px; background: var(--panel); padding: 16px 18px; border-radius: 8px; }
+.validator-summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.check-chip {
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase;
+}
+.check-ok { background: #14532d; color: #86efac; }
+.check-bad { background: #7f1d1d; color: #fecaca; }
+
+.findings-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.finding-row { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
+.severity-tag {
+  padding: 2px 8px; border-radius: 4px; color: white;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; min-width: 60px; text-align: center;
+}
+.finding-type { font-family: ui-monospace, "Menlo", monospace; font-size: 12px; min-width: 200px; }
+.finding-detail { flex: 1; }
+.stage-implications { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+
