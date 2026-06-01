@@ -594,6 +594,120 @@ async def aggregate_context_endpoint(session_id: str) -> dict:
     return ctx
 
 
+# ──────────────────────────────────────────────────────────────────────
+# STEP 1B-3c — Page 5 (분석목적/EDA) + Page 6 (모델링) 백엔드
+# ──────────────────────────────────────────────────────────────────────
+# LLM 가치 영역 ③(분석목적 추천) + ⑤(모델 추천). 환각 방어:
+#   - available_options / available_models 외 LLM 추천 → 코드로 필터링
+#   - fit_score 1~5 범위 강제
+#   - rationale_ko는 AggregatedContext(key_findings 등) 인용 권장
+# 우리 시스템의 실제 범위 끝 = 추천(LLM). EDA 차트·실제 ML 학습은 STEP 2·3.
+
+ANALYSIS_PURPOSES: list[str] = [
+    "anomaly_detection",       # 이상 탐지
+    "quality_classification",  # 품질 분류
+    "process_optimization",    # 공정 최적화
+    "predictive_maintenance",  # 예지보전
+    "demand_forecasting",      # 생산량/수요 예측
+    "statistical_comparison",  # 통계·SPC 비교
+]
+
+# spec-2 Part 6-4 매핑 (결정론) — 분석목적 → Function 축
+_PURPOSE_FUNCTION: dict[str, str] = {
+    "anomaly_detection": "maintenance",
+    "quality_classification": "quality",
+    "process_optimization": "process",
+    "predictive_maintenance": "maintenance",
+    "demand_forecasting": "reference",
+    "statistical_comparison": "reference",
+}
+
+
+def _slim_ctx(ctx: dict) -> dict:
+    """LLM 프롬프트 토큰 절약 — AggregatedContext에서 추천에 필요한 핵심만 추림.
+    agent_records의 큰 본문은 제외 (해석은 key_findings에 이미 결정론으로 추출됨)."""
+    return {
+        "key_findings": ctx.get("key_findings", []),
+        "function_axis_summary": ctx.get("function_axis_summary", {}),
+        "stage_chain": ctx.get("stage_chain", []),
+        "pipeline_constraints": ctx.get("pipeline_constraints", {}),
+    }
+
+
+@app.get("/api/analyze/{session_id}/questions")
+async def analyze_questions(session_id: str) -> dict:
+    """STEP 1B-3c — 분석목적 추천 (LLM, AggregatedContext 기반).
+    환각 방어 (D-91): ANALYSIS_PURPOSES 외 추천은 코드로 제거. rationale_ko는 facts 인용."""
+    from session_store import get_session
+    from llm import generate
+    import json
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    ctx = session.get("aggregated_context") or {}
+
+    system = (
+        "You are a manufacturing data analysis advisor. "
+        "Given the aggregated_context (key_findings, function_axis_summary, stage_chain), "
+        "recommend 1-2 analysis purposes from available_options. "
+        "ABSOLUTELY DO NOT invent new purposes outside available_options. "
+        "Each rationale_ko (Korean, 1-2 sentences) MUST cite a specific fact from key_findings "
+        "or function_axis_summary — e.g., '제약 위반 172/800행 → 이상 탐지 적합'. "
+        "Respond ONLY in JSON: "
+        '{"recommendations":[{"option":"...","rank":1,"rationale_ko":"..."}]}'
+    )
+    prompt = json.dumps({
+        "aggregated_context": _slim_ctx(ctx),
+        "available_options": ANALYSIS_PURPOSES,
+    }, ensure_ascii=False)
+
+    try:
+        raw = await generate(prompt, system=system, fmt_json=True)
+        out = json.loads(raw)
+        recs = []
+        for r in out.get("recommendations", []) or []:
+            opt = r.get("option")
+            if opt in ANALYSIS_PURPOSES:
+                recs.append({
+                    "option": opt,
+                    "rank": int(r.get("rank", len(recs) + 1)),
+                    "rationale_ko": str(r.get("rationale_ko", "")),
+                })
+        recs.sort(key=lambda x: x["rank"])
+        return {"session_id": session_id, "recommendations": recs[:3],
+                "all_options": ANALYSIS_PURPOSES}
+    except Exception as e:
+        return {"session_id": session_id, "recommendations": [],
+                "all_options": ANALYSIS_PURPOSES, "error": str(e)}
+
+
+class AnalyzeSelectReq(BaseModel):
+    analysis_purpose: str
+    free_input: str | None = None
+
+
+@app.post("/api/analyze/{session_id}/select")
+async def analyze_select(session_id: str, req: AnalyzeSelectReq) -> dict:
+    """STEP 1B-3c — 사용자 선택 저장 + function_axis 반환.
+    AggregatedContext.user_intent (1B-2b에서 None이던 자리)를 채운다."""
+    from session_store import get_session, save_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    fn_axis = _PURPOSE_FUNCTION.get(req.analysis_purpose, "process")
+    ctx = session.get("aggregated_context") or {}
+    ctx["user_intent"] = {
+        "analysis_purpose": req.analysis_purpose,
+        "function_axis_focus": fn_axis,
+        "free_input": req.free_input,
+    }
+    session["aggregated_context"] = ctx
+    session["analysis_purpose"] = req.analysis_purpose
+    save_session(session_id, session)
+    return {"session_id": session_id, "analysis_purpose": req.analysis_purpose,
+            "function_axis": fn_axis, "free_input": req.free_input}
+
+
 @app.get("/")
 async def root() -> FileResponse:
     """더미 대시보드 서빙."""
