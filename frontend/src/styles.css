@@ -220,3 +220,12 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 .finding-detail { flex: 1; }
 .stage-implications { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 
+/* Page 3 — real-column constraint row (D-90) */
+.constraint-row-real {
+  display: flex; align-items: center; gap: 6px; margin: 4px 0;
+}
+.constraint-row-real select {
+  min-width: 240px;
+}
+
+

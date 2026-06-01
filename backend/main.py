@@ -106,6 +106,38 @@ async def datasets_all() -> dict:
     return {"datasets_by_modality": out}
 
 
+@app.get("/api/datasets/{dataset_id}/columns")
+async def dataset_columns(dataset_id: str, modality: str = "timeseries",
+                          numeric_only: bool = True) -> dict:
+    """STEP 1B-3c (D-90 해결) — 데이터셋의 실제 컬럼 목록.
+    MCP /list_columns (CLAUDE.md §4)를 위임 호출하므로 데이터 비종속(파일 헤더 스캔).
+    numeric_only=True면 범위 제약에 의미 있는 수치 컬럼만 반환."""
+    import httpx
+    mcp_url = MCP_SERVERS.get(modality)
+    if not mcp_url:
+        return {"dataset_id": dataset_id, "modality": modality, "columns": [],
+                "n_total": 0, "n_numeric": 0}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{mcp_url}/list_columns", params={"dataset_id": dataset_id})
+            if r.status_code != 200:
+                return {"dataset_id": dataset_id, "modality": modality, "columns": [],
+                        "error": f"MCP {modality} returned {r.status_code}"}
+            data = r.json()
+            all_cols = data.get("columns", [])
+            num_cols = [c for c in all_cols
+                        if "int" in str(c.get("dtype", "")) or "float" in str(c.get("dtype", ""))]
+            picked = num_cols if numeric_only else all_cols
+            slim = [{"name": c["name"], "dtype": c.get("dtype"),
+                     "semantic_group": c.get("semantic_group"),
+                     "null_count": c.get("null_count", 0)} for c in picked]
+            return {"dataset_id": dataset_id, "modality": modality,
+                    "columns": slim, "n_total": len(all_cols), "n_numeric": len(num_cols)}
+    except Exception as e:
+        return {"dataset_id": dataset_id, "modality": modality, "columns": [],
+                "error": str(e)}
+
+
 @app.get("/api/modules")
 async def modules_catalog() -> dict:
     """STEP 1B-3b — modules.yaml 조회 (Page 3 constraint 폼, Page 6 모델 추천 소스).
