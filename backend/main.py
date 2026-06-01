@@ -623,6 +623,10 @@ _PURPOSE_FUNCTION: dict[str, str] = {
 }
 
 
+# Page 6 권고만(실행 불가) 분류용 — VRAM 초과/특수 인프라 모델
+_VRAM_HEAVY_MODELS: set[str] = {"CNNClassifier", "EfficientNet", "ResNet", "ViT", "BERT"}
+
+
 def _slim_ctx(ctx: dict) -> dict:
     """LLM 프롬프트 토큰 절약 — AggregatedContext에서 추천에 필요한 핵심만 추림.
     agent_records의 큰 본문은 제외 (해석은 key_findings에 이미 결정론으로 추출됨)."""
@@ -632,6 +636,37 @@ def _slim_ctx(ctx: dict) -> dict:
         "stage_chain": ctx.get("stage_chain", []),
         "pipeline_constraints": ctx.get("pipeline_constraints", {}),
     }
+
+
+def _collect_recommended_models(session: dict) -> list[dict]:
+    """pipeline_full.stages의 node_id 들에 대해 modules.yaml.recommended_models를 합집합으로 수집.
+    Page 6 추천 풀(available_models). 환각 방어 — LLM은 이 풀 안에서만 추천."""
+    import yaml
+    path = ROOT / "catalogs" / "modules.yaml"
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8") as f:
+        modules = yaml.safe_load(f) or {}
+    pf = session.get("pipeline_full") or {}
+    seen: set[tuple] = set()
+    out: list[dict] = []
+    for stage in pf.get("stages", []):
+        node_id = stage.get("node_id")
+        node_def = modules.get(node_id) or {}
+        for m in node_def.get("recommended_models", []) or []:
+            name = m.get("name")
+            if not name: continue
+            key = (name, node_id)
+            if key in seen: continue
+            seen.add(key)
+            out.append({
+                "name": name,
+                "task": m.get("task"),
+                "when": m.get("when"),
+                "from_node": node_id,
+                "advisory_only": name in _VRAM_HEAVY_MODELS,
+            })
+    return out
 
 
 @app.get("/api/analyze/{session_id}/questions")
@@ -706,6 +741,78 @@ async def analyze_select(session_id: str, req: AnalyzeSelectReq) -> dict:
     save_session(session_id, session)
     return {"session_id": session_id, "analysis_purpose": req.analysis_purpose,
             "function_axis": fn_axis, "free_input": req.free_input}
+
+
+@app.get("/api/model/{session_id}/recommend")
+async def model_recommend(session_id: str) -> dict:
+    """STEP 1B-3c — 모델 추천 (LLM, modules.yaml recommended_models 풀 + AggregatedContext).
+    환각 방어 (D-92): available_models 외 추천 제거, fit_score 1~5 강제."""
+    from session_store import get_session
+    from llm import generate
+    import json
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    available = _collect_recommended_models(session)
+    user_purpose = session.get("analysis_purpose")
+    ctx = session.get("aggregated_context") or {}
+    if not available:
+        return {"session_id": session_id, "recommendations": [], "available_models": [],
+                "user_purpose": user_purpose,
+                "note": "modules.yaml에 매칭되는 노드의 recommended_models가 없습니다."}
+
+    system = (
+        "You are a manufacturing modeling advisor. "
+        "Pick the most fitting models from available_models for the user's purpose, "
+        "given facts in aggregated_context (key_findings, function_axis_summary). "
+        "ABSOLUTELY DO NOT invent new model names. "
+        "fit_score MUST be an integer 1-5 (5=best). "
+        "rationale_ko (Korean, 1-2 sentences) MUST cite key_findings — "
+        "e.g., 'imbalance ratio 2.83% → class_weight 권장'. "
+        "context_reflections is a short list (strings) of facts considered. "
+        "Respond ONLY in JSON: "
+        '{"recommendations":[{"name":"...","fit_score":N,"rationale_ko":"...","context_reflections":["..."]}]}'
+    )
+    prompt = json.dumps({
+        "aggregated_context": _slim_ctx(ctx),
+        "user_purpose": user_purpose,
+        "available_models": available,
+    }, ensure_ascii=False)
+
+    try:
+        raw = await generate(prompt, system=system, fmt_json=True)
+        out = json.loads(raw)
+        name_to_meta = {m["name"]: m for m in available}
+        recs = []
+        for r in out.get("recommendations", []) or []:
+            n = r.get("name")
+            fs = r.get("fit_score")
+            if n not in name_to_meta:
+                continue
+            try:
+                fs_int = int(fs)
+            except (TypeError, ValueError):
+                continue
+            if not (1 <= fs_int <= 5):
+                continue
+            meta = name_to_meta[n]
+            recs.append({
+                "name": n,
+                "fit_score": fs_int,
+                "rationale_ko": str(r.get("rationale_ko", "")),
+                "context_reflections": list(r.get("context_reflections", []))[:5],
+                "task": meta.get("task"),
+                "when": meta.get("when"),
+                "from_node": meta.get("from_node"),
+                "advisory_only": meta.get("advisory_only", False),
+            })
+        recs.sort(key=lambda x: -x["fit_score"])
+        return {"session_id": session_id, "recommendations": recs,
+                "available_models": available, "user_purpose": user_purpose}
+    except Exception as e:
+        return {"session_id": session_id, "recommendations": [],
+                "available_models": available, "user_purpose": user_purpose,
+                "error": str(e)}
 
 
 @app.get("/")
