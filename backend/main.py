@@ -672,7 +672,8 @@ def _collect_recommended_models(session: dict) -> list[dict]:
 @app.get("/api/analyze/{session_id}/questions")
 async def analyze_questions(session_id: str) -> dict:
     """STEP 1B-3c — 분석목적 추천 (LLM, AggregatedContext 기반).
-    환각 방어 (D-91): ANALYSIS_PURPOSES 외 추천은 코드로 제거. rationale_ko는 facts 인용."""
+    환각 방어 (D-91): ANALYSIS_PURPOSES 외 추천은 코드로 제거. rationale_ko는 facts 인용.
+    STEP 1B-3d B1·B2: session["model"]을 LLM 호출에 전달 (D-99)."""
     from session_store import get_session
     from llm import generate
     import json
@@ -680,6 +681,7 @@ async def analyze_questions(session_id: str) -> dict:
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
     ctx = session.get("aggregated_context") or {}
+    model = session.get("model")   # B1·B2 — 세션 model 우선 (없으면 generate가 환경변수 폴백)
 
     system = (
         "You are a manufacturing data analysis advisor. "
@@ -697,7 +699,7 @@ async def analyze_questions(session_id: str) -> dict:
     }, ensure_ascii=False)
 
     try:
-        raw = await generate(prompt, system=system, fmt_json=True)
+        raw = await generate(prompt, system=system, fmt_json=True, model=model)   # B1: model 전달
         out = json.loads(raw)
         recs = []
         for r in out.get("recommendations", []) or []:
@@ -746,7 +748,8 @@ async def analyze_select(session_id: str, req: AnalyzeSelectReq) -> dict:
 @app.get("/api/model/{session_id}/recommend")
 async def model_recommend(session_id: str) -> dict:
     """STEP 1B-3c — 모델 추천 (LLM, modules.yaml recommended_models 풀 + AggregatedContext).
-    환각 방어 (D-92): available_models 외 추천 제거, fit_score 1~5 강제."""
+    환각 방어 (D-92): available_models 외 추천 제거, fit_score 1~5 강제.
+    STEP 1B-3d B1·B2: session["model"]을 LLM 호출에 전달 (D-99)."""
     from session_store import get_session
     from llm import generate
     import json
@@ -756,6 +759,7 @@ async def model_recommend(session_id: str) -> dict:
     available = _collect_recommended_models(session)
     user_purpose = session.get("analysis_purpose")
     ctx = session.get("aggregated_context") or {}
+    model = session.get("model")   # B1·B2 — 세션 model 우선
     if not available:
         return {"session_id": session_id, "recommendations": [], "available_models": [],
                 "user_purpose": user_purpose,
@@ -780,7 +784,7 @@ async def model_recommend(session_id: str) -> dict:
     }, ensure_ascii=False)
 
     try:
-        raw = await generate(prompt, system=system, fmt_json=True)
+        raw = await generate(prompt, system=system, fmt_json=True, model=model)   # B1: model 전달
         out = json.loads(raw)
         name_to_meta = {m["name"]: m for m in available}
         recs = []
