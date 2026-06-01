@@ -566,3 +566,72 @@ Validator를 사전(Executor 전)+사후(Executor 후) 양방향으로 강화한
 - EDA 차트·실 ML 학습은 STEP 2·3에서 후속
 
 다음: STEP 2(옵션 카드 + Planner OptionTree) / STEP 3(EDA 실엔진 + ML 학습 + 공장 단위 통합/RAG).
+
+## 2026-06-01 — STEP 1B-3d: LLM model 전달 + 에러 표면화 보강 (B1/B2/B3) + 8GB VRAM 모델 전략 정정
+
+명세: `docs/specs/STEP_1B-3d_llm_model_fixes.md`. 1B-3c 검증 중 발견된 버그 3개를 잡고, 영업 표현을 8GB VRAM 현실에 맞게 정정.
+
+### 발견된 버그 (1B-3c 검증 중)
+사용자가 웹 드롭다운에서 `gemma4:26b`를 골라도 실제 추론은 `e4b`로 진행되는 게 `ollama ps`로 확인됨. 진단 3갈래:
+- **B1**: `/api/analyze/{id}/questions`, `/api/model/{id}/recommend` 가 `model` 파라미터를 안 받고 `generate()`에 안 넘김 → 항상 `OLLAMA_MODEL`(e4b) 폴백.
+- **B2**: 프론트 `ModelDropdown.selected`가 로컬 useState에만 살고 어떤 API 호출에도 안 실림. 백엔드의 `req.model` 필드는 이미 존재했지만 클라가 안 보냈음.
+- **B3**: `backend/llm.py generate()`가 HTTP 에러를 `{"_llm_error":..}` "정상 JSON"으로 위장 반환 → 호출부의 `json.loads`가 성공하고 키만 부재 → LLM 실패가 "빈 결과"로 둔갑. 깨진 JSON의 재시도/보정도 없음.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-99 | (B1+B2) 세션에 model 저장 — `sessions/create.model` 필드 + `PUT /sessions/{id}/model` + `session_store.public_view`에 model 노출 + `execute_pipeline`은 `session["model"] or req.model` 우선 + `/analyze` `/model` 엔드포인트가 `session.get("model")`을 `generate(...,model=)`에 전달. 프론트 `ModelDropdown`은 변경 시 `localStorage('preferred_model')` 저장 + 세션 있으면 `PUT /sessions/{sid}/model` 즉시 반영. `LineSelectPage`는 `POST /sessions/create`에 `localStorage.preferred_model` 동봉 | 매 호출에 model을 싣는 방식 대신 "이 세션은 이 두뇌(model)로 돈다" 라는 선언적 모델. 페이지/엔드포인트 추가될 때마다 model 인자 흘리는 부담 0 |
+| D-100 | (8GB VRAM 모델 전략 정정) 기존 "운영=26b / 개발=e4b" 표현 폐기. 8GB(RTX 3070) 현실: e4b(10GB)도 초과 → 일부 CPU 오프로딩(68%/32% CPU/GPU 분배 확인). 26b(20GB)는 대부분 CPU → 매우 느림(/analyze 120s 타임아웃 발생). **데모/개발 = e4b**, **26b 운영 = 24GB+ GPU(RTX 4090/A100 등) 전제**. 영업 시 "8GB 데모 머신에서 26b 자랑 금지" | 측정: e4b /analyze 5.0s vs 26b /analyze 120s(타임아웃) — x24+ 격차. e4b pipeline 46.6s vs 26b pipeline 274.2s — x5.9 격차. 코드로 GPU 할당 강제 불가 — 물리 8GB 한계. SI 견적·배포 권장사양에 정직하게 반영 |
+| D-101 | (B3) `generate()` 위장 `_llm_error` 폐기 → 명확한 `_llm_failed: True` 마커 + `error` + `model_attempted` 필드. 새 `_try_parse_llm(raw)` 헬퍼: 직접 `json.loads` 실패 시 `_coerce_json`(코드펜스/앞뒤 텍스트 제거 후 첫 `{...}` 추출)으로 재파싱. `generate_json()` 묶음 헬퍼(재시도 2회 + 보정). `/analyze` `/model` 엔드포인트가 `_try_parse_llm`을 호출해 `_llm_failed`면 `llm_status="failed" + llm_error + model_used` 응답. 프론트 `AnalyzePage`/`ModelingPage`가 `llm_status==='failed'` 시 명확히 "LLM 응답 실패 — 시도 모델 X · ollama 컨테이너/모델 pull/타임아웃 확인" 배너 표시. 정상 시엔 `(모델: gemma4:e4b)` 라벨도 표시 | "LLM 다운 = 빈 결과로 둔갑"이 가장 위험한 버그였음. 호출부 코드는 그대로면서 신호만 명확화 (Planner/judge의 폴백 정신 유지) |
+| D-102 | (Inspector/Planner/llm_judge_data_necessity는 건드리지 말 것) — 이미 정상적으로 `model` 인자 받아 generate에 전달 중 (1B-2a 진단 시 확인) | "정상 작동 중인 코드는 손대지 말 것" 정신. 회귀 위험 0 |
+
+### 구현 산출물
+- 백엔드:
+  - `backend/llm.py` 재작성 — `_llm_failed` 마커 + `_coerce_json` + `_try_parse_llm` + `generate_json`. 기존 `generate(prompt, system, fmt_json, model)` 시그니처 유지(회귀 0)
+  - `backend/main.py`:
+    - `CreateSessionReq.model: str | None = None` 추가
+    - `sessions_create`: `req.model` 저장 + 응답에 `model` 반환
+    - `PUT /api/sessions/{sid}/model` (`SessionModelReq.model`) 신규 — 빈 문자열이면 세션 model 해제
+    - `execute_pipeline`: `model = session.get("model") or req.model` 우선순위 적용 (Inspector/Planner/judge 3 호출 자리 전부 `model=model`)
+    - `analyze_questions`, `model_recommend`: `model = session.get("model")` + `generate(..., model=model)` + `_try_parse_llm`로 파싱 + `llm_status/llm_error/model_used` 응답 필드
+  - `backend/session_store.py`: `public_view`에 `model` 필드 노출
+- 프론트엔드:
+  - `frontend/src/components/ModelDropdown.jsx` — localStorage('preferred_model') 저장 + 세션 있으면 즉시 PUT 반영, "(세션: gemma4:26b)" 표시
+  - `frontend/src/step1_line/LineSelectPage.jsx` — POST /sessions/create 시 localStorage.preferred_model 동봉
+  - `frontend/src/step5_analyze/AnalyzePage.jsx`, `frontend/src/step6_modeling/ModelingPage.jsx` — `llm_status==='failed'` 시 명확한 에러 배너, 정상 시 `(모델: X)` 라벨
+
+### 검증 결과 (실측, host에서 Vite proxy 통해)
+- **B1+B2 e4b 경로** (세션 model 미설정 → 환경변수 폴백):
+  - Page 4 pipeline = **46.6s**, /analyze = **5.0s**, /model = **9.8s**
+  - `ollama ps` → `gemma4:e4b  10 GB  68%/32% CPU/GPU` 확인
+  - llm_status=ok, recommendations 정상 (anomaly_detection rank 1, process_optimization rank 2)
+- **B2 26b 드롭다운 변경**:
+  - `PUT /sessions/{sid}/model {model:"gemma4:26b"}` → `GET /sessions/{sid}.model == "gemma4:26b"` 영속화 확인
+  - Page 4 pipeline = **274.2s** (e4b 대비 x5.9 — CPU 오프로딩 영향)
+  - `ollama ps` 후처: `gemma4:26b  20 GB  63%/37% CPU/GPU` — **26b 실 로드 확인**
+  - 후속 /analyze 호출은 120s 타임아웃 → `llm_status="failed"` + `model_used="gemma4:26b"` 노출 (B3 동작 — D-100 8GB 현실 일치)
+- **B3 잘못된 모델명 시 표면화**:
+  - `PUT model: "gemma4:nonexistent-xyz"` 후 Page 5 호출 → `llm_status="failed"`, `llm_error="Client error '404 Not Found' for url 'http://ollama:11434/api/generate'"`, `model_used="gemma4:nonexistent-xyz"`, `recommendations=[]`
+  - 1B-3c라면 "빈 추천 0개"로 둔갑했을 시나리오가 이제 "실패 + 시도 모델 + 사유"로 명확히 표면화
+- 회귀 0 (1층 `/api/execute` mct_tool_manage_clean passed=True)
+- `npm run build` 성공 — 56 modules
+
+### LLM 가치 영역 모델 흐름 (D-99 적용 후)
+```
+드롭다운 26b 선택 (Page 4 등)
+  → ModelDropdown: localStorage('preferred_model') = 'gemma4:26b'
+  → PUT /sessions/{sid}/model {"model": "gemma4:26b"}
+  → session["model"] = "gemma4:26b"
+
+이후 LLM 호출 (어디서든):
+  execute_pipeline   → model = session["model"] or req.model
+  /analyze/questions → model = session.get("model")  → generate(...,model=model)
+  /model/recommend   → model = session.get("model")  → generate(...,model=model)
+  Inspector/Planner/judge → chain으로 model 전달 (이미 정상, D-102)
+
+generate() → Ollama /api/generate (실제 model로 호출)
+  실패 시 _llm_failed JSON 마커 → _try_parse_llm → llm_status="failed" 응답
+  성공 시 정상 JSON → 환각 방어 필터 → llm_status="ok" + model_used 응답
+```
+
+### STEP 1B-3d 완료 마일스톤
+드롭다운 → 세션 → LLM 호출 → 실제 모델 로드, 에러는 위장 없이 명확히 표면화. 6 페이지 UI에서 사용자가 선택한 모델이 진짜로 쓰이는 게 `ollama ps`로 증명. 8GB VRAM 한계는 명세에 정직하게 기록. 다음: STEP 2(옵션 카드) / STEP 3(EDA 실엔진 + ML 학습).

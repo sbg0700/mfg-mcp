@@ -255,6 +255,7 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `accumulated_context` | list[dict] | Stage 요약 누적 (1B-2b Aggregator 입력) |
 | `alarms` | list[dict] | `llm_judge_data_necessity` 기록 (stage당 1회) |
 | `aggregated_context` | dict | STEP 1B-2b — Context Aggregator 결과 캐시 (`completed` 직후 자동 생성, 결정론) |
+| `model` | str \| None | STEP 1B-3d B2 — 이 세션이 사용할 Ollama 모델 (D-99). None이면 환경변수 `OLLAMA_MODEL` 폴백. `PUT /sessions/{id}/model` 또는 `sessions/create.model`로 설정 |
 
 ### `AggregatedContext` 필드 (STEP 1B-2b 실재, 5영역 + user_intent)
 spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::aggregate(session)` (결정론, LLM 0).
@@ -318,9 +319,25 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | 메서드 | 경로 | 입력 | 반환 | 비고 |
 |---|---|---|---|---|
 | GET | `/api/datasets/{id}/columns` | `?modality, &numeric_only=true` | `{dataset_id, modality, columns:[{name,dtype,semantic_group,null_count}], n_total, n_numeric}` | D-93/94 — MCP `/list_columns`(7도구) 위임. Page 3 실 컬럼 드롭다운 소스. D-90 해결 |
-| GET | `/api/analyze/{sid}/questions` | (path) | `{recommendations:[{option,rank,rationale_ko}], all_options}` | D-91 — LLM 분석목적 추천. ANALYSIS_PURPOSES(6종) 외 코드로 차단 |
+| GET | `/api/analyze/{sid}/questions` | (path) | `{recommendations:[{option,rank,rationale_ko}], all_options, llm_status, llm_error?, model_used}` | D-91 — LLM 분석목적 추천. ANALYSIS_PURPOSES(6종) 외 코드로 차단. 1B-3d B1+B3: 세션 model 사용 + llm_status 표면화 (D-99, D-101) |
 | POST | `/api/analyze/{sid}/select` | `{analysis_purpose, free_input?}` | `{analysis_purpose, function_axis, free_input}` | user_intent 갱신 (AggregatedContext의 1B-2b None 자리). `_PURPOSE_FUNCTION` 결정론 매핑 |
-| GET | `/api/model/{sid}/recommend` | (path) | `{recommendations:[{name,fit_score(1~5),rationale_ko,context_reflections,task,when,from_node,advisory_only}], available_models, user_purpose}` | D-92 — LLM 모델 추천. recommended_models(modules.yaml) 풀 + fit_score 1~5 외 코드로 차단. `advisory_only` (VRAM 초과 등)는 권고만 표시 |
+| GET | `/api/model/{sid}/recommend` | (path) | `{recommendations:[{name,fit_score(1~5),rationale_ko,context_reflections,task,when,from_node,advisory_only}], available_models, user_purpose, llm_status, llm_error?, model_used}` | D-92 — LLM 모델 추천. recommended_models(modules.yaml) 풀 + fit_score 1~5 외 코드로 차단. `advisory_only` (VRAM 초과 등)는 권고만 표시. 1B-3d B1+B3: 세션 model 사용 + llm_status 표면화 (D-99, D-101) |
+
+### STEP 1B-3d 1 엔드포인트 (세션 model 저장 — B2)
+| 메서드 | 경로 | 입력 | 반환 | 비고 |
+|---|---|---|---|---|
+| PUT | `/api/sessions/{sid}/model` | `{model}` | `{session_id, model}` | D-99 — 드롭다운 선택을 세션에 영속화. `model=""` 보내면 해제(환경변수 폴백). 이후 모든 LLM 호출이 `session["model"]` 사용 |
+
+`POST /api/sessions/create` 시그니처 갱신(1B-3d, D-99): 옵션 `model: str | None = None` 추가 — 세션 생성 시 사용자 선호 모델을 같이 받아 저장 (LineSelectPage가 `localStorage.preferred_model` 동봉).
+`PipelineSession` 필드에 `model: str|None` 추가 — `session_store.public_view`에 노출. `execute_pipeline`은 `session.get("model") or req.model` 우선순위로 Inspector/Planner/judge에 전달.
+
+### `backend/llm.py` 헬퍼 (1B-3d B3, D-101)
+| 심볼 | 역할 |
+|---|---|
+| `generate(prompt, system?, fmt_json?, model?)` | Ollama /api/generate 래퍼. HTTP 에러 시 `{"_llm_failed": True, error, hint, model_attempted}` 마커 JSON 문자열 반환 (위장 안 함) |
+| `_coerce_json(raw)` | LLM 출력에서 JSON 견고 추출: 코드펜스 제거 + 첫 `{...}` 추출. 실패 시 None |
+| `_try_parse_llm(raw)` | `generate()` 결과를 dict로 변환. `_llm_failed` 마커 보존. 호출부가 dict.get("_llm_failed")만 체크하면 됨 |
+| `generate_json(prompt, system?, model?, retries=2)` | `generate` + `_try_parse_llm` + 재시도. 호출부 권장 진입점 |
 
 ---
 
@@ -465,3 +482,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-05-29: STEP 1B-3a 반영 — React+Vite frontend 실재화 (Page 1·2), 세션 GET/PUT structure 엔드포인트 추가 (§9), D-74~D-81 결정. 기존 `frontend/index.html` → `_legacy_dashboard.html` 보존
 - 2026-05-29: STEP 1B-3b 반영 — Page 3·4 실재화 (§5), `/api/datasets/all`·`/api/modules`·`PUT /sessions/{id}/full` 3 엔드포인트 (§9), D-82~D-89 결정. 데이터 비종속성 정책(D-82) 명시
 - 2026-06-01: STEP 1B-3c 반영 — Page 3 실 컬럼 폼(D-90 해결, D-93), Page 5·6 실재화 (LLM 추천), 4 엔드포인트 (§9). D-91~D-98 결정. STEP 1B 전체 완료
+- 2026-06-01: STEP 1B-3d 반영 — LLM model 전달 버그 3개(B1/B2/B3) 수정. `PipelineSession.model` 필드 + `PUT /sessions/{id}/model` 엔드포인트 (§9). `backend/llm.py` `_llm_failed` 마커 + `_try_parse_llm` + `generate_json` (§9). D-99~D-102 결정. 8GB VRAM 모델 전략 정정 — 데모/개발=e4b, 26b 운영=24GB+ GPU 전제
