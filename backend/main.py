@@ -89,6 +89,36 @@ async def datasets(modality: str = "timeseries") -> dict:
         return data
 
 
+@app.get("/api/datasets/all")
+async def datasets_all() -> dict:
+    """STEP 1B-3b — 4 모달리티 데이터셋을 한 번에 묶어 반환 (Page 3 드롭다운).
+    각 MCP /datasets는 디렉터리 스캔이므로 데이터 비종속 (D-82).
+    한 MCP가 다운돼도 다른 모달리티는 정상 반환."""
+    import httpx
+    out: dict[str, list[str]] = {}
+    for modality, mcp_url in MCP_SERVERS.items():
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.get(f"{mcp_url}/datasets")
+                out[modality] = r.json().get("datasets", []) if r.status_code == 200 else []
+        except Exception:
+            out[modality] = []
+    return {"datasets_by_modality": out}
+
+
+@app.get("/api/modules")
+async def modules_catalog() -> dict:
+    """STEP 1B-3b — modules.yaml 조회 (Page 3 constraint 폼, Page 6 모델 추천 소스).
+    catalogs/modules.yaml (5 Node: injection_molding/cnc_cutting/press_forming/
+    semiconductor_inspect/pdm) 그대로 반환. typical_ranges 값 디폴트 0(D-43)."""
+    import yaml
+    path = ROOT / "catalogs" / "modules.yaml"
+    if not path.exists():
+        raise HTTPException(500, f"catalog not found: {path}")
+    with open(path, encoding="utf-8") as f:
+        return {"modules": yaml.safe_load(f)}
+
+
 @app.get("/api/models")
 async def models() -> dict:
     """Ollama에 설치된 모델 목록 (UI 드롭다운용)."""
@@ -277,6 +307,41 @@ async def session_put_structure(session_id: str, req: StructureReq) -> dict:
     return {"session_id": session_id, "status": "structured",
             "stage_count": len(req.stages),
             "module_count": sum(len(s.get("modules", [])) for s in req.stages)}
+
+
+class FullReq(BaseModel):
+    pipeline_full: dict   # {line_id, stages:[{stage_order, node_id, modules:[{index,function,modality,datalake_id,constraints}]}]}
+
+
+@app.put("/api/sessions/{session_id}/full")
+async def session_put_full(session_id: str, req: FullReq) -> dict:
+    """STEP 1B-3b — Page 3 출력 PipelineFull 저장 (데이터 + 제약 포함).
+    이후 /api/execute_pipeline {session_id} 호출이 이 pipeline_full을 처리."""
+    from session_store import get_session, save_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    pf = req.pipeline_full or {}
+    session["pipeline_full"] = pf
+    if pf.get("line_id"):
+        session["line_id"] = pf["line_id"]
+    session["status"] = "ready"   # 실행 준비 완료
+    save_session(session_id, session)
+    # 통계 — 데이터 매핑된 모듈 수, 제약 입력된 모듈 수
+    n_modules = 0
+    n_with_data = 0
+    n_with_constraints = 0
+    for stage in pf.get("stages", []):
+        for m in stage.get("modules", []):
+            n_modules += 1
+            if m.get("datalake_id"):
+                n_with_data += 1
+            if m.get("constraints"):
+                n_with_constraints += 1
+    return {"session_id": session_id, "status": "ready",
+            "modules_total": n_modules,
+            "modules_with_data": n_with_data,
+            "modules_with_constraints": n_with_constraints}
 
 
 class ExecutePipelineReq(BaseModel):
