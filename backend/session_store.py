@@ -53,7 +53,8 @@ def list_sessions() -> list[str]:
 
 def public_view(session: dict) -> dict:
     """사용자/UI에 노출할 안전한 뷰. pipeline_full은 포함 (디버그 + UI 진행 표시).
-    완전한 module_results는 큰 데이터 포함 가능하나, FastAPI JSON 직렬화는 dict/list 기반이므로 그대로 통과."""
+    완전한 module_results는 큰 데이터 포함 가능하나, FastAPI JSON 직렬화는 dict/list 기반이므로 그대로 통과.
+    STEP 1B-3d: model 필드 노출 (D-99) — ModelDropdown이 GET /sessions/{id}로 동기화."""
     return {
         "session_id": session.get("session_id"),
         "status": session.get("status"),
@@ -65,4 +66,5 @@ def public_view(session: dict) -> dict:
         "accumulated_context": list(session.get("accumulated_context", [])),
         "module_results": session.get("module_results", {}),
         "pipeline_full": session.get("pipeline_full"),
+        "model": session.get("model"),
     }

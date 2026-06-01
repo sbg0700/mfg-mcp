@@ -24,7 +24,14 @@ export default function LineSelectPage() {
     setCreating(true)
     setError('')
     try {
-      const r = await post('/sessions/create', { line_id: picked })
+      // STEP 1B-3d B2: 우상단 ModelDropdown이 localStorage('preferred_model')에 저장한 선택을
+      // 같이 보낸다. 백엔드가 sessions/create 시 session["model"]에 저장 (D-99).
+      const preferredModel = (() => {
+        try { return localStorage.getItem('preferred_model') || null } catch { return null }
+      })()
+      const body = { line_id: picked }
+      if (preferredModel) body.model = preferredModel
+      const r = await post('/sessions/create', body)
       navigate(`/pipeline/build?session=${r.session_id}`)
     } catch (e) {
       setError(e.message || '세션 생성 실패')

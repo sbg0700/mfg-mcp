@@ -286,12 +286,14 @@ class CreateSessionReq(BaseModel):
     # ★STEP 1B-3a: 둘 다 옵션 — Page 1은 line_id만, 기존 직접 호출은 pipeline_full만 (회귀 보존, D-74)
     line_id: str | None = None
     pipeline_full: dict | None = None   # {line_id, stages:[{stage_order, node_id, modules:[...]}]}
+    model: str | None = None            # ★STEP 1B-3d B2: 세션이 자기 model을 기억 (D-99)
 
 
 @app.post("/api/sessions/create")
 async def sessions_create(req: CreateSessionReq) -> dict:
     """세션 생성 — Page 1(line_id 단독) 또는 직접 호출(pipeline_full)이 모두 허용된다.
-    line_id만 오면 빈 stages로 초기화 — Page 2에서 PUT /structure로 채움."""
+    line_id만 오면 빈 stages로 초기화 — Page 2에서 PUT /structure로 채움.
+    model이 주어지면 세션에 저장 — 이후 모든 LLM 호출이 이 model 사용 (B2, D-99)."""
     from session_store import create_session, get_session, save_session
     if not req.line_id and not req.pipeline_full:
         raise HTTPException(400, "either line_id or pipeline_full is required")
@@ -303,8 +305,31 @@ async def sessions_create(req: CreateSessionReq) -> dict:
         session["line_id"] = req.line_id
     elif req.pipeline_full and req.pipeline_full.get("line_id"):
         session["line_id"] = req.pipeline_full["line_id"]
+    if req.model:
+        session["model"] = req.model
     save_session(sid, session)
-    return {"session_id": sid, "status": "created", "line_id": session.get("line_id")}
+    return {"session_id": sid, "status": "created",
+            "line_id": session.get("line_id"), "model": session.get("model")}
+
+
+class SessionModelReq(BaseModel):
+    model: str    # 빈 문자열이면 세션 model 해제 (백엔드 환경변수 폴백)
+
+
+@app.put("/api/sessions/{session_id}/model")
+async def session_put_model(session_id: str, req: SessionModelReq) -> dict:
+    """STEP 1B-3d B2 — 드롭다운 모델 변경을 세션에 반영.
+    이후 execute_pipeline / analyze / model recommend가 이 model을 사용 (D-99)."""
+    from session_store import get_session, save_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.model:
+        session["model"] = req.model
+    else:
+        session.pop("model", None)   # 빈 값이면 폴백
+    save_session(session_id, session)
+    return {"session_id": session_id, "model": session.get("model")}
 
 
 @app.get("/api/sessions/{session_id}")
@@ -402,6 +427,8 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
     session["pending"] = None
     pipeline_full = session.get("pipeline_full") or {}
     stages = pipeline_full.get("stages", [])
+    # ★STEP 1B-3d B2: 세션 model 우선 → req.model → generate 폴백 (D-99)
+    model = session.get("model") or req.model
 
     try:
         for stage in stages:
@@ -417,7 +444,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
             # (A) 미업로드 알람 — stage당 1회만 (resume 시 재알람 없음)
             already_alarmed = {a.get("stage_order") for a in session["alarms"]}
             if missing and so not in already_alarmed:
-                alarm = await llm_judge_data_necessity(stage, missing, uploaded, model=req.model)
+                alarm = await llm_judge_data_necessity(stage, missing, uploaded, model=model)
                 session["alarms"].append({"stage_order": so, "node_id": node_id, "alarm": alarm})
                 # 알람은 기록만 — 흐름은 계속 (skip된 missing은 처리 안 함)
 
@@ -432,7 +459,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 constraints = module.get("constraints") or {}
 
                 # 1) Inspector
-                profile = await run_inspect(dataset_id, model=req.model, modality=modality)
+                profile = await run_inspect(dataset_id, model=model, modality=modality)
 
                 # 2) Planner — module_context는 stage·module에서 합성 (1B-1 연장)
                 module_context = {
@@ -441,7 +468,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                     "dataset_role": module.get("dataset_role"),
                 }
                 plan_result = await run_plan(profile, constraints=constraints,
-                                             module_context=module_context, model=req.model)
+                                             module_context=module_context, model=model)
 
                 # ★사전 검증 (STEP 1B-2c) — Executor 전 결정론 검증
                 pre_validation = validate_plan(plan_result, profile)
