@@ -453,7 +453,7 @@ Validator를 사전(Executor 전)+사후(Executor 후) 양방향으로 강화한
 | D-87 | "전체 승인" + "승인 후 계속" 분리 — approve는 누적, resume은 execute_pipeline 재호출 (D-56 폴링형) | 사용자가 일부만 승인하고 멈출 수도 있게 분리. 모든 step 승인된 후에만 "계속" 활성화 |
 | D-88 | Page 4 완료 시 finding.detail 전체를 그대로 노출 (Aggregator key_findings → FindingsList) | "172/800 위반" 같은 핵심 수치를 UI가 다시 가공하지 않음. detail은 결정론 산수 결과(D-67) 그대로 |
 | D-89 | 알람 배너: 사용자에게 "Page 3 으로 돌아가기" 또는 "무시" 선택 — LLM은 알람만, 결정은 사용자 (D-55) | 알람을 UI에서 막거나 강제하지 않음. 환각 방어 메커니즘 일관 |
-| D-90 | (알려진 한계) Page 3 제약 폼은 modules.yaml의 추상 constraint_key(예: `injection_velocity`)를 보여주는데, 실제 데이터 컬럼명(예: `'1ST INJECTION VELOCITY'`)과 달라서 제약 검증이 "일치 컬럼 없음"으로 스킵될 수 있음. Validator 로직 자체는 정확(컬럼명 직접 입력 시 172/800 검출 확인됨). 후속에서 Page 3 폼이 데이터셋 선택 시 실제 컬럼 목록을 불러와 매핑하도록 개선 예정. 현재는 알려진 한계 | 추상 키 vs 실 컬럼명 불일치는 KAMP/실데이터 도입 시 더 두드러질 수 있음. 데이터 비종속성(D-82)을 깨지 않으면서 컬럼 매핑 UI를 후속 STEP에서 추가하는 게 안전 |
+| D-90 | (알려진 한계 → **D-93에서 해결 완료**, STEP 1B-3c) Page 3 제약 폼이 modules.yaml의 추상 constraint_key(예: `injection_velocity`)를 보여줘 실 컬럼명(`'1ST INJECTION VELOCITY'`)과 매핑이 안 됐던 한계. STEP 1B-3c에서 `GET /datasets/{id}/columns`로 실 컬럼 드롭다운 매핑 도입으로 해소. 172/800이 다시 표시됨 | 추상 키 vs 실 컬럼명 불일치는 KAMP/실데이터 도입 시 더 두드러져 빨리 해결 필요했음. 데이터 비종속성(D-82) 유지 — MCP `/list_columns`(7도구) 위임으로 파일 헤더에서 동적 |
 
 ### 구현 산출물
 - 백엔드 (`backend/main.py`) 3개 엔드포인트:
@@ -496,3 +496,73 @@ Validator를 사전(Executor 전)+사후(Executor 후) 양방향으로 강화한
 
 ### STEP 1B-3b 완료 마일스톤
 사용자 비전의 **MCP 표준화 흐름이 UI로 처음 노출**됨. 1B-2a Orchestrator의 suspend/approve/resume이 승인 카드 + "계속" 버튼으로 자연스럽게 표현. 1B-2c Validator의 6종 검증 결과(특히 D-67 constraint 원본 기준 172/800)가 그대로 Page 4 화면에 시각화. 다음: STEP 1B-3c (Page 5 분석목적/EDA + Page 6 모델링) — UI만, 실엔진 STEP 2·3에서.
+
+## 2026-06-01 — STEP 1B-3c: Page 5(분석목적/EDA) + Page 6(모델링) + Page 3 개선 (D-90 해결)
+
+명세: `docs/specs/STEP_1B-3c_page5_6.md`. STEP 1B-3 마지막 단계.
+**범위 경계**: "LLM이 분석 목적·모델을 추천하는 것까지" 실동작. EDA 차트·실제 ML 학습은 STEP 2·3.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-91 | Page 5 분석목적 추천 환각 방어 — `ANALYSIS_PURPOSES`(6종 고정) 외 LLM 추천은 코드로 제거 | spec-2 Part 6 일관. LLM이 새 옵션을 만들어도 endpoint가 필터링. rationale_ko는 facts(key_findings/function_axis_summary) 인용 권장 |
+| D-92 | Page 6 모델 추천 환각 방어 — `recommended_models`(modules.yaml) 풀 외 + fit_score 1~5 외 LLM 응답은 코드로 제거 | 새 모델 이름 환각 / 점수 폭주 차단. 사용자가 보는 추천은 항상 풀 내 + 1~5 |
+| D-93 | (D-90 해결) Page 3 제약 폼이 데이터셋 선택 시 `GET /api/datasets/{id}/columns`로 실 컬럼 목록을 받아 드롭다운으로 매핑 | 추상 키(injection_velocity) vs 실 컬럼명(`1ST INJECTION VELOCITY`) 불일치 해소. 실 컬럼 매핑 후 Validator가 172/800 그대로 검출 확인 |
+| D-94 | `/api/datasets/{id}/columns`는 MCP `/list_columns`(7도구 표준)에 위임 + dtype 필터 (numeric only) | 데이터 비종속성(D-82) 유지 — 파일 헤더 동적 스캔. 범위 제약은 수치 컬럼에만 의미 있음 |
+| D-95 | EDA 차트는 골격(차트 라이브러리 미도입) — key_findings 텍스트 + "STEP 2·3 예정" 안내만 | 1B-3a/3b에서 차트 라이브러리 안 들임(D-76 일관). 추천(LLM)까지가 본 STEP 범위 |
+| D-96 | Page 6 학습 버튼은 골격(모달 안내) — 실 train 엔드포인트 호출 안 함 | 실 ML 엔진(fit/predict/지표)은 STEP 3. 1B-3c는 추천까지 |
+| D-97 | `_slim_ctx`로 AggregatedContext 4영역만(key_findings/function_axis_summary/stage_chain/pipeline_constraints) LLM에 주입 | agent_records의 큰 본문 제외해 토큰 절약. 추천에 필요한 결정론 추출 결과만 |
+| D-98 | `_VRAM_HEAVY_MODELS = {CNNClassifier, EfficientNet, ResNet, ViT, BERT}` — advisory_only=true로 분류해 Page 6에서 "권고만" 섹션 표시 | 본 환경(RTX 3070 8GB) 실행 불가 모델은 추천하되 학습 버튼 비활성. 사용자가 SI 환경 결정 시 참고 |
+
+### 구현 산출물
+
+백엔드 (`backend/main.py`) 4개 엔드포인트:
+- `GET /api/datasets/{dataset_id}/columns` (D-93/94) — MCP `/list_columns` 위임 + numeric 필터
+- `GET /api/analyze/{session_id}/questions` (D-91) — LLM 분석목적 추천 (AggregatedContext 기반)
+- `POST /api/analyze/{session_id}/select` — user_intent 갱신 + function_axis 반환
+- `GET /api/model/{session_id}/recommend` (D-92) — LLM 모델 추천 (recommended_models 풀 + fit_score 1~5)
+
+백엔드 헬퍼:
+- `_slim_ctx(ctx)` — 토큰 절약용 4영역 추출
+- `_collect_recommended_models(session)` — pipeline 노드들의 recommended_models 합집합
+- `_PURPOSE_FUNCTION` 매핑 (spec-2 Part 6-4 결정론)
+- `ANALYSIS_PURPOSES` (6종 고정 풀)
+- `_VRAM_HEAVY_MODELS` (advisory_only 분류)
+
+프론트엔드:
+- `src/step3_user_input_data/ConstraintForm.jsx` — 실 컬럼 드롭다운 + rows 기반 폼으로 재작성
+- `src/step3_user_input_data/DataConstraintPage.jsx` — 데이터셋 선택 시 `/columns` 호출, constraintRows 리스트 상태로 전환
+- `src/step5_analyze/AnalyzePage.jsx` — 추천 + 전체 + 직접 입력 + 선택 저장 + EDA 골격
+- `src/step5_analyze/QuestionRadioGroup.jsx` — LLM 추천 카드 + 일반 라디오 + free_input textarea
+- `src/step6_modeling/ModelingPage.jsx` — 추천 모델 카드(fit_score 정렬) + 권고만 섹션 + 추천 외 풀 안내
+- `src/step6_modeling/ModelCard.jsx` — fit_score 별 + rationale + context_reflections + 학습 버튼
+- `src/step6_modeling/TrainSkeletonModal.jsx` — "STEP 3 예정" 안내 모달
+- `src/main.jsx` — /pipeline/analyze, /pipeline/model 라우트 실재화 (placeholder 제거)
+- `src/styles.css` — Page 3 실컬럼 row / Page 5 qrg·eda-skeleton / Page 6 model-card·modal 스타일
+
+### 검증 결과 (명세 §6 체크리스트, end-to-end via Vite proxy)
+- **D-93 D-90 해결 검증** (가장 중요):
+  - GET `/datasets/cnc_machine_injection/columns` → 32 numeric 컬럼 중 `1ST INJECTION VELOCITY` 포함
+  - Page 3 PUT /full with `{"1ST INJECTION VELOCITY":[40,70]}` (실 컬럼명)
+  - Page 4 execute → completed → aggregated_context
+  - **key_findings에 `[medium] '1ST INJECTION VELOCITY' 범위 [40.0, 70.0] 위반 172/800행`** 그대로 노출 (1B-3b의 "일치 컬럼 없음" 회피 → D-90 해결)
+- **D-91 Page 5 LLM 추천**:
+  - 2 recommendations (rank 1: anomaly_detection, rank 2: process_optimization), 모두 ANALYSIS_PURPOSES 안
+  - rationale_ko가 facts 인용 ("'1ST INJECTION VELOCITY' 범위 위반(중간)...", "시퀀스 및 프로파일 그룹 정규화가 적용...")
+  - select → user_intent = `{analysis_purpose:'anomaly_detection', function_axis_focus:'maintenance', free_input:'이상치 위주로'}` (1B-2b None 자리 채워짐)
+- **D-92 Page 6 LLM 모델 추천**:
+  - available_models 3개 (RandomForestRegressor / IsolationForest / XGBoostClassifier — injection_molding 노드 풀)
+  - LLM 추천 1개: `[4/5] IsolationForest`, rationale "사용자 목적이 'anomaly_detection'이므로 이상 감지 모델인 IsolationForest 가 가장 적합...", context_reflections 3건 (anomaly_detection / constraint_violation / sequence_normalized)
+  - 추천 이름이 모두 available_models 안 (환각 방어), fit_score 1~5 안 (범위 가드)
+- 1층 `/api/execute` 회귀 0 (mct_tool_manage_clean passed=True)
+- `npm run build` 성공 — 51 → 56 modules transformed, 198 KB JS (64.5 KB gzip), 9.9 KB CSS, 691ms
+- 워킹 트리 clean (untracked: 본 spec md만)
+
+### STEP 1B-3c 완료 마일스톤 = STEP 1B 전체 완료
+6 페이지 UI가 처음으로 끝까지 도는 상태:
+**Line 선택 → 파이프라인 구성 → 데이터·제약(실 컬럼) → 표준화 실행/승인/검증/집계 → 분석 목적 추천·선택 → 모델 추천**
+- LLM 가치 영역 5개 중 ③(분석목적)·⑤(모델) 실현
+- 환각 방어 메커니즘 7곳 모두 동작 (available_options/available_models 외 차단 + fit_score 1~5 + key_findings 인용 강제)
+- D-90 해결 완료 — 실 컬럼 기반 제약으로 172/800이 다시 화면에 표시
+- EDA 차트·실 ML 학습은 STEP 2·3에서 후속
+
+다음: STEP 2(옵션 카드 + Planner OptionTree) / STEP 3(EDA 실엔진 + ML 학습 + 공장 단위 통합/RAG).

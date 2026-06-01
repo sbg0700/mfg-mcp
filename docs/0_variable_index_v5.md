@@ -279,10 +279,10 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 |---|---|
 | `step1_line` | `GET /api/lines` **실재 (1B-1)**, `GET /api/models` **실재**, `POST /api/sessions/create` **실재 (1B-2a, 1B-3a 확장: line_id 또는 pipeline_full)** |
 | `step2_user_input_pipeline` | **실재 (1B-3a)** `GET /api/sessions/{id}`, `PUT /api/sessions/{id}/structure` |
-| `step3_user_input_data` | **실재 (1B-3b)** `GET /api/datasets/all`, `GET /api/modules`, `PUT /api/sessions/{id}/full` · (예정, STEP 3) `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}` |
+| `step3_user_input_data` | **실재 (1B-3b/1B-3c)** `GET /api/datasets/all`, `GET /api/modules`, `GET /api/datasets/{id}/columns` (D-93), `PUT /api/sessions/{id}/full` · (예정, STEP 3) `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}` |
 | `step4_standardize` | **실재 (STEP 1B-2a)** `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · **실재 (STEP 1B-2b)** `GET /api/aggregate_context/{id}` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input` |
-| `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` (예정) |
-| `step6_modeling` | `GET /api/model/{id}/recommend`, `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` (예정) |
+| `step5_analyze` | **실재 (1B-3c)** `GET /api/analyze/{id}/questions` (LLM purpose recommend, D-91), `POST /api/analyze/{id}/select` (user_intent 갱신) · (예정, STEP 3) `GET /api/analyze/{id}/results` (실 EDA) |
+| `step6_modeling` | **실재 (1B-3c)** `GET /api/model/{id}/recommend` (LLM model recommend + fit_score 1~5, D-92) · (예정, STEP 3) `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` |
 
 **추가 정책**: 새 엔드포인트 추가 시 본 파일 + spec Part 1-3/9 + 해당 라우터 파일 갱신.
 
@@ -313,6 +313,14 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | GET | `/api/datasets/all` | — | `{datasets_by_modality:{timeseries[], inspection-image[], event-log[], order[]}}` | 4 MCP 서버 fan out (디렉터리 스캔, D-82). 한 서버 다운돼도 빈 리스트로 반환 |
 | GET | `/api/modules` | — | `{modules: <modules.yaml>}` | Page 3 constraint 폼 + Page 6 모델 추천 소스. 5 Node × constraint_keys 구조 |
 | PUT | `/api/sessions/{sid}/full` | `{pipeline_full}` | `{session_id, status:"ready", modules_total, modules_with_data, modules_with_constraints}` | Page 3 출력 PipelineFull 저장. execute_pipeline 처리 대상 |
+
+### STEP 1B-3c 4 엔드포인트 (실 컬럼 + Page 5/6 LLM 추천)
+| 메서드 | 경로 | 입력 | 반환 | 비고 |
+|---|---|---|---|---|
+| GET | `/api/datasets/{id}/columns` | `?modality, &numeric_only=true` | `{dataset_id, modality, columns:[{name,dtype,semantic_group,null_count}], n_total, n_numeric}` | D-93/94 — MCP `/list_columns`(7도구) 위임. Page 3 실 컬럼 드롭다운 소스. D-90 해결 |
+| GET | `/api/analyze/{sid}/questions` | (path) | `{recommendations:[{option,rank,rationale_ko}], all_options}` | D-91 — LLM 분석목적 추천. ANALYSIS_PURPOSES(6종) 외 코드로 차단 |
+| POST | `/api/analyze/{sid}/select` | `{analysis_purpose, free_input?}` | `{analysis_purpose, function_axis, free_input}` | user_intent 갱신 (AggregatedContext의 1B-2b None 자리). `_PURPOSE_FUNCTION` 결정론 매핑 |
+| GET | `/api/model/{sid}/recommend` | (path) | `{recommendations:[{name,fit_score(1~5),rationale_ko,context_reflections,task,when,from_node,advisory_only}], available_models, user_purpose}` | D-92 — LLM 모델 추천. recommended_models(modules.yaml) 풀 + fit_score 1~5 외 코드로 차단. `advisory_only` (VRAM 초과 등)는 권고만 표시 |
 
 ---
 
@@ -456,3 +464,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-05-28: STEP 1B-2c 반영 — Validator 사전+사후 양방향 (§12.5 갱신), D-66 해결(constraint 원본 기준), D-67~D-73 결정. `ExecutionResult.backup_path` 신설
 - 2026-05-29: STEP 1B-3a 반영 — React+Vite frontend 실재화 (Page 1·2), 세션 GET/PUT structure 엔드포인트 추가 (§9), D-74~D-81 결정. 기존 `frontend/index.html` → `_legacy_dashboard.html` 보존
 - 2026-05-29: STEP 1B-3b 반영 — Page 3·4 실재화 (§5), `/api/datasets/all`·`/api/modules`·`PUT /sessions/{id}/full` 3 엔드포인트 (§9), D-82~D-89 결정. 데이터 비종속성 정책(D-82) 명시
+- 2026-06-01: STEP 1B-3c 반영 — Page 3 실 컬럼 폼(D-90 해결, D-93), Page 5·6 실재화 (LLM 추천), 4 엔드포인트 (§9). D-91~D-98 결정. STEP 1B 전체 완료
