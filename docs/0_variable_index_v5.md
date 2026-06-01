@@ -232,12 +232,12 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `LineCatalog` | spec-1.md Part 1-2 (가) | 시스템 정적 | `catalogs/lines.yaml` (실재, STEP 1B-1) |
 | `PipelineStructure` | spec-1.md Part 1-2 (나) | Page 2 출력 | DB `sessions.structure` (JSONB) |
 | `PipelineFull` | spec-1.md Part 1-2 (다) | Page 3 출력 | DB `sessions.full_data` + 파일 시스템 |
-| ★`PipelineSession` | STEP 1B-2a 명세 §2 | `/api/sessions/create` 시점 | ★`backend/session_store.py::_SESSIONS` 인메모리★ (D-52, Sprint 2에 postgres) |
+| **`PipelineSession` | STEP 1B-2a 명세 §2 | `/api/sessions/create` 시점 | **`backend/session_store.py::_SESSIONS` 인메모리 (D-52, Sprint 2에 postgres) |
 | `PipelineResults` | spec-1.md Part 1-2 (라) | Page 4 출력 | DB `sessions.results` + `lineage.transformations` |
 | `PipelineStatus` | spec-2.md Part 5-2 | Page 4 실시간 | 메모리 (현재 폴링; SSE는 1B-3) |
 | `AnalysisQuestion` | spec-1.md Part 1-2 (마) | Page 5 자동 생성 | DB `sessions.analysis` |
 | `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록 시점 | DB `datalake.entries` |
-| ★`AggregatedContext` | spec-1.md Part 1-2 (바) | execute_pipeline 완료 직후 자동 트리거 (D-63) | ★실재 (STEP 1B-2b): `session["aggregated_context"]` 인메모리 캐시, Sprint 2에 postgres★ |
+| **`AggregatedContext` | spec-1.md Part 1-2 (바) | execute_pipeline 완료 직후 자동 트리거 (D-63) | **실재 (STEP 1B-2b): `session["aggregated_context"]` 인메모리 캐시, Sprint 2에 postgres |
 
 특히 `AggregatedContext` 의 `agent_records` 필드 = MCP 4단 판단 기록 보존 (사용자 비전 핵심).
 
@@ -254,7 +254,7 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `module_results` | dict | `module_key → {profile, plan, execution, validation, modality, dataset_id}` |
 | `accumulated_context` | list[dict] | Stage 요약 누적 (1B-2b Aggregator 입력) |
 | `alarms` | list[dict] | `llm_judge_data_necessity` 기록 (stage당 1회) |
-| ★`aggregated_context` | dict | STEP 1B-2b — Context Aggregator 결과 캐시 (`completed` 직후 자동 생성, 결정론) |
+| `aggregated_context` | dict | STEP 1B-2b — Context Aggregator 결과 캐시 (`completed` 직후 자동 생성, 결정론) |
 
 ### `AggregatedContext` 필드 (STEP 1B-2b 실재, 5영역 + user_intent)
 spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::aggregate(session)` (결정론, LLM 0).
@@ -277,10 +277,10 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 | Prefix | API 엔드포인트 |
 |---|---|
-| `step1_line` | `GET /api/lines` ★실재 (1B-1)★, `GET /api/models` ★실재★, `POST /api/sessions/create` ★실재 (1B-2a, 1B-3a 확장: line_id 또는 pipeline_full)★ |
-| `step2_user_input_pipeline` | ★실재 (1B-3a)★ `GET /api/sessions/{id}`, `PUT /api/sessions/{id}/structure` |
-| `step3_user_input_data` | `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}`, `PUT /api/sessions/{id}/full` (모두 예정) |
-| `step4_standardize` | ★실재 (STEP 1B-2a)★ `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · ★실재 (STEP 1B-2b)★ `GET /api/aggregate_context/{id}` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input` |
+| `step1_line` | `GET /api/lines` **실재 (1B-1)**, `GET /api/models` **실재**, `POST /api/sessions/create` **실재 (1B-2a, 1B-3a 확장: line_id 또는 pipeline_full)** |
+| `step2_user_input_pipeline` | **실재 (1B-3a)** `GET /api/sessions/{id}`, `PUT /api/sessions/{id}/structure` |
+| `step3_user_input_data` | **실재 (1B-3b)** `GET /api/datasets/all`, `GET /api/modules`, `PUT /api/sessions/{id}/full` · (예정, STEP 3) `GET /api/datalake/list`, `POST /api/datalake/register`, `GET /api/datalake/{id}/metadata`, `DELETE /api/datalake/{id}` |
+| `step4_standardize` | **실재 (STEP 1B-2a)** `POST /api/execute_pipeline`, `GET /api/pipeline/{id}/status`, `POST /api/pipeline/{id}/approve` · **실재 (STEP 1B-2b)** `GET /api/aggregate_context/{id}` · (예정) `GET /api/pipeline/{id}/stream` (SSE, 1B-3), `POST /api/pipeline/{id}/natural_input` |
 | `step5_analyze` | `GET /api/analyze/{id}/questions`, `POST /api/analyze/{id}/select`, `GET /api/analyze/{id}/results` (예정) |
 | `step6_modeling` | `GET /api/model/{id}/recommend`, `POST /api/model/{id}/train`, `GET /api/model/{id}/status`, `GET /api/model/{id}/results`, `GET /api/model/{id}/dashboard`, `POST /api/model/{id}/cancel` (예정) |
 
@@ -307,6 +307,13 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 `POST /api/sessions/create` 시그니처 갱신(1B-3a, D-74): `{line_id?, pipeline_full?}` 둘 중 1개 필수. line_id만 오면 빈 stages로 초기화, pipeline_full 그대로 호출도 회귀 없음.
 
+### STEP 1B-3b 3 엔드포인트 (Page 3 카탈로그/저장)
+| 메서드 | 경로 | 입력 | 반환 | 비고 |
+|---|---|---|---|---|
+| GET | `/api/datasets/all` | — | `{datasets_by_modality:{timeseries[], inspection-image[], event-log[], order[]}}` | 4 MCP 서버 fan out (디렉터리 스캔, D-82). 한 서버 다운돼도 빈 리스트로 반환 |
+| GET | `/api/modules` | — | `{modules: <modules.yaml>}` | Page 3 constraint 폼 + Page 6 모델 추천 소스. 5 Node × constraint_keys 구조 |
+| PUT | `/api/sessions/{sid}/full` | `{pipeline_full}` | `{session_id, status:"ready", modules_total, modules_with_data, modules_with_constraints}` | Page 3 출력 PipelineFull 저장. execute_pipeline 처리 대상 |
+
 ---
 
 ## 10. React 컴포넌트 (22종)
@@ -331,8 +338,8 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 | 파일 | 상태 | 내용 | 우선순위 | 명세 정의 |
 |---|---|---|---|---|
-| `catalogs/lines.yaml` | ★실재 (STEP 1B-1)★ | Line 3 × Stage × Node × Module 슬롯 (위 §3, §4) | 1순위 | spec-1.md Part 1-2 (가), blueprint 부록 A |
-| `catalogs/modules.yaml` | ★실재 (STEP 1B-1, 5 Node)★ | Node 별 도메인 지식 (constraint_keys 구조만, **typical_ranges 디폴트 금지** — D-43) | 1순위 | spec-1.md Part 1-2 (가) constraint_keys |
+| `catalogs/lines.yaml` | **실재 (STEP 1B-1)** | Line 3 × Stage × Node × Module 슬롯 (위 §3, §4) | 1순위 | spec-1.md Part 1-2 (가), blueprint 부록 A |
+| `catalogs/modules.yaml` | **실재 (STEP 1B-1, 5 Node)** | Node 별 도메인 지식 (constraint_keys 구조만, **typical_ranges 디폴트 금지** — D-43) | 1순위 | spec-1.md Part 1-2 (가) constraint_keys |
 | `catalogs/modalities.yaml` | 예정 | 4 모달리티 정의 (UI 메타) | 2순위 | 위 §1 |
 | `catalogs/functions.yaml` | 예정 | 4 Function 축 + 분석 목적 매핑 | 2순위 | 위 §2 + blueprint 부록 B |
 | `catalogs/data_guards.yaml` | 예정 | Page 5 데이터 규모 가드 7종 | 3순위 | spec-2.md Part 6-5 |
@@ -374,13 +381,13 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 ## 12.5. Validator 검증 (사전+사후 양방향, STEP 1B-2c 갱신)
 
-> **단일 소스**: `agents/validator/validator.py`. ★LLM 호출 0★ (생명선).
+> **단일 소스**: `agents/validator/validator.py`. **LLM 호출 0** (생명선).
 > **확장 정책**: 7번째 검증 추가 시 본 표 + Validator 본 파일 + 명세 갱신.
 
 ### 사전 검증 (Executor 전, STEP 1B-2c 신규)
 | 검증 | 헬퍼 | 입력 | 무엇을 보나 | 도입 |
 |---|---|---|---|---|
-| 사전 | `validate_plan` | plan, profile | 순서 규칙(_ORDER_RANK) + 작업 충돌(drop_column+같은컬럼) + L3 정보성. blocking 기준은 high(충돌)만 | ★D-70 (STEP 1B-2c)★ |
+| 사전 | `validate_plan` | plan, profile | 순서 규칙(_ORDER_RANK) + 작업 충돌(drop_column+같은컬럼) + L3 정보성. blocking 기준은 high(충돌)만 | **D-70 (STEP 1B-2c)** |
 
 ### 사후 검증 6종 (Executor 후, STEP 1B-2c 갱신)
 | 검증 | 헬퍼 | 입력 | 무엇을 보나 | 도입 |
@@ -389,8 +396,8 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | 2. 변환 결과 | `_check_transform_result` | results | fill_missing 결측 감소, normalize 멤버 수 등 | D-36 |
 | 3. 계획 무결성 | `_check_plan_integrity` | results, plan | 같은 작업 중복(operation+target) | D-36 |
 | 4. 회귀 | `_check_regression` | results, profile | 행 급감(50% 이상 손실) | D-36 |
-| 5. constraint | `_check_constraint_violation` | execution, constraints | 사용자 constraints 범위 위반 행 수. ★원본 backup_path 기준★ (D-43, ★D-67★) | D-48 → 수정 D-67 |
-| 6. ★output_health | `_check_output_health` | execution | Inf 발생 / 변환된 컬럼 std==0 / 그룹 정규화 사후조건 이탈(블록 mean≈0, std≈1). "고장 감지"만, "정상성 판단" X(Page 5 LLM으로) | ★D-68/D-69 (STEP 1B-2c)★ |
+| 5. constraint | `_check_constraint_violation` | execution, constraints | 사용자 constraints 범위 위반 행 수. **원본 backup_path 기준** (D-43, **D-67**) | D-48 → 수정 D-67 |
+| 6. **output_health | `_check_output_health` | execution | Inf 발생 / 변환된 컬럼 std==0 / 그룹 정규화 사후조건 이탈(블록 mean≈0, std≈1). "고장 감지"만, "정상성 판단" X(Page 5 LLM으로) | **D-68/D-69 (STEP 1B-2c) |
 
 `validate(execution, plan=None, profile=None, constraints=None)` — constraints 비면 5번, output_path 없으면 6번 skip (회귀 0).
 `validate_plan(plan, profile=None)` — sync. 반환 `{plan_ok, plan_issues, blocking, n_high, n_medium, n_low}`.
@@ -448,3 +455,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-05-28: STEP 1B-2b 반영 — `AggregatedContext` 실재 (§8 5영역 표), `/api/aggregate_context` 엔드포인트 (§9), D-59~D-65 결정 (LLM 호출 0 생명선)
 - 2026-05-28: STEP 1B-2c 반영 — Validator 사전+사후 양방향 (§12.5 갱신), D-66 해결(constraint 원본 기준), D-67~D-73 결정. `ExecutionResult.backup_path` 신설
 - 2026-05-29: STEP 1B-3a 반영 — React+Vite frontend 실재화 (Page 1·2), 세션 GET/PUT structure 엔드포인트 추가 (§9), D-74~D-81 결정. 기존 `frontend/index.html` → `_legacy_dashboard.html` 보존
+- 2026-05-29: STEP 1B-3b 반영 — Page 3·4 실재화 (§5), `/api/datasets/all`·`/api/modules`·`PUT /sessions/{id}/full` 3 엔드포인트 (§9), D-82~D-89 결정. 데이터 비종속성 정책(D-82) 명시
