@@ -635,3 +635,60 @@ generate() → Ollama /api/generate (실제 model로 호출)
 
 ### STEP 1B-3d 완료 마일스톤
 드롭다운 → 세션 → LLM 호출 → 실제 모델 로드, 에러는 위장 없이 명확히 표면화. 6 페이지 UI에서 사용자가 선택한 모델이 진짜로 쓰이는 게 `ollama ps`로 증명. 8GB VRAM 한계는 명세에 정직하게 기록. 다음: STEP 2(옵션 카드) / STEP 3(EDA 실엔진 + ML 학습).
+
+## 2026-06-02 — STEP 2a: 옵션 카드 백엔드 (balance_classes 4옵션 + 결정론 미리보기)
+
+명세: `docs/specs/STEP_2a_option_cards_backend.md`. 브랜치: `feature/step2-option-cards`.
+
+진단(이전 턴): balance_classes는 분석만 — `df` 미변경 + `"suggested_strategy"` 문자열 1줄. 옵션이 없어 사용자가 선택할 게 없었음. STEP 2의 자연스러운 첫 후보.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-103 | "Strategy 식별자 방식" — balance_classes는 L2 단일 op 유지, 옵션은 `strategy` 필드 값으로. `OperationType`/`OPERATION_PERMISSION`에 새 op 추가 금지 | normalize_group 선례 재사용. LLM 환각 방어(D-13/D-14 후보 외 작업 생성 금지) 그대로. `step_key`(operation:semantic_group\|target\|"global") 불변 → 기존 승인 누적과 호환 |
+| D-104 | 옵션 풀(`BALANCE_OPTIONS`)은 **코드 고정**, 미리보기(`compute_balance_preview`)는 **결정론 산식**. LLM 0 호출 추가 | 옵션 추가에도 LLM 호출 횟수 불변 → 속도 영향 0. Planner는 "balance_classes 필요" 1회 판단 그대로(plan.summary 검증). `available_options`는 Planner 단계 첨부, `preview`는 `execute_pipeline` suspend 직전 df 로드 후 첨부 (2단계 충전) |
+| D-105 | strategy 분기: `class_weight`/`skip`/`smote`/`random_under`/(None=레거시). `smote`·`random_under`는 미리보기만 정확, 실제 리샘플링은 STEP 3 ML 단계 표시 | 무거운 리샘플링은 데이터 변형이라 SI 컴플라이언스/검증 부담. 옵션 제시+선택 저장+추적성까지가 STEP 2a 범위. `class_weight`는 메타(가중치 dict)만 기록, df 미변경 → 회귀 안전 |
+| D-106 | strategy None일 때 `_op_balance_classes`는 **기존 분석 동작 그대로** (suggested_strategy 권고 문자열) | 회귀 0 강제 — 옵션 선택 안 한 세션·기존 테스트가 모두 정상 동작 (cnc_machine_injection 6 non-balance steps 검증) |
+| D-107 | 환각 방어: `ApproveReq.selected_option`이 `BALANCE_OPTION_IDS`(frozenset) 안에만 있을 때 세션에 저장. 허용 외 값(오타·악의·LLM 환각)은 조용히 무시 | LLM이 옵션을 생성하지 않지만, 외부 클라이언트가 임의 값을 보낼 가능성 대비. 검증: `bogus_strategy_xyz` 시도 → 저장 안 됨, 응답 `selected_option=None` |
+| D-108 | 미리보기 산식 — sklearn `class_weight='balanced'` (`total/(n_classes*count)`) + imbalanced-learn 기본(SMOTE→majority×n, Under→minority×n) | 실제 라이브러리 동작과 일치. 추정이 정확해야 사용자 결정에 의미 있음 |
+| D-109 | lineage `params.selected_option` 기록 — "사용자가 어떤 보정을 선택했는가" 감사 가능 (SI 컴플라이언스) | "AI 자동화 두려움" 해소(D-16) 연장 — 사용자 선택까지 추적 |
+
+### 구현 산출물
+- `agents/executor/balance_options.py` (신규) — `BALANCE_OPTIONS` 4종 + `BALANCE_OPTION_IDS` frozenset + `compute_balance_preview(df, col)` 결정론 함수. **LLM import 0**, `from llm` `generate(` grep 0건
+- `agents/planner/planner_schemas.py` — `PlanStep`에 `available_options: list[dict]` + `preview: dict` 추가. `step_key` property 불변
+- `agents/planner/planner.py` — sys.path에 `agents/executor` 추가, `from balance_options import BALANCE_OPTIONS`. balance_classes step 생성 시 `available_options=BALANCE_OPTIONS` 첨부 (df 없으므로 preview는 후속 단계에서)
+- `agents/executor/executor.py`:
+  - `_op_balance_classes(df, col, strategy=None)` — strategy 분기 (class_weight/skip/smote/random_under/None=레거시)
+  - `execute(plan, approved_keys, modality, selected_options=None)` 신규 파라미터
+  - timeseries/order 디스패처에 balance_classes 특수 케이스 (strategy 전달)
+  - event-log path도 `_op_balance_classes`로 위임 (DRY) + `selected_options` 전달
+  - lineage `params.selected_option` 기록
+- `backend/main.py`:
+  - `_maybe_load_df_for_preview(dataset_id, modality, pending_steps)` 헬퍼 — balance_classes pending 있을 때만 df 로드 (불필요 I/O 회피)
+  - `execute_pipeline` suspend 블록에 `pending_steps_payload` 구성 시 `available_options` + `preview`(balance_classes 한정) 첨부
+  - `ApproveReq.selected_option: str | None` 신설. 저장 시 `BALANCE_OPTION_IDS` 필터(환각 방어)
+  - `session["selected_options"]: dict[step_key, option_id]` 신설
+  - `run_execute` 호출에 `selected_options=session.get("selected_options") or {}` 전달
+
+### 검증 결과 (명세 §7 체크리스트, 실 HTTP)
+- **A 산식 정확성** (synthetic 100행 A:97/B:3): class_weight 가중치 `{A:0.5155, B:16.6667}` (=100/(2*97), 100/(2*3)), SMOTE 194(+94), Under 6(-94), skip 100 — 산식 일치. 단일 클래스 → `applicable=False`
+- **B Inspector 신호**: event-log `press_forming.csv` → `PASS_YN imbalance_suspected=True, minority_ratio=0.0283`
+- **C 옵션·미리보기 노출**: pending balance_classes step에 `available_options` 4개(IDs `{class_weight, smote, random_under, skip}`) + `preview.applicable=True`, `current={counts:{PASS:2915, FAIL:85}, total:3000, majority:2915, minority:85}`, smote `5830(+2830)`, under `170(-2830)` — 실 데이터 산식 정확
+- **D approve + resume**: `selected_option=smote` 전달 → `applied_strategy='smote'`, `note: 'smote 선택됨 — 실제 리샘플링은 STEP 3 ML 단계에서 적용 예정'`, validation passed
+- **E lineage**: `transformation_type='balance_classes', params.selected_option='smote'` 기록 — 추적성 확보 (D-109)
+- **F 환각 방어**: `selected_option='bogus_strategy_xyz'` → 응답 `selected_option=null`, 세션 미저장
+- **G 회귀 0**: cnc_machine_injection (timeseries) 6 non-balance steps → 모두 `available_options=[]`, pipeline completed `passed=True`
+- **H LLM 호출 횟수 불변**: `plan()` 1회 호출로 옵션 4종까지 첨부 — `generate()` 추가 호출 0 (옵션은 코드 고정 풀)
+- **I 별표 사용 0건**: `docs/decisions.md`, `docs/0_variable_index_v5.md` 양쪽 모두 (강조 마커 정책 준수)
+- `python3 -m py_compile` 통과 (balance_options.py / planner.py / planner_schemas.py / executor.py / backend/main.py)
+- `grep "from llm\|import llm\|generate("` `agents/executor/balance_options.py` → 0건
+
+### 헌법 정합 (왜 이 설계)
+- "LLM 제안, 규칙 결정" 발전형: LLM은 "balance_classes 필요" 1회 판단(기존). 옵션 펼치기·미리보기·선택 저장은 결정론. 사용자가 결정 → LLM 호출 0 증가
+- Strategy 방식 (A): op를 안 늘려 환각 방어 그대로 (`OperationType`/`OPERATION_PERMISSION` 무변경). normalize_group의 strategy 필드 재사용 선례
+- 회귀 안전: strategy None일 때 기존 분석 동작. `step_key` property 불변 → 승인 누적 호환
+- 추적성: 선택된 옵션을 lineage에 기록 — "사용자가 SMOTE를 선택했다"가 감사 가능 (SI 컴플라이언스)
+- 미리보기 추정: 실제 무거운 리샘플링 없이 정확한 산식으로 행수 예측 → 빠르고 명확. SMOTE/Under의 실제 적용은 STEP 3로 분리
+
+### STEP 2a 완료 마일스톤 (브랜치 작업)
+백엔드 옵션 카드 인프라(옵션 풀 + 결정론 미리보기 + 선택 흐름 + Executor 분기 + lineage 기록) 완성.
+다음: STEP 2b (Frontend Page 4 ApprovalCard을 옵션 선택 카드로 확장) — 브랜치에서 작업 후 main 머지.

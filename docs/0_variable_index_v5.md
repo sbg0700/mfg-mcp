@@ -193,7 +193,7 @@ backend/routers/
 | `fill_missing` | 결측치 채움 | 〃 |
 | `remove_outlier` | 이상치 제거 | 〃 |
 | `create_feature` | 피처 생성 | 〃 |
-| `balance_classes` | 클래스 불균형 보정 | 〃 |
+| `balance_classes` | 클래스 불균형 보정 (STEP 2a: 옵션 4종 — class_weight/smote/random_under/skip via strategy 필드, D-103) | 〃 |
 | `normalize_group` | 의미 그룹 단위 정규화 (우려1) | 〃 |
 
 ### L3 (차단+백업, 3종)
@@ -256,6 +256,7 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | `alarms` | list[dict] | `llm_judge_data_necessity` 기록 (stage당 1회) |
 | `aggregated_context` | dict | STEP 1B-2b — Context Aggregator 결과 캐시 (`completed` 직후 자동 생성, 결정론) |
 | `model` | str \| None | STEP 1B-3d B2 — 이 세션이 사용할 Ollama 모델 (D-99). None이면 환경변수 `OLLAMA_MODEL` 폴백. `PUT /sessions/{id}/model` 또는 `sessions/create.model`로 설정 |
+| `selected_options` | dict[step_key, option_id] | STEP 2a (D-103/107) — 옵션 카드 선택 결과. `ApproveReq.selected_option`이 `BALANCE_OPTION_IDS` 안의 값이면 `{step_key: option_id}`로 저장. `run_execute`에 전달돼 `_op_balance_classes(strategy=...)` 분기 |
 
 ### `AggregatedContext` 필드 (STEP 1B-2b 실재, 5영역 + user_intent)
 spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::aggregate(session)` (결정론, LLM 0).
@@ -330,6 +331,24 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 
 `POST /api/sessions/create` 시그니처 갱신(1B-3d, D-99): 옵션 `model: str | None = None` 추가 — 세션 생성 시 사용자 선호 모델을 같이 받아 저장 (LineSelectPage가 `localStorage.preferred_model` 동봉).
 `PipelineSession` 필드에 `model: str|None` 추가 — `session_store.public_view`에 노출. `execute_pipeline`은 `session.get("model") or req.model` 우선순위로 Inspector/Planner/judge에 전달.
+
+### STEP 2a 옵션 카드 (브랜치 `feature/step2-option-cards`, D-103~D-109)
+- `PlanStep` 필드 신설 (`agents/planner/planner_schemas.py`):
+  - `available_options: list[dict]` — balance_classes step에만 채움(`BALANCE_OPTIONS` 4종). 다른 step은 빈 list (회귀 0)
+  - `preview: dict` — 결정론 미리보기 (행수 추정). execute_pipeline suspend 단계에서 채움
+  - `step_key` property 불변 — `(operation, semantic_group|target|"global")` 그대로 → 기존 승인 누적 호환
+- `ApproveReq` 확장: `selected_option: str | None = None`. 환각 방어 — `BALANCE_OPTION_IDS` 안의 값만 저장
+- 신규 모듈 `agents/executor/balance_options.py` — `BALANCE_OPTIONS`, `BALANCE_OPTION_IDS`, `compute_balance_preview(df, col)`. LLM import 0
+- `executor.execute(plan, approved_keys, modality, selected_options)` 신규 파라미터 — None이면 기존 동작 (회귀 0)
+- `_op_balance_classes(df, col, strategy=None)` — strategy(class_weight/skip/smote/random_under/None) 분기. SMOTE·Under는 미리보기 추정만(STEP 3 실 적용)
+- lineage: `params.selected_option=<id>` 기록 — 추적성 (D-109)
+
+#### `balance_options.py` 심볼 (LLM 0)
+| 심볼 | 역할 |
+|---|---|
+| `BALANCE_OPTIONS` | 4 옵션 dict 리스트 — id/label/description/effect/weight/caution. 코드 고정 (LLM 생성 ❌) |
+| `BALANCE_OPTION_IDS` | frozenset — `ApproveReq.selected_option` 환각 방어 필터 |
+| `compute_balance_preview(df, col)` | 결정론 산식 — class_weight(sklearn 'balanced'), smote(majority×n), random_under(minority×n), skip(유지). 단일 클래스 → `applicable=False` |
 
 ### `backend/llm.py` 헬퍼 (1B-3d B3, D-101)
 | 심볼 | 역할 |
@@ -483,3 +502,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-05-29: STEP 1B-3b 반영 — Page 3·4 실재화 (§5), `/api/datasets/all`·`/api/modules`·`PUT /sessions/{id}/full` 3 엔드포인트 (§9), D-82~D-89 결정. 데이터 비종속성 정책(D-82) 명시
 - 2026-06-01: STEP 1B-3c 반영 — Page 3 실 컬럼 폼(D-90 해결, D-93), Page 5·6 실재화 (LLM 추천), 4 엔드포인트 (§9). D-91~D-98 결정. STEP 1B 전체 완료
 - 2026-06-01: STEP 1B-3d 반영 — LLM model 전달 버그 3개(B1/B2/B3) 수정. `PipelineSession.model` 필드 + `PUT /sessions/{id}/model` 엔드포인트 (§9). `backend/llm.py` `_llm_failed` 마커 + `_try_parse_llm` + `generate_json` (§9). D-99~D-102 결정. 8GB VRAM 모델 전략 정정 — 데모/개발=e4b, 26b 운영=24GB+ GPU 전제
+- 2026-06-02: STEP 2a 반영 (브랜치 `feature/step2-option-cards`) — balance_classes 옵션 카드 4종 + 결정론 미리보기. `PlanStep.available_options/preview` + `PipelineSession.selected_options` + `ApproveReq.selected_option` (환각 방어). `agents/executor/balance_options.py` 신규. D-103~D-109 결정. LLM 호출 횟수 불변(옵션 풀 코드 고정), strategy None=레거시 동작(회귀 0)
