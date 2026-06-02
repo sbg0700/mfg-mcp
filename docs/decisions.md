@@ -692,3 +692,66 @@ generate() → Ollama /api/generate (실제 model로 호출)
 ### STEP 2a 완료 마일스톤 (브랜치 작업)
 백엔드 옵션 카드 인프라(옵션 풀 + 결정론 미리보기 + 선택 흐름 + Executor 분기 + lineage 기록) 완성.
 다음: STEP 2b (Frontend Page 4 ApprovalCard을 옵션 선택 카드로 확장) — 브랜치에서 작업 후 main 머지.
+
+## 2026-06-02 — STEP 2b: 옵션 카드 UI (ApprovalCard 카드형 + 강제 선택)
+
+명세: `docs/specs/STEP_2b_option_cards_frontend.md`. 브랜치: `feature/step2-option-cards`.
+
+STEP 2a 백엔드가 `pending_steps[i]`에 첨부한 `available_options`(4종) + `preview`(결정론 미리보기)를 프론트가 카드형 UI로 노출. 사용자가 명시적으로 1개 선택해야 승인 — "LLM 제안, 사람 결정"을 시각화.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-110 | (UX) 카드형 = 옵션 4개를 가로 그리드 카드로. 각 카드 = label + 미리보기 행수 변화(또는 가중치) + 설명 + 주의사항(⚠) | 라디오만으론 4 옵션의 차이가 한눈에 안 들어옴. 카드형이 행수 변화/주의사항을 같이 보여줘 결정에 필요한 정보 밀도 충족. spec-2 Part 5-5 승인 카드 톤과 정합 |
+| D-111 | 강제 선택 — `available_options.length > 0`이고 미승인 step은 옵션 1개 선택해야 승인 버튼 활성. 미선택 시 "옵션을 선택하세요" 라벨로 disable. "전체 승인"도 옵션 미선택 step 있으면 disable | 디폴트 자동 선택은 무심코 넘어가 단일 승인과 차이 0 → 결정의 의미 보존 (헌법 "사람이 결정"의 시각화). selected_option이 lineage(D-109)로 추적되므로 사용자 의식적 선택이 감사 가능 |
+| D-112 | "권장" 배지 = `class_weight` 한 카드에만 (가장 안전: 데이터 미변경, 가중치 메타만) | 강제 선택의 부담을 가이드로 완화 — 초보자도 안전한 기본으로 유도하되 선택은 본인. RECOMMENDED_OPTION 상수로 분리, 향후 변경 단일 지점 |
+| D-113 | 옵션 카드 클릭 → ApprovalCard 컴포넌트 내부 state가 아니라 부모(StandardizePage) `selectedOptions: {step_key: option_id}` state로 관리. ApprovalCard는 props로 받기만 | 새로고침이나 다른 step 승인 후에도 선택 유지. 부모가 onApproveAll에서 일괄 동봉 가능. 단방향 데이터 흐름 유지 |
+| D-114 | `onApprove(step_key, stage_order, module_index, selected_option=null)` 4-arg 시그니처. POST `/api/pipeline/{id}/approve` body에 `selected_option` 동봉. 옵션 없는 step은 `null` (회귀 안전) | STEP 2a 백엔드 `ApproveReq.selected_option` 필드가 받을 준비 완료(D-107 환각 방어 — `BALANCE_OPTION_IDS` 외 무시). 프론트가 null 보내도 백엔드는 기존 분석 동작 (D-106) → 회귀 0 |
+| D-115 | 옵션 없는 step(`available_options=[]`)은 기존 yes/no UI 그대로. `OptionCardGroup` 자체 안 그림 | 회귀 0 — cnc_machine_injection의 normalize_group/remove_outlier 등 기존 L2는 영향 없음 (검증 완료) |
+| D-116 | 옵션 카드 스타일은 기존 디자인 토큰(`--panel-2`, `--c-process`, `--c-quality`, `--c-maintenance`, `--border`) 재사용. 외부 UI 라이브러리 추가 금지 | spec D-76(Tailwind 등 빌드 의존성 금지) 일관. 선택 상태 = `--c-process`(파랑) 보더, "권장" 배지 = `--c-quality`(초록), 주의사항 = `--c-maintenance`(주황) — 의미 일치 |
+| D-117 | `vite.config.js`에 `server.allowedHosts: true` 추가 — Playwright(다른 docker container)에서 `mfg-frontend-dev:5173` 접근 허용 | dev 전용. Vite의 host check는 CORS와 무관한 dev 도구 보호용. 브라우저 자동화 테스트(이번 스크린샷 + 향후 e2e CI) 필수 인프라 |
+
+### 구현 산출물
+- `frontend/src/step4_standardize/ApprovalCard.jsx` — 전면 재작성:
+  - 새 props `selectedOptions`, `onSelectOption`
+  - step 렌더 분기: `hasOptions`이면 `OptionCardGroup`을, 아니면 기존 yes/no 버튼
+  - "전체 승인" 가드: `hasUnselectedOptionStep` 있으면 disable + title 안내
+  - `OptionCardGroup` 내부 컴포넌트 — 현재 분포 요약 + 4 카드 그리드 + 강제 선택 승인 버튼
+- `frontend/src/step4_standardize/StandardizePage.jsx`:
+  - `selectedOptions` state (`{step_key: option_id}`)
+  - `onSelectOption` 콜백
+  - `onApprove` 4-arg 시그니처 — body에 `selected_option` 동봉
+  - `onApproveAll` — `selectedOptions[s.step_key]`를 step별로 동봉
+  - ApprovalCard에 새 props 전달
+- `frontend/src/styles.css` — `.opt-group`/`.opt-cards`/`.opt-card`/`.opt-card-head`/`.opt-label`/`.opt-badge`/`.opt-preview`/`.opt-sub`/`.opt-desc`/`.opt-caution`/`.opt-actions`/`.opt-warn`/`.opt-current` 신설 (기존 토큰만)
+- `frontend/vite.config.js` — `allowedHosts: true` (dev 인프라)
+
+### 검증 결과 (명세 §7 체크리스트, 브라우저 + curl)
+- **옵션 카드 렌더 (브라우저 스크린샷 captured)**:
+  - press_forming(event-log) → Page 4 awaiting_approval → balance_classes step에 **4 카드** (`클래스 가중치 (class_weight)` / `SMOTE 오버샘플링` / `랜덤 언더샘플링` / `보정 안 함 (skip)`) 표시 — Playwright `.opt-card` 개수 = 4
+  - 각 카드 미리보기 숫자: class_weight `행수 유지 (3000행)` + `가중치 최대 ~17.65배`, smote `5830행 (+2830)`, random_under `170행 (-2830)`, skip `행수 유지 (3000행)`
+  - class_weight에 "권장" 배지 (`.opt-badge` 개수 = 1)
+  - 현재 분포: `현재 분포: PASS 2915 / FAIL 85 (소수 클래스 2.83%)`
+  - 각 카드에 description (BALANCE_OPTIONS) + ⚠ caution
+- **강제 선택**:
+  - 미선택 상태 → 카드 그룹 하단 버튼 라벨 `옵션을 선택하세요`, disabled
+  - SMOTE 카드 클릭 → 파랑 보더(`.opt-card.selected`) + 버튼 라벨 `'smote' 선택 적용`, enabled. "전체 승인" 버튼도 enabled (1 remaining step has selection)
+  - approve → POST body `{step_key, stage_order, module_index, selected_option:"smote"}` → 응답 `selected_option=smote` → resume → `applied_strategy="smote"` + STEP 3 note (백엔드 D-103 일관)
+- **회귀 0**:
+  - cnc_machine_injection (timeseries) 6 non-balance L2 steps → 모두 `available_options=[]`, OptionCardGroup 안 그림, 기존 yes/no 그대로
+  - `selected_option=null` 시 백엔드는 기존 분석 동작(suggested_strategy) — applied_strategy 키 부재 (D-106 회귀 안전)
+  - Page 4 status=completed, validation.passed=True
+- 다른 페이지(1·2·3·5·6) 변경 0 (스코프 — Page 4만)
+- `npm run build` 성공 — 56 modules, 빌드 산출물에 `opt-card`/`opt-badge`/`opt-preview` 클래스 포함
+- 강조 마커(별표) 0건 — 문서 정책 준수
+
+### 헌법 정합
+- "LLM 제안, 사람 결정"의 시각화: 카드형 + 강제 선택 = 결정의 의미 보존 (D-110/D-111)
+- 추적성 연결: 옵션 카드 클릭 → selected_option POST 동봉 → 백엔드 lineage 기록 (STEP 2a D-109) — "사용자가 SMOTE를 의식적으로 선택" 감사 가능
+- 환각 방어 사용자 영역: 권장 배지로 디폴트 안전 가이드 유지 (D-112)
+- 회귀 안전 (다중 레벨): available_options 빈 step은 OptionCardGroup 안 그림(D-115), 백엔드는 selected_option=null 시 기존 동작(D-106) — 다중 모달리티·다른 L2 영향 0
+- 프로토타입-애자일: 기능·정합 위주, 기존 톤(`--panel-2`/`--c-process`/`--c-quality`/`--c-maintenance`) 재사용. 외부 라이브러리 0 (D-76 일관)
+
+### STEP 2b 완료 마일스톤 = STEP 2 전체 완료 (브랜치 작업 종료)
+사용자가 옵션 카드 4개에서 의식적으로 1개 선택 → 선택이 lineage까지 기록되는 흐름 완성. STEP 2(옵션 카드) 백엔드+프론트 모두 검증 완료. 브랜치 `feature/step2-option-cards`에서 main 머지 가능.
+
+다음: STEP 3 (EDA 실엔진 + ML 학습 — SMOTE·Under 실제 적용 + 모델 fit) — 별도 브랜치.

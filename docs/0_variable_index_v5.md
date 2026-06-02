@@ -350,6 +350,23 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | `BALANCE_OPTION_IDS` | frozenset — `ApproveReq.selected_option` 환각 방어 필터 |
 | `compute_balance_preview(df, col)` | 결정론 산식 — class_weight(sklearn 'balanced'), smote(majority×n), random_under(minority×n), skip(유지). 단일 클래스 → `applicable=False` |
 
+### STEP 2b 옵션 카드 UI (브랜치 `feature/step2-option-cards`, D-110~D-117)
+- `ApprovalCard.jsx` props 확장:
+  - `selectedOptions: {step_key: option_id}` — 부모(StandardizePage) 단일 출처 (D-113)
+  - `onSelectOption(step_key, option_id)` — 카드 클릭 콜백
+  - `onApprove`/`onApproveAll`은 selected_option을 4번째 인자/per-step으로 동봉
+- `OptionCardGroup` 내부 컴포넌트 (ApprovalCard.jsx 안에 정의):
+  - `preview.current` 분포 요약(예: "현재 분포: PASS 2915 / FAIL 85 (소수 클래스 2.83%)")
+  - 4 카드 그리드 (`.opt-cards` repeat(auto-fit, minmax(180px,1fr))) — 각 카드 label/preview/sub(가중치)/desc/caution
+  - `RECOMMENDED_OPTION = "class_weight"` → "권장" 배지 (D-112)
+  - 강제 선택 가드: `disabled={busy || !selected}` (D-111)
+- `StandardizePage.jsx`:
+  - `selectedOptions` state
+  - `onApprove(sk, so, mi, selected_option=null)` 4-arg — POST body에 `selected_option` 동봉 (D-114)
+  - "전체 승인" 가드: `hasUnselectedOptionStep` 있으면 disable
+- `frontend/vite.config.js` `allowedHosts: true` (dev infra, D-117)
+- 회귀 0: `available_options.length === 0`이면 OptionCardGroup 안 그림, 기존 yes/no 그대로 (D-115)
+
 ### `backend/llm.py` 헬퍼 (1B-3d B3, D-101)
 | 심볼 | 역할 |
 |---|---|
@@ -503,3 +520,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-06-01: STEP 1B-3c 반영 — Page 3 실 컬럼 폼(D-90 해결, D-93), Page 5·6 실재화 (LLM 추천), 4 엔드포인트 (§9). D-91~D-98 결정. STEP 1B 전체 완료
 - 2026-06-01: STEP 1B-3d 반영 — LLM model 전달 버그 3개(B1/B2/B3) 수정. `PipelineSession.model` 필드 + `PUT /sessions/{id}/model` 엔드포인트 (§9). `backend/llm.py` `_llm_failed` 마커 + `_try_parse_llm` + `generate_json` (§9). D-99~D-102 결정. 8GB VRAM 모델 전략 정정 — 데모/개발=e4b, 26b 운영=24GB+ GPU 전제
 - 2026-06-02: STEP 2a 반영 (브랜치 `feature/step2-option-cards`) — balance_classes 옵션 카드 4종 + 결정론 미리보기. `PlanStep.available_options/preview` + `PipelineSession.selected_options` + `ApproveReq.selected_option` (환각 방어). `agents/executor/balance_options.py` 신규. D-103~D-109 결정. LLM 호출 횟수 불변(옵션 풀 코드 고정), strategy None=레거시 동작(회귀 0)
+- 2026-06-02: STEP 2b 반영 (브랜치 `feature/step2-option-cards`) — Page 4 ApprovalCard 옵션 카드 UI(카드형 + 강제 선택 + 권장 배지). `OptionCardGroup` 컴포넌트, `selectedOptions` state, `selected_option` POST body 동봉. `vite.config.js allowedHosts: true` (Playwright dev infra). D-110~D-117 결정. 회귀 0(available_options 빈 step은 기존 yes/no 그대로)
