@@ -325,3 +325,130 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 .modal-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
 
 
+
+/* ────────────────────────────────────────────────────────── */
+/* STEP 3b — EDA 차트 UI (recharts) — 기존 다크 톤 유지        */
+/* 기존 .eda-skeleton/.skeleton-note는 더 이상 렌더 X (회귀 0)  */
+/* ────────────────────────────────────────────────────────── */
+.eda-charts {
+  margin-top: 24px;
+  background: var(--panel);
+  padding: 16px 18px;
+  border-radius: 8px;
+}
+.eda-charts h2 { margin: 0 0 8px 0; font-size: 18px; }
+.eda-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px 0; }
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.chart-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.chart-card-head strong { font-size: 13px; color: var(--text); }
+.chart-footer { font-size: 11px; margin-top: 6px; }
+.chart-error {
+  color: var(--c-maintenance);
+  font-size: 13px;
+  padding: 8px 10px;
+  background: rgba(234, 88, 12, 0.08);
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  border-radius: 4px;
+  margin-top: 4px;
+}
+.btn-sm {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+.btn-sm:hover:not(:disabled) { background: var(--panel); border-color: var(--c-process); }
+.btn-sm:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* 차트 AI 요약 — 차트 카드 내부 하단 */
+.chart-summary {
+  margin-top: 10px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  color: var(--text);
+}
+.chart-keypoints {
+  list-style: disc inside;
+  padding: 0;
+  margin: 6px 0 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.chart-keypoints li { margin: 2px 0; }
+
+/* 자연어 EDA (3a-2 화면 — 시스템 정체성) */
+.freeform-eda {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.freeform-eda h3 { margin: 0 0 4px 0; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.freeform-input { display: flex; gap: 8px; margin-top: 8px; }
+.freeform-input input {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.freeform-input input:disabled { opacity: 0.6; }
+.freeform-approve {
+  margin-top: 12px;
+  background: var(--panel-2);
+  padding: 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--c-maintenance);  /* L2 톤 — 승인 필요 */
+}
+.code-preview {
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--text);
+  margin: 0;
+  white-space: pre-wrap;
+}
+.freeform-actions { display: flex; gap: 8px; margin-top: 10px; }
+.freeform-result { margin-top: 12px; }
+.result-json {
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--text);
+  margin: 0;
+}
+
+/* key_findings collapsed (skeleton 자리 보관) */
+.findings-details { margin-top: 14px; }
+.findings-details > summary { cursor: pointer; font-size: 12px; padding: 4px 0; }
