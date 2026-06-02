@@ -15,6 +15,9 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
+    // STEP 2b: docker network 안 다른 컨테이너(Playwright 등)에서 접근 가능하게.
+    // dev 전용 — host 체크는 Vite의 dev 도구 보호용이고 CORS와 무관.
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: API_TARGET,
