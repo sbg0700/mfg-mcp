@@ -1029,6 +1029,143 @@ async def eda_summary(session_id: str, req: EdaSummaryReq) -> dict:
             "key_points": list(parsed.get("key_points", []) or [])}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# STEP 3a-2 — 자연어 코드 생성 EDA (안전 설계)
+# ─────────────────────────────────────────────────────────────────────────
+# 4단계: ① 자연어 요청 → ② LLM 코드 생성 → ③ AST 화이트리스트 검증
+#        → ④ 미리보기 + 사용자 승인 → ⑤ 샌드박스 실행 + lineage 기록
+class EdaFreeformReq(BaseModel):
+    user_query: str           # 한국어 자연어 (예: "FAIL 케이스만 분포 보여줘")
+
+
+class EdaApproveCodeReq(BaseModel):
+    approved: bool = True     # False면 cancelled
+
+
+@app.post("/api/analyze/{session_id}/eda/freeform")
+async def eda_freeform(session_id: str, req: EdaFreeformReq) -> dict:
+    """STEP 3a-2 ①②③④ — 자연어 → LLM 코드 생성 → AST 검증 → 미리보기 (실행은 승인 후)."""
+    from session_store import get_session, save_session
+    from eda_engine import build_eda_profile
+    from code_sandbox import llm_generate_eda_code, validate_eda_code
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "status": "rejected",
+                "reason": "EDA 대상 모듈 없음"}
+
+    profile = build_eda_profile(dataset_id, modality)
+    if not profile.get("available"):
+        return {"session_id": session_id, "status": "rejected",
+                "reason": profile.get("reason")}
+
+    model = session.get("model")
+    gen = await llm_generate_eda_code(req.user_query, profile, model)
+    if gen.get("_llm_failed"):
+        return {"session_id": session_id, "status": "llm_failed",
+                "error": gen.get("error"), "model_used": model}
+
+    code = gen.get("code", "")
+    ok, reason = validate_eda_code(code)
+    if not ok:
+        return {"session_id": session_id, "status": "rejected",
+                "reason": reason, "code": code, "model_used": model,
+                "query": req.user_query}
+
+    # 승인 대기 — 코드 미리보기만 반환 (실행 X)
+    session["pending_eda_code"] = {"code": code, "query": req.user_query,
+                                   "dataset_id": dataset_id, "modality": modality}
+    save_session(session_id, session)
+    return {"session_id": session_id, "status": "awaiting_approval",
+            "code": code, "query": req.user_query, "model_used": model,
+            "dataset_id": dataset_id, "modality": modality}
+
+
+@app.post("/api/analyze/{session_id}/eda/freeform/approve")
+async def eda_freeform_approve(session_id: str, req: EdaApproveCodeReq) -> dict:
+    """STEP 3a-2 ⑤ — 승인 → 샌드박스 실행 → lineage 기록 (감사 가능).
+    실행 직전 AST 재검증(이중 안전). 거부되면 lineage 기록 없음."""
+    from session_store import get_session, save_session
+    from eda_engine import load_processed_df
+    from code_sandbox import sandbox_exec, validate_eda_code
+    from harness.lineage import record as lineage_record
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    pending = session.get("pending_eda_code")
+    if not pending:
+        return {"session_id": session_id, "status": "no_pending",
+                "reason": "승인할 코드 없음 (먼저 /eda/freeform 호출)"}
+
+    if not req.approved:
+        session.pop("pending_eda_code", None)
+        save_session(session_id, session)
+        return {"session_id": session_id, "status": "cancelled"}
+
+    code = pending["code"]
+    dataset_id = pending["dataset_id"]
+
+    # 실행 직전 AST 재검증 (이중 안전 — pending 저장 후 누군가 직접 _SESSIONS 조작했을 경우 방어)
+    ok, reason = validate_eda_code(code)
+    if not ok:
+        session.pop("pending_eda_code", None)
+        save_session(session_id, session)
+        return {"session_id": session_id, "status": "rejected_at_exec",
+                "reason": reason}
+
+    df = load_processed_df(dataset_id)
+    if df is None:
+        return {"session_id": session_id, "status": "rejected_at_exec",
+                "reason": f"processed parquet 없음: {dataset_id}"}
+
+    exec_result = sandbox_exec(code, df, timeout_seconds=5)
+    if not exec_result["ok"]:
+        # 실행 실패도 lineage에 기록 (감사 — "사용자가 승인했으나 실행 실패")
+        lineage_id = lineage_record(
+            dataset_id=dataset_id,
+            transformation_type="eda_freeform_code",
+            params={"query": pending["query"], "code": code,
+                    "approved": True, "exec_error": exec_result["error"]},
+            applied_by_agent="user_approved_freeform_eda",
+            user_approval_id=session_id,
+            can_rollback=True,   # 읽기 전용이라 사실상 rollback 불필요
+        )
+        session.pop("pending_eda_code", None)
+        save_session(session_id, session)
+        return {"session_id": session_id, "status": "exec_failed",
+                "error": exec_result["error"], "lineage_id": lineage_id,
+                "code": code, "query": pending["query"]}
+
+    # 성공 — lineage 기록 (감사 가능)
+    lineage_id = lineage_record(
+        dataset_id=dataset_id,
+        transformation_type="eda_freeform_code",
+        params={"query": pending["query"], "code": code,
+                "approved": True, "result_type": exec_result["result_type"]},
+        applied_by_agent="user_approved_freeform_eda",
+        user_approval_id=session_id,
+        can_rollback=True,
+    )
+    session.pop("pending_eda_code", None)
+    # 최근 실행 결과 저장 (UI가 조회 가능하도록)
+    session["last_eda_freeform_result"] = {
+        "query": pending["query"], "code": code,
+        "result": exec_result["result"], "result_type": exec_result["result_type"],
+        "lineage_id": lineage_id,
+    }
+    save_session(session_id, session)
+    return {"session_id": session_id, "status": "executed",
+            "result": exec_result["result"], "result_type": exec_result["result_type"],
+            "lineage_id": lineage_id,
+            "code": code, "query": pending["query"]}
+
+
 @app.get("/api/model/{session_id}/recommend")
 async def model_recommend(session_id: str) -> dict:
     """STEP 1B-3c — 모델 추천 (LLM, modules.yaml recommended_models 풀 + AggregatedContext).
