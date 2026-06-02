@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT / "agents" / "planner"))
 sys.path.insert(0, str(ROOT / "agents" / "executor"))
 sys.path.insert(0, str(ROOT / "agents" / "validator"))
 sys.path.insert(0, str(ROOT / "agents" / "aggregator"))   # STEP 1B-2b
+sys.path.insert(0, str(ROOT / "agents" / "eda"))          # STEP 3a
 sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
@@ -835,6 +836,197 @@ async def analyze_select(session_id: str, req: AnalyzeSelectReq) -> dict:
     save_session(session_id, session)
     return {"session_id": session_id, "analysis_purpose": req.analysis_purpose,
             "function_axis": fn_axis, "free_input": req.free_input}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STEP 3a — Page 5 EDA 실엔진 (LLM 판단 + 코드 실행)
+# ─────────────────────────────────────────────────────────────────────────
+# 3원칙:
+#   ① LLM이 어떤 차트가 필요한지 추천 (제안)       → /eda/plan
+#   ② 코드가 결정론으로 차트 데이터 계산 (LLM 0)    → /eda/render
+#   ③ LLM이 한국어로 차트 요약 (숫자 인용만)         → /eda/summary
+# 데이터 출처: data/processed/{dataset_id}__processed.parquet (Executor 산출물).
+# inspection-image 모달리티는 EDA 제외 (skeleton 유지).
+
+
+def _pick_eda_target(session: dict) -> tuple[str | None, str | None]:
+    """세션의 module_results에서 EDA 대상 (dataset_id, modality)을 선택.
+    inspection-image는 제외 (EDA 의미 없음). 첫 번째 비-이미지 모듈을 채택."""
+    results = session.get("module_results") or {}
+    # 모듈 키 정렬 (stage_order.module_index)
+    def _key(k: str) -> tuple[int, int]:
+        try:
+            a, b = k.split(".", 1)
+            return int(a), int(b)
+        except (ValueError, AttributeError):
+            return -1, -1
+    for mk in sorted(results.keys(), key=_key):
+        mr = results[mk] or {}
+        mod = mr.get("modality")
+        ds = mr.get("dataset_id")
+        if mod == "inspection-image":
+            continue
+        if ds and mod:
+            return str(ds), str(mod)
+    return None, None
+
+
+class EdaPlanReq(BaseModel):
+    # 명시 override (옵션) — 보통은 user_intent.function_axis_focus 사용
+    function_axis: str | None = None
+
+
+class EdaRenderReq(BaseModel):
+    charts: list[dict]   # eda_plan에서 추천된 항목 그대로 (chart_type, target_column, ...)
+
+
+class EdaSummaryReq(BaseModel):
+    chart_type: str
+    stats: dict
+    findings: list[dict] | None = None
+
+
+@app.post("/api/analyze/{session_id}/eda/plan")
+async def eda_plan(session_id: str, req: EdaPlanReq | None = None) -> dict:
+    """STEP 3a-1 ① LLM 차트 추천 + 환각 방어 필터. 결과는 session["eda_plan"]."""
+    from session_store import get_session, save_session
+    from eda_engine import (
+        build_eda_profile, llm_recommend_charts, filter_recommendations,
+        fallback_charts_from_guide,
+    )
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    ctx = session.get("aggregated_context") or {}
+    function_axis = (
+        (req.function_axis if req else None)
+        or (ctx.get("user_intent") or {}).get("function_axis_focus")
+        or "process"
+    )
+
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "available": False,
+                "reason": "EDA 대상 모듈 없음 (inspection-image 제외 또는 미완료)",
+                "function_axis": function_axis}
+
+    profile = build_eda_profile(dataset_id, modality)
+    if not profile.get("available"):
+        return {"session_id": session_id, "available": False,
+                "reason": profile.get("reason"),
+                "function_axis": function_axis,
+                "dataset_id": dataset_id, "modality": modality}
+
+    model = session.get("model")
+    parsed = await llm_recommend_charts(profile, ctx, function_axis, modality, model)
+
+    llm_status = "ok"
+    llm_error = None
+    if parsed.get("_llm_failed"):
+        llm_status = "failed"
+        llm_error = parsed.get("error")
+        raw_recs: list[dict] = []
+    else:
+        raw_recs = parsed.get("recommendations") or []
+
+    valid = filter_recommendations(raw_recs, modality)
+    if not valid:
+        valid = fallback_charts_from_guide(function_axis, modality)
+
+    session["eda_plan"] = valid
+    save_session(session_id, session)
+
+    return {
+        "session_id": session_id, "available": True,
+        "function_axis": function_axis, "modality": modality,
+        "dataset_id": dataset_id,
+        "recommended_charts": valid,
+        "profile": profile,
+        "llm_status": llm_status, "llm_error": llm_error,
+        "model_used": model,
+    }
+
+
+@app.post("/api/analyze/{session_id}/eda/render")
+async def eda_render(session_id: str, req: EdaRenderReq) -> dict:
+    """STEP 3a-1 ② 추천 차트의 데이터·통계 결정론 계산 (LLM 0).
+    같은 parquet + 같은 spec → 같은 결과 (재현성 보장)."""
+    from session_store import get_session, save_session
+    from eda_engine import (
+        load_processed_df, compute_chart_data,
+    )
+    from chart_types import CHART_TYPE_IDS, CHART_TYPES
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "charts": [],
+                "reason": "EDA 대상 모듈 없음"}
+
+    df = load_processed_df(dataset_id)
+    if df is None:
+        return {"session_id": session_id, "charts": [],
+                "reason": f"processed parquet 부재 ({dataset_id})"}
+
+    results: list[dict] = []
+    for spec in req.charts or []:
+        if not isinstance(spec, dict):
+            continue
+        ct = spec.get("chart_type")
+        if ct not in CHART_TYPE_IDS:
+            results.append({"chart_type": ct, "error": "허용되지 않은 chart_type",
+                            "label": None})
+            continue
+        if modality not in CHART_TYPES[ct]["modality"]:
+            results.append({"chart_type": ct, "error": f"modality '{modality}' 미지원",
+                            "label": CHART_TYPES[ct]["label"]})
+            continue
+        try:
+            data = compute_chart_data(df, ct, spec, modality)
+        except Exception as e:
+            data = {"error": f"compute_chart_data 실패: {e}"}
+        results.append({
+            "chart_type": ct,
+            "label": CHART_TYPES[ct]["label"],
+            "data": data,
+        })
+
+    session["eda_results"] = results
+    save_session(session_id, session)
+    return {"session_id": session_id, "dataset_id": dataset_id,
+            "modality": modality, "charts": results}
+
+
+@app.post("/api/analyze/{session_id}/eda/summary")
+async def eda_summary(session_id: str, req: EdaSummaryReq) -> dict:
+    """STEP 3a-1 ③ 차트 stats → 한국어 2~3문장 요약 (LLM, 환각 방어: 숫자 그대로)."""
+    from session_store import get_session
+    from eda_engine import llm_chart_summary
+    from chart_types import CHART_TYPE_IDS
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.chart_type not in CHART_TYPE_IDS:
+        raise HTTPException(400, f"unknown chart_type: {req.chart_type}")
+
+    model = session.get("model")
+    parsed = await llm_chart_summary(req.chart_type, req.stats,
+                                     req.findings or [],
+                                     session.get("analysis_purpose"), model)
+    if parsed.get("_llm_failed"):
+        return {"session_id": session_id, "chart_type": req.chart_type,
+                "llm_status": "failed", "llm_error": parsed.get("error"),
+                "model_used": model, "summary": "", "key_points": []}
+    return {"session_id": session_id, "chart_type": req.chart_type,
+            "llm_status": "ok", "model_used": model,
+            "summary": str(parsed.get("summary", "")),
+            "key_points": list(parsed.get("key_points", []) or [])}
 
 
 @app.get("/api/model/{session_id}/recommend")
