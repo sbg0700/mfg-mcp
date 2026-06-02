@@ -755,3 +755,83 @@ STEP 2a 백엔드가 `pending_steps[i]`에 첨부한 `available_options`(4종) +
 사용자가 옵션 카드 4개에서 의식적으로 1개 선택 → 선택이 lineage까지 기록되는 흐름 완성. STEP 2(옵션 카드) 백엔드+프론트 모두 검증 완료. 브랜치 `feature/step2-option-cards`에서 main 머지 가능.
 
 다음: STEP 3 (EDA 실엔진 + ML 학습 — SMOTE·Under 실제 적용 + 모델 fit) — 별도 브랜치.
+
+## 2026-06-02 — STEP 3a: Page 5 EDA 실엔진 (LLM 판단 + 코드 실행)
+
+명세: `docs/specs/STEP_3a_eda_engine.md`. 브랜치: `feature/step3-eda-ml`.
+
+STEP 2b까지 골격이었던 Page 5 EDA를 실엔진으로. 3a-1(LLM 판단 + 결정론 차트) 완성 후 3a-2(자연어 코드 생성 EDA + 3중 안전) 추가. 차트 데이터는 `data/processed/{dataset_id}__processed.parquet` 직접 재로드. MCP 7도구 계약 무손상, scipy 도입 0.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-118 | EDA 3원칙: ① LLM 판단(어떤 차트 필요한지 추천) ② 코드 실행(결정론 차트 데이터, LLM 0) ③ LLM 자연어 요약(숫자 그대로 인용). function_axis별 차트 고정 매핑 거부 | 헌법 "LLM 제안, 규칙 실행"의 뒷단 적용. 데이터 특성을 LLM이 보고 판단해야 진짜 EDA. function 가이드는 참고용으로만 (`FUNCTION_CHART_GUIDE`) |
+| D-119 | EDA 차트 데이터 소스 = `data/processed/{dataset_id}__processed.parquet` 직접 재로드. AggregatedContext에 분포 없음, MCP 7도구는 분포 미제공(8번째 도구 = 헌법 위반) | 진단 결과(컬럼 stats=null/n_unique만 보유, MCP 분포 함수 0개). parquet은 Executor가 4단 후 항상 생성 — 표준 진입점 |
+| D-120 | 허용 차트 8종을 `agents/eda/chart_types.py` 코드 상수(`CHART_TYPE_IDS` frozenset)로 고정. LLM 추천은 호출부에서 이 집합으로 필터(환각 방어) | balance_options.py `BALANCE_OPTION_IDS` 패턴 그대로. fft/boxplot/histogram/class_dist/correlation/scatter/pareto/rms_trend 8종 — spec-2 Part 6-4 매핑 |
+| D-121 | LLM 추천 실패 / 빈 결과 / modality 부적합 → `FUNCTION_CHART_GUIDE` 폴백(primary 중 modality OK인 것 1~2개) | graceful — LLM이 죽어도 EDA는 보임. 폴백 추천에 `fallback: true` 마커 (UI가 구분 가능) |
+| D-122 | scipy/scikit-learn/imbalanced-learn 도입 거부. FFT는 numpy 내장(`np.fft.rfft`), 통계는 pandas (`describe`/`groupby`/`value_counts`), 가드는 자체 함수(`_sliding_window_mean_signal`, `_apply_row_guard`) | 3a 범위에선 불필요. ML 학습(STEP 3c)이 정말 필요할 때 결정 — 미리 도입 X |
+| D-123 | `_pick_eda_target(session)` 헬퍼 — `module_results` 정렬 후 첫 비-이미지 모듈의 `(dataset_id, modality)` 반환. inspection-image는 EDA 의미 없음 | spec STEP_3a §1 inspection-image 제외 — 이미지 모달리티는 skeleton 유지. 다중 모듈 파이프라인에서 일관된 대상 선택 |
+| D-124 | 데이터 규모 가드 4종 백엔드 적용: row>1M stride 샘플링(`_apply_row_guard`), 카테고리 30+ 상위 50 + Others(`_topn_categories`), FFT sliding window mean(`_sliding_window_mean_signal` window=4096), 점 5000+ stride(scatter) | spec-2 Part 6-5. synthetic은 발동 안 하지만 실데이터(공정 시계열 수백 MB) 대비 필수. 시각화 가드(strip 오버레이)는 프론트(3b) |
+| D-125 | (3a-2) 자연어 → 코드 생성 = "AI가 코드를 짠다" 가치의 완성형. 단 3중 안전 필수: ① AST 화이트리스트(생성 시) ② 실행 직전 재검증 ③ builtins 차단 네임스페이스 + df 사본 + SIGALRM 타임아웃 + L2 승인 + lineage | 헌법 "데이터 외부 전송 0" + SI 컴플라이언스(추적 가능). e4b PoC 한국어 3/3 안전 코드 생성 확인 후 채택 |
+| D-126 | `ALLOWED_NODES`/`FORBIDDEN_NAMES`/`ALLOWED_ROOT_NAMES`는 `agents/eda/code_sandbox.py`에 frozenset 코드 상수. import/exec/eval/open/os/sys/socket/dunder(`__*`)/private(`_*`)/while/for 일체 금지 | LLM 화이트리스트 패턴 — 허용 집합 외 통과 0. for/while 차단으로 무한 루프도 AST에서 사전 거부 (signal 타임아웃은 보조) |
+| D-127 | `_sandbox_exec(code, df, timeout=5)` — `safe_globals={"__builtins__":{}}` + `df.copy()` 사본 + SIGALRM 5초. 결과는 `_coerce_result`로 pd.Series→dict, pd.DataFrame→records(상위 200행), np.ndarray→list 변환 | builtins 전면 차단으로 `getattr`/`__builtins__` 우회 방어. df 사본 = 원본 보호. 결과 직렬화는 UI/JSON 호환 |
+| D-128 | (3a-2 lineage) 승인 실행 결과는 `harness.lineage.record(transformation_type="eda_freeform_code", applied_by_agent="user_approved_freeform_eda", user_approval_id=session_id, params={query, code, approved, result_type})` 로 기록. 실행 실패도 lineage 남김(감사) | SI 컴플라이언스 — "사용자가 어떤 한국어 요청을 하고, LLM이 어떤 코드를 짰고, 그것을 승인·실행해 어떤 결과를 봤는가" 완전 추적. 실행 실패도 기록 = 감사 누락 0 |
+| D-129 | `/api/analyze/{id}/eda/plan` /render/summary 3개 엔드포인트 추가 + 3a-2의 `/eda/freeform`+`/eda/freeform/approve` 2개. 기존 `/select`/`/questions`/`/aggregate_context` 계약 변경 0 | 회귀 0 — 추가만, 수정 0. session 새 키 `eda_plan`/`eda_results`/`pending_eda_code`/`last_eda_freeform_result` 신설 (기존 키 영향 0) |
+| D-130 | `sys.path.insert(0, ROOT/"agents"/"eda")` 추가 (다른 agents 디렉터리와 동일 패턴). `from eda_engine import ...` 절대 import. `agents/` 자체를 path에 넣으면 `inspector` 등이 패키지로 보여 기존 `from inspector import inspect` 깨짐 | 진단 중 실제 발생한 회귀. 디렉터리별 path 추가 규칙(기존 5개) 유지가 안전 |
+
+### 구현 산출물
+- `agents/eda/__init__.py` — 패키지 docstring (3원칙 명시)
+- `agents/eda/chart_types.py` — `CHART_TYPES`(8종), `CHART_TYPE_IDS` frozenset, `FUNCTION_CHART_GUIDE`(참고용)
+- `agents/eda/eda_engine.py` — `processed_path`/`load_processed_df`, `_apply_row_guard`/`_topn_categories`/`_sliding_window_mean_signal`(가드 4종), `build_eda_profile`(LLM 입력), `llm_recommend_charts`(LLM 추천), `filter_recommendations`+`fallback_charts_from_guide`(환각 방어 + 폴백), `compute_chart_data`(LLM 0, 8 chart 모두), `llm_chart_summary`(자연어 요약, 숫자 인용 강제)
+- `agents/eda/code_sandbox.py` — `ALLOWED_NODES`(31)/`FORBIDDEN_NAMES`(18)/`ALLOWED_ROOT_NAMES`(6), `validate_eda_code`(AST 화이트리스트), `sandbox_exec`(builtins 차단 + df 사본 + SIGALRM 5s), `_coerce_result`(pd/np → JSON 직렬화), `llm_generate_eda_code`(자연어 → 코드 제안)
+- `backend/main.py` — `_pick_eda_target`(헬퍼), 5 신규 엔드포인트:
+  - `POST /api/analyze/{sid}/eda/plan` (LLM 추천 + 환각 방어 + 폴백)
+  - `POST /api/analyze/{sid}/eda/render` (결정론 차트 데이터)
+  - `POST /api/analyze/{sid}/eda/summary` (자연어 요약)
+  - `POST /api/analyze/{sid}/eda/freeform` (자연어 → 코드 → AST 검증 → 미리보기)
+  - `POST /api/analyze/{sid}/eda/freeform/approve` (승인 → 샌드박스 실행 → lineage)
+- `backend/main.py` 상단 — `sys.path.insert(0, ROOT/"agents"/"eda")` 추가
+
+### 검증 결과 (명세 §7 체크리스트, 실 데이터 + 실 HTTP + LLM)
+
+3a-1 (LLM 판단 EDA + 결정론 차트):
+- `/eda/plan` end-to-end (event-log press_forming.csv, quality 축, e4b): LLM 9초 → 2 차트 추천 (`class_distribution`+`PASS_YN`, `boxplot_by_label`+`PASS_YN`) — 한국어 reason 정확 (불균형 시각화, 변수별 분포 차이로 불량 원인 분석)
+- `/eda/render` 결정론: class_distribution → `PASS 2915 / FAIL 85`. boxplot_by_label → PASS 5수치(70.56/109.995/120.03/130.24/180.79), FAIL 5수치(68.0/113.85/122.16/129.69/149.13). 모두 정확
+- 결정론 재현성: 같은 spec 2회 호출 → 응답 byte-identical (`diff` 통과)
+- 환각 방어: 허용 외 `chart_type` → render는 `error` 반환, summary는 HTTP 400
+- modality 가드: event-log에 `histogram` 요청 → `error: modality 'event-log' 미지원`
+- `/eda/summary` end-to-end (e4b, 4초): `"품질 분류 분석 결과, PASS가 2915건, FAIL이 85건으로 ... 소수 클래스인 FAIL의 비율이 2.83%에 불과합니다."` — 입력 숫자만 인용, 새 숫자 0
+- LLM 0 audit: `compute_chart_data` AST 검사로 `generate` 호출 0개 확인. `chart_types.py` import 0건 (pure 상수)
+
+3a-2 (자연어 코드 생성 EDA):
+- PoC (구현 전 e4b 한글 3 케이스): 3/3 모두 AST 통과 + 의미 일치
+  - `FAIL ... PRESS_FORCE 분포` → `df[df['PASS_YN']=='FAIL']['PRESS_FORCE'].describe().to_dict()`
+  - `클래스별 평균 비교` → `df.groupby('PASS_YN')['PRESS_FORCE'].mean().to_dict()`
+  - `상위 10 ITEM_CODE` → `df['ITEM_CODE'].value_counts().head(10)`
+- 악성 5종 AST 거부 (단위 + endpoint 양쪽): `import os`, `__import__`, `open`, `exec`, `df.__class__.__bases__[0].__subclasses__()` — 모두 명확한 사유로 거부
+- 적대적 NL endpoint 1 (`/etc/passwd 열어줘`): LLM e4b 자체가 거부 — code는 `result = {"error": "파일 시스템 접근 ... 허용되지 않습니다"}` 안전한 dict 메시지 (AST 통과, 실행 시 거부 메시지만 반환). 1차 방어(system prompt) 작동
+- 적대적 NL endpoint 2 (`os 모듈 import 환경변수`): LLM이 무시하고 안전한 EDA 코드(unique count + mean) 생성. system prompt 우회 방어
+- `/eda/freeform` end-to-end (e4b 11초, `FAIL PRESS_FORCE 평균/표준편차`): `result = {mean_press_force: df[...]['PRESS_FORCE'].mean(), std_press_force: ...std()}` 생성 → AST 통과 → 미리보기 반환
+- `/eda/freeform/approve` 실행: sandbox → `{mean: 120.4452, std: 13.8226}` (boxplot FAIL 그룹 q1/q3와 일관)
+- lineage 기록: `transformation_type=eda_freeform_code`, `applied_by_agent=user_approved_freeform_eda`, `user_approval_id={session_id}`, `params={query, code, approved, result_type}` — `/api/lineage?dataset_id=press_forming.csv` 조회로 확인
+- 샌드박스 안전성: `df.copy()` 사용 검증 (sandbox 안에서 `df.drop(...)` 실행 후 외부 df 컬럼 수 불변), for/while 루프 = `ALLOWED_NODES`에 없어 AST 단계 차단
+
+회귀 + 통합:
+- `/api/analyze/{sid}/questions` 정상 (e4b 3초, quality_classification 추천) — 기존 D-91 환각 방어 보존
+- `/api/analyze/{sid}/select` 정상 (function_axis=quality 반환)
+- `/api/aggregate_context/{sid}` 정상 (key_findings 보존)
+- Page 4 `/api/execute_pipeline` 정상 (press_forming.csv → suspend → approve → completed, balance_classes selected_option=class_weight 적용)
+- 다른 페이지(1·2·3·4·6) 코드 변경 0 — 신규 엔드포인트만 추가
+- 강조 마커(별표) 0건 — 문서 정책 준수
+
+### 헌법 정합
+- "LLM 제안, 규칙 결정"의 EDA 적용 — 차트 추천은 LLM(자율) / 차트 데이터는 코드(결정론) / 자연어 코드는 LLM(자율) + AST(통제)
+- 외부 API 0 / 데이터 전송 0: 모든 LLM 호출 로컬 ollama. parquet은 컨테이너 내부 디스크
+- MCP 7도구 계약 보존: parquet 직접 로드로 우회 — MCP에 분포/통계 도구 추가 0
+- 추적성 (D-128): 사용자 자연어 → LLM 코드 → 승인 → 실행 결과 → lineage 한 줄에 완전 보존
+- 옵션 카드 D-107(`BALANCE_OPTION_IDS`) 패턴 일관: 허용 집합(`CHART_TYPE_IDS`, `ALLOWED_NODES`)을 코드로 고정 → LLM 출력은 그 집합 안만 통과 (환각·코드 인젝션 동시 방어)
+
+### STEP 3a 완료 마일스톤 (브랜치 작업)
+EDA 골격 → 실엔진 완료. 사용자가 표준화된 데이터에 대해:
+  ① LLM이 적합한 차트 추천 (한국어 reason) → ② 코드가 결정론 차트 데이터 계산 → ③ LLM이 한국어 요약
+  ④ 사용자가 자유 한국어로 분석 요청 → ⑤ LLM이 코드 작성 → ⑥ AST 검증 + 사용자 승인 → ⑦ 샌드박스 실행 → ⑧ lineage 기록
+"AI가 코드를 짠다"가 EDA에서 실제 동작하며, 3중 안전 + 감사 가능. 다음: STEP 3b (프론트 recharts 시각화 + freeform UI) / STEP 3c (실 ML 학습 — SMOTE/Under 실 적용 + 모델 fit) — 별도 브랜치.
