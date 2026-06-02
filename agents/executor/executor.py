@@ -81,14 +81,54 @@ def _op_fill_missing(df: pd.DataFrame, col: str) -> tuple[pd.DataFrame, dict, di
     return df, before, after
 
 
-def _op_balance_classes(df: pd.DataFrame, col: str) -> tuple[pd.DataFrame, dict, dict]:
-    """[L2] 클래스 불균형 정보 산출 (실제 리샘플링은 ML 단계에서. 여기선 진단·가중치 제안)."""
+def _op_balance_classes(df: pd.DataFrame, col: str,
+                        strategy: str | None = None) -> tuple[pd.DataFrame, dict, dict]:
+    """[L2] 클래스 불균형 보정. STEP 2a (D-103/D-105): strategy 식별자로 분기.
+
+    strategy 값 (BALANCE_OPTION_IDS):
+      - "class_weight": df 미변경 + sklearn 'balanced' 가중치 메타 기록 (가벼움).
+      - "skip":         df 미변경 + 인지만 기록.
+      - "smote", "random_under": df 미변경 + 적용 선언 기록 — 실제 리샘플링은 STEP 3 ML 단계.
+      - None (=strategy 미선택): ★기존 동작 그대로 — 분석만 + 권고 문자열★ (회귀 0).
+    """
     before = _col_stats(df[col])
-    counts = df[col].value_counts().to_dict()
-    total = sum(counts.values())
-    ratios = {str(k): round(v / total, 4) for k, v in counts.items()}
+    vc = df[col].value_counts(dropna=True)
+    counts = {str(k): int(v) for k, v in vc.items()}
+    total = int(vc.sum())
+    ratios = {str(k): round(int(v) / total, 4) for k, v in vc.items()} if total else {}
+
+    if strategy is None:
+        # 회귀 안전: 기존 분석 동작 그대로 (suggested_strategy 권고 문자열).
+        after = {**_col_stats(df[col]), "class_ratios": ratios,
+                 "suggested_strategy": "class_weight or SMOTE (ML 단계 적용)"}
+        return df, before, after
+
+    if strategy == "class_weight":
+        n_classes = max(len(vc), 1)
+        weights = ({str(k): round(total / (n_classes * int(v)), 4) for k, v in vc.items()}
+                   if total and n_classes else {})
+        after = {**_col_stats(df[col]), "class_ratios": ratios,
+                 "applied_strategy": "class_weight", "class_weights": weights,
+                 "note": "데이터 미변경 — 학습 단계에서 가중치 사용 권장 (sklearn 'balanced' 산식)"}
+        return df, before, after
+
+    if strategy == "skip":
+        after = {**_col_stats(df[col]), "class_ratios": ratios,
+                 "applied_strategy": "skip",
+                 "note": "사용자가 보정 안 함 선택. 불균형 그대로 진행."}
+        return df, before, after
+
+    if strategy in ("smote", "random_under"):
+        # 무거운 리샘플링은 미리보기 추정만 — 실제 적용은 ML 단계 (STEP 3).
+        after = {**_col_stats(df[col]), "class_ratios": ratios,
+                 "applied_strategy": strategy,
+                 "note": f"{strategy} 선택됨 — 실제 리샘플링은 STEP 3 ML 단계에서 적용 예정"}
+        return df, before, after
+
+    # 알 수 없는 strategy (환각 방어가 새지 않았을 때 — 안전망) → 기존 동작으로 폴백.
     after = {**_col_stats(df[col]), "class_ratios": ratios,
-             "suggested_strategy": "class_weight or SMOTE (ML 단계 적용)"}
+             "suggested_strategy": "class_weight or SMOTE (ML 단계 적용)",
+             "note": f"알 수 없는 strategy={strategy!r} — 기존 분석 동작으로 폴백"}
     return df, before, after
 
 
@@ -142,21 +182,26 @@ _OPERATIONS = {
 
 
 async def execute(plan: dict, approved_keys: set | None = None,
-                  modality: str = "timeseries") -> dict:
+                  modality: str = "timeseries",
+                  selected_options: dict[str, str] | None = None) -> dict:
     """PreprocessingPlan 실행.
 
     approved_keys: 사용자가 승인한 step_key 집합 (order 대신 안정적 식별자).
                    L2/L3는 step_key가 이 집합에 있어야 실행됨.
     modality: timeseries는 실제 CSV 변환. inspection-image는 이미지 전처리 경로.
+    selected_options: ★STEP 2a (D-103): step_key → option_id 매핑 (옵션 카드 선택 결과).
+                      balance_classes 등 옵션 있는 step에서 strategy로 변환됨.
+                      None이면 기존 동작 (회귀 0).
     """
     approved_keys = approved_keys or set()
+    selected_options = selected_options or {}
     dataset_id = plan.get("dataset_id", "unknown")
 
     # ★모달리티 분기: 이미지는 CSV가 아니므로 전용 실행 경로
     if modality == "inspection-image":
         return await _execute_image(plan, approved_keys, dataset_id)
     if modality == "event-log":
-        return await _execute_eventlog(plan, approved_keys, dataset_id)
+        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options)
 
     # order는 CSV라 timeseries 경로 재사용 (DATA_ROOT만 order로)
     path = _resolve(dataset_id, modality)
@@ -240,8 +285,20 @@ async def execute(plan: dict, approved_keys: set | None = None,
             continue
 
         try:
+            # ★STEP 2a (D-103): balance_classes는 선택된 옵션(strategy)으로 분기
+            #   selected_options에서 step_key에 해당하는 option_id를 꺼내 함수에 전달.
+            applied_strategy: str | None = None
             if op == "compute_stats":
                 df, before, after = fn(df, None)
+            elif op == "balance_classes":
+                if not col or col not in df.columns:
+                    results.append(StepResult(
+                        order=order, step_key=step.get("step_key"), operation=op, target_column=col, permission_level=perm,
+                        status="failed", detail=f"대상 컬럼 '{col}' 없음.",
+                    ))
+                    continue
+                applied_strategy = selected_options.get(step.get("step_key"))
+                df, before, after = fn(df, col, strategy=applied_strategy)
             else:
                 if not col or col not in df.columns:
                     results.append(StepResult(
@@ -251,11 +308,14 @@ async def execute(plan: dict, approved_keys: set | None = None,
                     continue
                 df, before, after = fn(df, col)
 
-            # Lineage 기록 (변환 추적)
+            # Lineage 기록 (변환 추적) — 옵션 카드 선택은 params에 기록 (D-103 추적성)
+            lineage_params: dict = {"permission_level": perm}
+            if op == "balance_classes" and applied_strategy:
+                lineage_params["selected_option"] = applied_strategy
             lid = lineage.record(
                 dataset_id=dataset_id, transformation_type=op,
                 source_column=col, result_column=col,
-                params={"permission_level": perm}, applied_by_agent="executor",
+                params=lineage_params, applied_by_agent="executor",
                 user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None, can_rollback=True,
             )
             results.append(StepResult(
@@ -435,9 +495,11 @@ def _load_eventlog(dataset_id: str):
     return pd.read_csv(path), path, 0
 
 
-async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str) -> dict:
+async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str,
+                            selected_options: dict[str, str] | None = None) -> dict:
     """event-log 전처리. timeseries와 동일 권한 게이트+lineage.
-    특유 작업: 멀티시트 통합(로드시 자동), balance_classes(불균형 보정)."""
+    특유 작업: 멀티시트 통합(로드시 자동), balance_classes(불균형 보정 — STEP 2a 옵션 식별자 분기)."""
+    selected_options = selected_options or {}
     try:
         df, path, n_sheets = _load_eventlog(dataset_id)
     except Exception as e:
@@ -463,14 +525,18 @@ async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str) -> 
             continue
 
         try:
+            # ★STEP 2a (D-103): balance_classes는 옵션(strategy) 분기 — _op_balance_classes에 위임.
+            #   strategy 없으면 기존 분석 동작 그대로(회귀 0). lineage에 selected_option 기록.
+            applied_strategy: str | None = None
             if op == "balance_classes" and col and col in df.columns:
-                vc = df[col].value_counts()
-                dist = {str(k): int(v) for k, v in vc.items()}
-                ratios = {str(k): round(int(v)/len(df), 4) for k, v in vc.items()}
-                detail = (f"'{col}' 클래스 불균형 분석: {dist}. "
-                          f"보정전략: class_weight 또는 SMOTE (ML 단계 적용). 비율={ratios}")
-                before, after = {"distribution": dist}, {"ratios": ratios,
-                              "strategy": "class_weight/SMOTE"}
+                applied_strategy = selected_options.get(step.get("step_key"))
+                df, before, after = _op_balance_classes(df, col, strategy=applied_strategy)
+                if applied_strategy:
+                    detail = (f"'{col}' 클래스 불균형 — 선택 옵션={applied_strategy}. "
+                              f"after_stats: {dict((k, after.get(k)) for k in ('applied_strategy','note','class_weights') if k in after)}")
+                else:
+                    detail = (f"'{col}' 클래스 불균형 분석 (옵션 미선택 — 권고만). "
+                              f"class_ratios={after.get('class_ratios')}")
             elif op == "fill_missing" and col and col in df.columns:
                 before = {"nulls": int(df[col].isna().sum())}
                 if pd.api.types.is_numeric_dtype(df[col]):
@@ -488,9 +554,12 @@ async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str) -> 
                 detail = f"{op} 완료"
                 before, after = {}, {}
 
+            lineage_params: dict = {"permission_level": perm, "modality": "event-log"}
+            if op == "balance_classes" and applied_strategy:
+                lineage_params["selected_option"] = applied_strategy
             lid = lineage.record(dataset_id=dataset_id, transformation_type=op,
                 source_column=col, result_column=col,
-                params={"permission_level": perm, "modality": "event-log"},
+                params=lineage_params,
                 applied_by_agent="executor", user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None,
                 can_rollback=True)
             results.append(StepResult(order=order, step_key=step.get("step_key"), operation=op, target_column=col,

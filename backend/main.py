@@ -268,6 +268,36 @@ _NODE_MODALITY: dict[str, str] = {
 }
 
 
+# ★STEP 2a (D-104): suspend 시 balance_classes 미리보기용 df 로드.
+#   Executor의 데이터 로더(_resolve / _load_eventlog)를 재사용 — 일관성 유지.
+#   balance_classes pending step이 없으면 로드 자체를 건너뜀(불필요 I/O 회피).
+def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict]):
+    """미리보기 필요시에만 df 로드 (balance_classes pending step 있을 때).
+    실패해도 파이프라인은 계속 (preview만 빠짐). LLM 0 — 순수 데이터 I/O."""
+    if not any(s.get("operation") == "balance_classes" and s.get("target_column")
+               for s in pending_steps):
+        return None
+    try:
+        import pandas as pd
+        if modality in ("timeseries", "order"):
+            from executor import _resolve
+            path = _resolve(dataset_id, modality)
+            for enc in ("utf-8-sig", "cp949", "latin1"):
+                try:
+                    return pd.read_csv(path, encoding=enc, low_memory=False)
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            return None
+        if modality == "event-log":
+            from executor import _load_eventlog
+            df, _path, _n = _load_eventlog(dataset_id)
+            return df
+        # inspection-image: balance_classes 의미 없음
+        return None
+    except Exception:
+        return None
+
+
 def _resolve_modality(module: dict, node_id: str | None = None) -> str:
     """모듈/노드에서 modality 결정. 우선순위:
     1) module["modality"] 명시,
@@ -501,6 +531,31 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 ]
                 if unapproved:
                     session["status"] = "awaiting_approval"
+                    # ★STEP 2a (D-104): balance_classes pending step에 available_options + 결정론 미리보기 첨부.
+                    #   df는 미리보기 시점에만 로드 (Executor와 별개 — 가벼움). LLM 호출 없음.
+                    preview_df = _maybe_load_df_for_preview(dataset_id, modality, unapproved)
+                    pending_steps_payload = []
+                    for s in unapproved:
+                        ps = {
+                            "step_key": s.get("step_key"),
+                            "order": s.get("order"),
+                            "operation": s.get("operation"),
+                            "permission_level": s.get("permission_level"),
+                            "target_column": s.get("target_column"),
+                            "semantic_group": s.get("semantic_group"),
+                            "rationale": s.get("rationale"),
+                            "available_options": s.get("available_options", []),
+                        }
+                        # balance_classes에만 preview 채움 (다른 step은 빈 채로 — 회귀 0)
+                        if (s.get("operation") == "balance_classes" and preview_df is not None
+                                and s.get("target_column")):
+                            try:
+                                from balance_options import compute_balance_preview
+                                ps["preview"] = compute_balance_preview(preview_df, s["target_column"])
+                            except Exception as _e:
+                                ps["preview"] = {"applicable": False,
+                                                 "reason": f"preview 계산 실패: {_e}"}
+                        pending_steps_payload.append(ps)
                     session["pending"] = {
                         "stage_order": so,
                         "node_id": node_id,
@@ -509,15 +564,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                         "dataset_id": dataset_id,
                         "modality": modality,
                         "plan": plan_result,
-                        "pending_steps": [{
-                            "step_key": s.get("step_key"),
-                            "order": s.get("order"),
-                            "operation": s.get("operation"),
-                            "permission_level": s.get("permission_level"),
-                            "target_column": s.get("target_column"),
-                            "semantic_group": s.get("semantic_group"),
-                            "rationale": s.get("rationale"),
-                        } for s in unapproved],
+                        "pending_steps": pending_steps_payload,
                     }
                     save_session(req.session_id, session)
                     return {"status": "awaiting_approval",
@@ -525,8 +572,11 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                             "session": public_view(session)}
 
                 # 4) Executor (전부 승인됨) + Validator (사후 6종)
+                # ★STEP 2a (D-103): 세션에 저장된 옵션 선택을 Executor로 전달 (balance_classes 분기).
+                selected_options = session.get("selected_options") or {}
                 execution = await run_execute(plan_result, approved_keys=approved,
-                                              modality=modality)
+                                              modality=modality,
+                                              selected_options=selected_options)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
                 validation["pre_validation"] = pre_validation  # 사전 결과도 첨부
@@ -584,21 +634,32 @@ class ApproveReq(BaseModel):
     step_key: str
     stage_order: int | None = None    # 참고/로깅용
     module_index: int | None = None
+    # ★STEP 2a (D-103): 옵션 카드 선택 결과 (balance_classes 등). 없으면 옵션 무관 작업.
+    selected_option: str | None = None
 
 
 @app.post("/api/pipeline/{session_id}/approve")
 async def pipeline_approve(session_id: str, req: ApproveReq) -> dict:
     """단건 승인 — step_key를 누적 승인 목록에 추가.
-    resume은 클라이언트가 /api/execute_pipeline 재호출로 트리거 (폴링형, D-51)."""
+    resume은 클라이언트가 /api/execute_pipeline 재호출로 트리거 (폴링형, D-51).
+    ★STEP 2a (D-103): selected_option이 오면 허용 옵션 집합(BALANCE_OPTION_IDS)만 저장.
+    허용 외 값은 무시(환각 방어). 옵션 없는 step은 selected_option=None 그대로 동작."""
     from session_store import get_session, save_session
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
     if req.step_key not in session["approved_step_keys"]:
         session["approved_step_keys"].append(req.step_key)
+    # ★옵션 저장 — 환각 방어 필터 (허용된 옵션 id만 통과)
+    if req.selected_option:
+        from balance_options import BALANCE_OPTION_IDS
+        if req.selected_option in BALANCE_OPTION_IDS:
+            session.setdefault("selected_options", {})[req.step_key] = req.selected_option
+        # 허용 외 옵션은 조용히 무시 (저장 안 함) — 환각·오타·악의적 입력 방어
     save_session(session_id, session)
     return {"approved": True, "step_key": req.step_key,
             "approved_count": len(session["approved_step_keys"]),
+            "selected_option": (session.get("selected_options") or {}).get(req.step_key),
             "stage_order": req.stage_order, "module_index": req.module_index}
 
 
