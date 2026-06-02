@@ -9,3 +9,8 @@ data/synthetic/inspection-image/
 data/synthetic/event-log/
 data/synthetic/order/
 *.patch
+
+# 프로파일링 측정 산출물 (feature/llm-profiling) — 로그/결과는 추적 제외, 로컬에만 쌓임
+logs/
+results/
+*.jsonl
