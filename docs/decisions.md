@@ -835,3 +835,76 @@ EDA 골격 → 실엔진 완료. 사용자가 표준화된 데이터에 대해:
   ① LLM이 적합한 차트 추천 (한국어 reason) → ② 코드가 결정론 차트 데이터 계산 → ③ LLM이 한국어 요약
   ④ 사용자가 자유 한국어로 분석 요청 → ⑤ LLM이 코드 작성 → ⑥ AST 검증 + 사용자 승인 → ⑦ 샌드박스 실행 → ⑧ lineage 기록
 "AI가 코드를 짠다"가 EDA에서 실제 동작하며, 3중 안전 + 감사 가능. 다음: STEP 3b (프론트 recharts 시각화 + freeform UI) / STEP 3c (실 ML 학습 — SMOTE/Under 실 적용 + 모델 fit) — 별도 브랜치.
+
+## 2026-06-02 — STEP 3b: Page 5 EDA 차트 UI (recharts)
+
+명세: `docs/specs/STEP_3b_eda_charts_ui.md`. 브랜치: `feature/step3-eda-ml`.
+
+STEP 3a 백엔드 5 엔드포인트(/eda/plan·render·summary·freeform·freeform/approve)가 만든 데이터를 사용자 화면으로. AnalyzePage의 eda-skeleton 한 블록만 교체, 다른 페이지·다른 영역 0. 자연어 EDA UI(코드 미리보기 + 승인/취소)로 "AI가 코드를 짠다" 시스템 정체성을 화면으로 완성.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-131 | `recharts ^3.8.1` 도입. 빌드 타임 번들에 포함되어 **런타임 외부 호출 0** → 헌법 §1.3(외부 API 0)/§1.4(데이터 외부 전송 0) 모두 충족 | 차트 라이브러리 자작 회피. React 18 호환 + CSS 변수 지원(`stroke="var(--c-process)"`)으로 기존 다크 토큰 일관 |
+| D-132 | `step5_analyze/charts/ChartCard.jsx` 디스패처 + 컴포넌트 8개 (Histogram/BoxPlot/FftSpectrum/RmsTrend/ClassDistribution/CorrelationBar/Pareto/Scatter). `CHART_COMPONENTS` 매핑 dict | 차트 타입 추가 시 변경 단일 지점. 에러 분기(`chart.error` 우선 → `data.error` → 미지원 chart_type)도 디스패처가 처리 |
+| D-133 | BoxPlot = `ComposedChart` + stacked Bar(투명 q1 + 보이는 q3-q1) + `ErrorBar`(min~max 수염, median 중심). 커스텀 Tooltip으로 5수치 + n 표시 | recharts에 박스플롯 내장 컴포넌트 없음. SVG 자작 대신 recharts 일관 유지. "그룹별 분포 비교" 목적 충분 — 정밀 SVG 박스는 폴리싱 단계 (D-79 일관) |
+| D-134 | EDA 실행은 **사용자 명시 클릭** ("EDA 실행" 버튼) — `/eda/plan` 자동 호출 X. 버튼 라벨 동적("차트 추천·생성 중…" / "EDA 재실행") | /plan LLM 호출 9초 — /select 직후 자동이면 사용자가 "왜 멈춰있나" 인지 못함. 명시 클릭 = 로딩 표시 명확 + 사용자 의도 보호 |
+| D-135 | 자연어 EDA UI = **입력 → /freeform → 코드 미리보기(monospace) → 승인/취소 → /freeform/approve → 결과(JSON pre) + lineage_id 표시**. ApprovalCard L2 톤(`border-left: 3px solid --c-maintenance`) | STEP 2b 옵션 카드 패턴 차용 — "AI 제안, 사람 결정". lineage_id 표시 = "이 분석이 기록됐다"가 사용자에게 보임 (SI 신뢰). 코드 미리보기 monospace + 승인 전 실행 0 |
+| D-136 | AI 요약(`/eda/summary`)은 차트별 "AI 요약" 버튼 **클릭 시만** 호출. 일괄 자동 호출 X | LLM 비용 절제 (e4b 4초/요청, N개 차트 일괄이면 사용자가 기다림 인지 못함). 버튼 클릭 = 사용자 의도 + 로딩 표시 명확. 결과는 카드 내부 하단 `.chart-summary` 영역에 표시 |
+| D-137 | recharts 다크 톤 — 공통 `AXIS/GRID/TOOLTIP_STYLE` 객체에 CSS 변수(`var(--muted)`/`var(--border)`/`var(--panel-2)`) 주입. function_axis 의미 색 매핑(`COLORS.process/quality/maintenance/reference`) | 다른 페이지(`--panel`·`--panel-2`·`--border`)와 톤 일관. 차트별 fill = function 의미: histogram/scatter=process, class_distribution=quality, fft/rms/pareto cum=maintenance |
+| D-138 | `useEffect` 초기화 시 `aggregated.user_intent`에서 `savedResult`도 복원. 새로고침/재방문 후에도 "EDA 실행" 버튼 표시 | 기존엔 `selected`만 복원(라디오 체크), `savedResult`는 null이라 "EDA 실행" 버튼이 숨어 사용자가 "선택 저장"을 또 눌러야 했음. 복원 한 줄 추가로 UX 정합. 회귀 0 (추가만) |
+| D-139 | 기존 key_findings 텍스트는 `<details><summary>키 핀딩 N개 — 1B-2b 결정론 추출</summary>` 접어 보존. skeleton-note 문구는 제거 | 회귀 0 보강 — 1B-3c가 만든 finding 표시 자체는 유용하므로 폴딩 영역으로. 기본은 차트(STEP 3b)가 주, findings는 보조 |
+| D-140 | styles.css는 **신규 클래스만 추가** (`.eda-charts`/`.chart-grid`/`.chart-card`/`.chart-card-head`/`.chart-footer`/`.chart-error`/`.btn-sm`/`.chart-summary`/`.chart-keypoints`/`.freeform-eda`/`.freeform-input`/`.freeform-approve`/`.code-preview`/`.freeform-actions`/`.freeform-result`/`.result-json`/`.findings-details`). 기존 `.eda-skeleton`/`.skeleton-note` 등은 미수정(렌더 0이지만 정의 보존 = 회귀 0) | 디자인 토큰(`--panel`/`--panel-2`/`--border`/`--c-*`/`--bg`/`--text`/`--muted`) 재사용. 외부 UI 라이브러리 0 (D-76·D-116 일관) |
+
+### 구현 산출물
+- `frontend/package.json` — `recharts: ^3.8.1` 추가
+- `frontend/src/step5_analyze/charts/` 신규 (9 파일):
+  - `common.js` — AXIS/GRID/TOOLTIP_STYLE/COLORS/CHART_HEIGHT 공통 상수
+  - `ChartCard.jsx` — 디스패처 + ChartError + ChartFooter + AI 요약 훅(`/eda/summary` 클릭)
+  - `Histogram.jsx`·`BoxPlot.jsx`·`FftSpectrum.jsx`·`RmsTrend.jsx`·`ClassDistribution.jsx`·`CorrelationBar.jsx`·`Pareto.jsx`·`Scatter.jsx`
+- `frontend/src/step5_analyze/FreeformEda.jsx` — 자연어 입력 + /freeform → 코드 미리보기 → 승인/취소 → /freeform/approve → 결과 + lineage_id
+- `frontend/src/step5_analyze/AnalyzePage.jsx` — eda-skeleton 블록 교체(eda-charts 섹션), runEda 함수(/plan → /render), savedResult 복원(D-138), key_findings를 details로 접음(D-139)
+- `frontend/src/styles.css` — STEP 3b 클래스 신규 추가 (기존 미수정)
+
+### 검증 결과 (명세 §9 체크리스트, 브라우저 e2e + curl)
+3b-1 차트 렌더:
+- `npm install recharts` 성공 (3.8.1, 41 packages)
+- `npm run build` 성공 (776 modules, 606kB gzip 186kB) — recharts 정상 번들링
+- **브라우저 SVG 렌더 (Playwright 1.60.0)**:
+  - event-log 세션(press_forming.csv + quality_classification, e4b 추천): `class_distribution(BarChart)` + `boxplot_by_label(ComposedChart+ErrorBar)` 2 카드 → 각 카드에 SVG 1개 정상 렌더, label/축/툴팁 다크 톤
+  - timeseries 세션(cnc_machine_injection + anomaly_detection, e4b 추천): `fft_spectrum(LineChart)` + `rms_trend(LineChart)` 2 카드 → 각 SVG 정상
+- **8 chart_type 강제 render(curl)**: timeseries에서 6/8 정상(histogram·boxplot·fft·rms·correlation_bar·scatter), 2/8 modality 가드 정상 거부(class_distribution·pareto = categorical 전용)
+- 폴백 분기: LLM 실패 시 `function_guide` 폴백 + 안내 메시지 (`llm_status === 'failed'` 검출)
+- 에러 분기: 항목 error/data.error → `.chart-error` 박스 (차트 영역 비움)
+
+3b-2 AI 요약:
+- "AI 요약" 버튼 클릭(e4b ~4초) → `summary` + `key_points` 카드 내부 하단 표시
+- 실측 출력: `"전체 3000건의 데이터 중 PASS 비율이 97.83% (2915건), FAIL 비율이 2.83% (85건)을 차지하며..."` — 입력 숫자 그대로 인용 (환각 방어 작동)
+
+3b-3 자연어 EDA (시스템 정체성):
+- 입력 `"FAIL 케이스만 골라서 PRESS_FORCE 평균과 표준편차 보여줘"` → /freeform (e4b 11초)
+- 코드 미리보기 (monospace, 승인 전 실행 0):
+  ```
+  fail_press_force = df[df['PASS_YN'] == 'FAIL']['PRESS_FORCE']
+  result = {"mean_press_force_fail": fail_press_force.mean(), "std_press_force_fail": fail_press_force.std()}
+  ```
+- "승인 후 실행" 클릭 → /freeform/approve → `{mean_press_force_fail: 120.4452, std_press_force_fail: 13.8226}` 표시
+- `lineage_id` 표시(`2514e719...`) — 사용자가 감사 가능성을 시각적으로 확인
+
+회귀:
+- /select 흐름 보존: radio 6개(ANALYSIS_PURPOSES) 정상 렌더, 선택 후 저장 정상
+- "다음 → (Page 6 모델링)" 링크 보존 1개
+- QuestionRadioGroup 미수정
+- 다른 페이지(1·2·3·4·6) 코드 0 줄 변경
+- 기존 `.eda-skeleton`/`.skeleton-note` CSS 정의는 보존(렌더 안 하나 회귀 0 — 추가만)
+- 강조 마커(별표) 0건 — 문서 정책 준수 (docs/decisions.md / docs/0_variable_index_v5.md 모두)
+
+### 헌법 정합
+- "AI 제안, 사람 결정"의 EDA 화면 완성 — 차트 추천은 LLM, 차트 데이터는 코드, 자연어 코드는 LLM + AST + 사용자 승인 + lineage. UI가 이 흐름을 그대로 보여줌
+- 데이터 외부 전송 0 — recharts는 빌드 타임 번들(런타임 외부 호출 0). LLM은 로컬 ollama
+- 회귀 안전 (다중 레벨): skeleton 한 블록만 교체 / styles 신규 클래스만 / 다른 페이지 0 / package.json recharts만 추가
+- 옵션 카드 D-110/D-111 패턴 일관 — 자연어 EDA "승인 후 실행" 강제 클릭(승인 전 실행 0)이 옵션 카드 강제 선택과 동일 발상
+
+### STEP 3b 완료 마일스톤 (브랜치 작업)
+사용자가 표준화된 데이터에 대해: ① EDA 실행 클릭 → ② LLM이 차트 추천 → ③ recharts로 시각화 → ④ "AI 요약" 클릭으로 한국어 해설 → ⑤ 자연어로 자유 분석 요청 → ⑥ AI 코드 미리보기 → ⑦ 승인 → ⑧ 실행 결과 + lineage 표시. STEP 3a 백엔드의 5 엔드포인트가 모두 화면으로 연결.
+
+다음: STEP 3c (실 ML 학습 — SMOTE/Under 실 적용 + 모델 fit) — 별도 브랜치.

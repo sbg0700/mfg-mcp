@@ -367,6 +367,63 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - `frontend/vite.config.js` `allowedHosts: true` (dev infra, D-117)
 - 회귀 0: `available_options.length === 0`이면 OptionCardGroup 안 그림, 기존 yes/no 그대로 (D-115)
 
+### STEP 3a EDA 실엔진 (브랜치 `feature/step3-eda-ml`, D-118~D-130)
+LLM 판단(차트 추천) + 코드 실행(결정론 차트 데이터) + LLM 자연어 요약 + 자연어 코드 EDA(3중 안전).
+
+| 엔드포인트 | req | res 핵심 |
+|---|---|---|
+| `POST /api/analyze/{sid}/eda/plan` | `{function_axis?: str}` | `{available, function_axis, modality, dataset_id, recommended_charts:[{chart_type,target_column?,label_column?,reason_ko}], profile:{rows,n_cols,columns}, llm_status, model_used}`. 폴백 시 항목에 `fallback:true` (D-121) |
+| `POST /api/analyze/{sid}/eda/render` | `{charts:[{chart_type, ...}]}` | `{charts:[{chart_type, label, data:{...}}]}`. 항목별 `error` 또는 `data.error` (modality 가드/compute 실패) |
+| `POST /api/analyze/{sid}/eda/summary` | `{chart_type, stats, findings?}` | `{summary, key_points, llm_status}`. bogus chart_type → 400 |
+| `POST /api/analyze/{sid}/eda/freeform` | `{user_query}` | `{status: "awaiting_approval"\|"rejected"\|"llm_failed", code?, reason?, query?, model_used}` |
+| `POST /api/analyze/{sid}/eda/freeform/approve` | `{approved: bool}` | `{status: "executed"\|"cancelled"\|"exec_failed"\|"rejected_at_exec"\|"no_pending", result?, result_type?, lineage_id?, code?, query?, error?, reason?}` |
+
+`agents/eda/` 신규 패키지:
+| 모듈 | 핵심 심볼 |
+|---|---|
+| `chart_types.py` | `CHART_TYPES`(8종 spec), `CHART_TYPE_IDS`(frozenset 환각 방어), `FUNCTION_CHART_GUIDE`(참고/폴백), `is_chart_modality_ok` |
+| `eda_engine.py` | `processed_path`/`load_processed_df`(parquet 직접 로드, D-119), `_apply_row_guard`/`_topn_categories`/`_sliding_window_mean_signal`(가드 4종 D-124), `build_eda_profile`(LLM 입력), `llm_recommend_charts`(추천 LLM), `filter_recommendations`+`fallback_charts_from_guide`(환각 방어 + 폴백), `compute_chart_data`(LLM 0, 8 chart 모두), `llm_chart_summary`(요약 LLM) |
+| `code_sandbox.py` | `ALLOWED_NODES`(31)/`FORBIDDEN_NAMES`(18)/`ALLOWED_ROOT_NAMES`(6) 세 frozenset(D-126), `validate_eda_code`(AST 화이트리스트), `sandbox_exec`(__builtins__={} + df.copy() + SIGALRM 5s, D-127), `_coerce_result`(pd/np → JSON), `llm_generate_eda_code`(자연어 → 코드 제안) |
+
+신규 `PipelineSession` 키 (기존 키 미변경 — 회귀 0, D-129):
+| 키 | 채워지는 시점 |
+|---|---|
+| `eda_plan` | `/eda/plan` — 환각 방어 필터 통과한 추천 차트 list |
+| `eda_results` | `/eda/render` — 차트별 data 또는 error |
+| `pending_eda_code` | `/eda/freeform` 승인 대기 — `{code, query, dataset_id, modality}` |
+| `last_eda_freeform_result` | `/eda/freeform/approve` 성공 시 — `{query, code, result, result_type, lineage_id}` |
+
+`backend/main.py`:
+- `_pick_eda_target(session) -> (dataset_id, modality)` — `module_results` 정렬 후 첫 비-이미지 모듈 (D-123)
+- `sys.path.insert(0, ROOT/"agents"/"eda")` — 디렉터리별 path 패턴 유지 (D-130, `agents/`만 넣으면 `from inspector import inspect` 회귀)
+- Pydantic req 모델: `EdaPlanReq`/`EdaRenderReq`/`EdaSummaryReq`/`EdaFreeformReq`/`EdaApproveCodeReq`
+
+### STEP 3b EDA 차트 UI (브랜치 `feature/step3-eda-ml`, D-131~D-140)
+STEP 3a 백엔드를 사용자 화면으로. AnalyzePage의 eda-skeleton 한 블록만 교체 — 다른 페이지·다른 영역 0.
+
+| 파일 | 역할 |
+|---|---|
+| `frontend/package.json` | `recharts: ^3.8.1` 신규 deps (D-131, 빌드 타임 번들 — 런타임 외부 호출 0) |
+| `step5_analyze/charts/common.js` | `AXIS`·`GRID`·`TOOLTIP_STYLE`·`COLORS`·`CHART_HEIGHT` 공통 recharts props (CSS 변수 다크 톤, D-137) |
+| `step5_analyze/charts/ChartCard.jsx` | 디스패처 — `CHART_COMPONENTS` 매핑 + `ChartError`/`ChartFooter` + AI 요약 훅(`/eda/summary` 클릭, D-136) |
+| `step5_analyze/charts/Histogram.jsx` | BarChart (bins 중점→x, counts→y, fill=process) |
+| `step5_analyze/charts/BoxPlot.jsx` | **ComposedChart + ErrorBar** — stacked Bar(투명 q1 + 보이는 q3-q1) + ErrorBar(median±[low,high]) + 커스텀 Tooltip 5수치+n (D-133) |
+| `step5_analyze/charts/FftSpectrum.jsx` | LineChart (freqs→x, magnitude→y, stroke=maintenance) |
+| `step5_analyze/charts/RmsTrend.jsx` | LineChart (indices→x, rms→y, stroke=maintenance) |
+| `step5_analyze/charts/ClassDistribution.jsx` | BarChart (labels→x, counts→y, fill=quality) |
+| `step5_analyze/charts/CorrelationBar.jsx` | BarChart layout="vertical" (columns→y, values→x, 동적 높이) |
+| `step5_analyze/charts/Pareto.jsx` | ComposedChart Bar(counts, reference) + Line(cumulative_pct, maintenance) dual-YAxis 0~100% |
+| `step5_analyze/charts/Scatter.jsx` | ScatterChart (x,y 페어, fill=process opacity 0.55) |
+| `step5_analyze/FreeformEda.jsx` | 자연어 → `/eda/freeform` → 코드 미리보기(monospace) → 승인/취소 → `/eda/freeform/approve` → 결과+lineage_id (D-135, ApprovalCard L2 톤 차용) |
+| `step5_analyze/AnalyzePage.jsx` | `runEda()`(`/plan` → `/render`), `savedResult` user_intent 복원(D-138), eda-skeleton 블록 → `<section className="eda-charts">` 교체, key_findings는 `<details>` 폴딩(D-139). Page 6 링크 보존 |
+| `frontend/src/styles.css` | 신규 클래스만 추가(D-140) — `.eda-charts`/`.chart-grid`/`.chart-card`/`.chart-card-head`/`.chart-footer`/`.chart-error`/`.btn-sm`/`.chart-summary`/`.chart-keypoints`/`.freeform-eda`/`.freeform-input`/`.freeform-approve`/`.code-preview`/`.freeform-actions`/`.freeform-result`/`.result-json`/`.findings-details`. 기존 클래스 미수정 |
+
+UX 흐름 (D-134 명시 클릭 모델):
+1. /select 후 (`savedResult` 존재) → "EDA 실행" 버튼 노출
+2. 클릭 → `/plan` (LLM e4b ~9초) → `recommended_charts` 받음 → 즉시 `/render` (결정론) → 차트 N개 렌더
+3. 차트별 "AI 요약" 버튼 클릭 → `/summary` (LLM e4b ~4초) → 카드 내부 하단 표시
+4. 자연어 EDA: 입력 → "분석 요청" → 코드 미리보기 → "승인 후 실행" → 결과 + lineage_id 표시
+
 ### `backend/llm.py` 헬퍼 (1B-3d B3, D-101)
 | 심볼 | 역할 |
 |---|---|
@@ -522,3 +579,4 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 - 2026-06-02: STEP 2a 반영 (브랜치 `feature/step2-option-cards`) — balance_classes 옵션 카드 4종 + 결정론 미리보기. `PlanStep.available_options/preview` + `PipelineSession.selected_options` + `ApproveReq.selected_option` (환각 방어). `agents/executor/balance_options.py` 신규. D-103~D-109 결정. LLM 호출 횟수 불변(옵션 풀 코드 고정), strategy None=레거시 동작(회귀 0)
 - 2026-06-02: STEP 2b 반영 (브랜치 `feature/step2-option-cards`) — Page 4 ApprovalCard 옵션 카드 UI(카드형 + 강제 선택 + 권장 배지). `OptionCardGroup` 컴포넌트, `selectedOptions` state, `selected_option` POST body 동봉. `vite.config.js allowedHosts: true` (Playwright dev infra). D-110~D-117 결정. 회귀 0(available_options 빈 step은 기존 yes/no 그대로)
 - 2026-06-02: STEP 3a 반영 (브랜치 `feature/step3-eda-ml`) — Page 5 EDA 골격을 실엔진으로. 3a-1 LLM 차트 추천(`/eda/plan`) + 결정론 차트 데이터(`/eda/render`, 8 chart 종 — fft/boxplot/histogram/class_dist/correlation/scatter/pareto/rms_trend) + LLM 자연어 요약(`/eda/summary`). 3a-2 자연어 코드 EDA(`/eda/freeform` + `/eda/freeform/approve`) + 3중 안전(AST 화이트리스트 + builtins 차단 샌드박스 + 사용자 승인 + lineage). `agents/eda/__init__.py`·`chart_types.py`(`CHART_TYPES`·`CHART_TYPE_IDS` frozenset·`FUNCTION_CHART_GUIDE`)·`eda_engine.py`(`build_eda_profile`·`compute_chart_data`·`llm_recommend_charts`·`llm_chart_summary`·가드 4종)·`code_sandbox.py`(`ALLOWED_NODES`·`FORBIDDEN_NAMES`·`validate_eda_code`·`sandbox_exec`) 신규. `_pick_eda_target` 헬퍼 + `sys.path.insert(0, ROOT/"agents"/"eda")` (D-130). D-118~D-130 결정. parquet 직접 로드(MCP 7도구 계약 무손상) / scipy 미도입(numpy.fft) / inspection-image EDA 제외 / 회귀 0(`/select`·`/questions`·`/aggregate_context` 불변)
+- 2026-06-02: STEP 3b 반영 (브랜치 `feature/step3-eda-ml`) — Page 5 EDA 차트 UI 실엔진. recharts ^3.8.1 도입(빌드 타임 번들, 런타임 외부 호출 0). `step5_analyze/charts/` 9 파일(ChartCard 디스패처 + 8 차트 컴포넌트 + common.js). BoxPlot은 ComposedChart + ErrorBar(D-133). `FreeformEda.jsx` 자연어 EDA UI(코드 미리보기 → 승인/취소 → 결과+lineage_id). AnalyzePage skeleton 한 블록만 교체 + savedResult 복원(D-138) + key_findings details 폴딩(D-139). styles.css 신규 클래스만(D-140). D-131~D-140 결정. 사용자 명시 클릭 모델(D-134, /plan 자동 호출 X), AI 요약 차트별 클릭만(D-136). 회귀 0(/select·QuestionRadioGroup·"다음→Page 6" 링크·다른 페이지 모두 보존)
