@@ -1,10 +1,14 @@
-# LLM 리소스 모니터링·프로파일링 — 측정 protocol (v0_1)
+# LLM 리소스 모니터링·프로파일링 — 측정 protocol · phase-1 (MCP) (v0_1)
 
+> **범위 (★)**: 본 protocol은 **phase-1 — 앞단 MCP·Agent 파이프라인 LLM 측정**(프롬프트 P1·P2·P3)의
+> 고정값 계약이다. **phase-2(EDA·모델링·코드생성 LLM)는 phase-1 완료 후 STEP 3에서 main 구현 코드를
+> 확인해 별도 protocol로 다룬다**(여기선 다루지 않음).
+>
 > **문서 목적**: 측정의 **모든 고정값을 측정 시작 전에 못박는 계약(사전등록, pre-registration)**.
 > 이 문서가 정한 값으로만 측정하고, 값이 바뀌면 그 값으로 잰 데이터는 무효가 된다. 목적은 **사후
 > cherry-pick 차단 = "N% 개선"의 정직성 담보**.
 >
-> **상위 문서**: 설계 근거·이유는 `0_resource_blueprint_v0_1.md`(이하 blueprint). 충돌 시 **blueprint(설계)
+> **상위 문서**: 설계 근거·이유는 `0_resource_blueprint_phase1_v0_1.md`(이하 blueprint). 충돌 시 **blueprint(설계)
 > 우선**, 본 문서는 그 아래 고정값 계약. 작업 규칙은 `2_TEAMMATE_claude_memory.md`. 상세 방법론 원본은
 > `1_BG_TROUBLESHOOT_llm_resource_optimization.md`.
 >
@@ -32,6 +36,7 @@
 ---
 
 ## §1. 측정 대상 + 양자화 (block 1) `[LOCKED]`
+> **워크로드 = phase-1(앞단 MCP·Agent 파이프라인 LLM, 프롬프트 P1·P2·P3 §2).** EDA·모델링·코드생성은 phase-2(별도 protocol).
 
 | 모델 | 양자화 | 역할 | 설치 |
 |---|---|---|---|
@@ -46,12 +51,15 @@
 
 ## §2. 프롬프트 + 입력 고정 (block 2)
 
-### 2-1. 실프롬프트 3종 `[LOCKED 구성 / OPEN 텍스트]`
+### 2-1. 실프롬프트 3종 (phase-1 MCP 워크로드) `[LOCKED 구성 / OPEN 텍스트]`
 | ID | 출처 | 성격 |
 |---|---|---|
 | `P1_analyze` | Page 5 분석목적 추천 LLM 호출 | JSON 출력, 단일 호출 |
 | `P2_model` | Page 6 모델 추천 LLM 호출 | JSON 출력, 단일 호출 |
 | `P3_planner` | Planner 계획(순서·이유) LLM 호출 | JSON 출력, 단일 호출 |
+
+> 위 3종 = **phase-1 MCP·파이프라인 호출**(전부 짧은 JSON). **phase-2 프롬프트군(EDA 추천·요약·자연어 코드생성
+> 등)은 출력 특성이 달라**(코드는 decode 길어 num_predict 상한 자주 도달) **STEP 3 후 별도 protocol에서 캡처·고정**.
 
 > **controlled 단위 = "단일 LLM 호출"**이다. Page 4 전체 파이프라인(LLM ~8회)이 아니라 위 3종 각각.
 > (파이프라인 누적 시간은 passive·알파 관측용.)
