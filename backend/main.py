@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "agents" / "executor"))
 sys.path.insert(0, str(ROOT / "agents" / "validator"))
 sys.path.insert(0, str(ROOT / "agents" / "aggregator"))   # STEP 1B-2b
 sys.path.insert(0, str(ROOT / "agents" / "eda"))          # STEP 3a
+sys.path.insert(0, str(ROOT / "agents" / "ml"))           # STEP 3c
 sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
@@ -1164,6 +1165,210 @@ async def eda_freeform_approve(session_id: str, req: EdaApproveCodeReq) -> dict:
             "result": exec_result["result"], "result_type": exec_result["result_type"],
             "lineage_id": lineage_id,
             "code": code, "query": pending["query"]}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STEP 3c — Page 6 ML 학습 실엔진 (백그라운드 + 폴링)
+# ─────────────────────────────────────────────────────────────────────────
+# 핵심: /recommend는 그대로 (회귀 0), /train만 신설.
+# task 분기 / 화이트리스트 clamp+notice / OOM 가드 / random_state=42 / lineage.
+# CPU 학습이라 LLM(8GB VRAM)과 무관. asyncio.to_thread로 이벤트 루프 안 막음.
+
+import asyncio as _asyncio  # 별칭 — uvicorn 내부 asyncio 충돌 방지
+import uuid as _uuid
+
+# 학습 job 인메모리 저장 (세션과 별개 — 같은 패턴 _STORE/_SESSIONS)
+_TRAIN_JOBS: dict[str, dict] = {}
+
+
+class TrainReq(BaseModel):
+    model_name: str                            # TRAINABLE_MODEL_NAMES 안만 통과
+    target_column: str | None = None           # 지도학습만 (비지도는 None)
+    params: dict = {}                          # LLM/사용자 제안 — 화이트리스트로 거름
+    contamination: float = 0.05                # 비지도(IsolationForest)만
+
+
+@app.post("/api/model/{session_id}/train/validate")
+async def model_train_validate(session_id: str, req: TrainReq) -> dict:
+    """STEP 3c — 학습 전 파라미터 화이트리스트 검증 (사용자 사전 확인).
+    notices가 있으면 프론트가 "조정 후 진행/취소" 결정 받음."""
+    from session_store import get_session
+    from train_models import TRAINABLE_MODEL_NAMES
+    from param_whitelist import validate_and_clamp_params
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.model_name not in TRAINABLE_MODEL_NAMES:
+        raise HTTPException(
+            400,
+            f"학습 불가 모델 (advisory_only 또는 미지원): {req.model_name}",
+        )
+    safe, notices = validate_and_clamp_params(req.model_name, req.params)
+    return {
+        "model_name": req.model_name,
+        "safe_params": safe,
+        "notices": notices,
+        "needs_confirmation": len(notices) > 0,
+    }
+
+
+def _train_target_or_400(session: dict) -> str:
+    """학습 대상 dataset_id (3a _pick_eda_target 재사용 — 비-이미지 첫 모듈).
+    None이면 400."""
+    dataset_id, _modality = _pick_eda_target(session)
+    if not dataset_id:
+        raise HTTPException(400, "학습 대상 데이터 없음 (표준화 미완료 또는 이미지 모달리티)")
+    return dataset_id
+
+
+async def _run_train_job(job_id: str, dataset_id: str, req: TrainReq) -> None:
+    """백그라운드 학습 job 실행. CPU 블로킹은 thread executor로 위임 — 이벤트 루프 안 막음.
+    성공·실패 모두 lineage 기록 (감사 누락 0)."""
+    from train_engine import run_training
+    from harness.lineage import record as lineage_record
+
+    job = _TRAIN_JOBS.get(job_id, {})
+    try:
+        result = await _asyncio.to_thread(
+            run_training,
+            dataset_id,
+            req.model_name,
+            req.target_column,
+            req.params,
+            req.contamination,
+        )
+        # run_training이 error를 반환했으면 failed로 마크 (예: parquet 부재)
+        if result.get("status") == "error":
+            job["status"] = "failed"
+            job["error"] = result.get("error")
+            job["result"] = result
+            lineage_record(
+                dataset_id=dataset_id,
+                transformation_type="model_train",
+                params={
+                    "model_name": req.model_name,
+                    "error": result.get("error"),
+                    "status": "failed",
+                    "session_id": job.get("session_id"),
+                },
+                applied_by_agent="user_approved_train",
+                user_approval_id=job.get("session_id"),
+                can_rollback=False,
+            )
+            return
+        # 성공
+        job["status"] = "completed"
+        job["result"] = result
+        lineage_id = lineage_record(
+            dataset_id=dataset_id,
+            transformation_type="model_train",
+            params={
+                "model_name": req.model_name,
+                "task": result.get("task"),
+                "metrics": result.get("metrics"),
+                "params_used": result.get("params_used"),
+                "notices": result.get("notices"),
+                "model_path": result.get("model_path"),
+                "session_id": job.get("session_id"),
+            },
+            applied_by_agent="user_approved_train",
+            user_approval_id=job.get("session_id"),
+            can_rollback=False,
+        )
+        job["lineage_id"] = lineage_id
+        result["lineage_id"] = lineage_id
+    except Exception as e:  # 학습 중 예외 (타겟 부재/ value error 등)
+        job["status"] = "failed"
+        job["error"] = f"{type(e).__name__}: {e}"
+        lineage_record(
+            dataset_id=dataset_id,
+            transformation_type="model_train",
+            params={
+                "model_name": req.model_name,
+                "error": job["error"],
+                "status": "failed",
+                "session_id": job.get("session_id"),
+            },
+            applied_by_agent="user_approved_train",
+            user_approval_id=job.get("session_id"),
+            can_rollback=False,
+        )
+
+
+@app.post("/api/model/{session_id}/train")
+async def model_train(session_id: str, req: TrainReq) -> dict:
+    """STEP 3c — 학습 시작. 백그라운드 task 생성, job_id 즉시 반환.
+    환각 방어: TRAINABLE_MODEL_NAMES 외 모델 거부 (advisory_only CNN 등 자동 차단).
+    target_column 유효성은 학습 시점에 검증 (잘못된 컬럼은 failed → lineage 기록)."""
+    from session_store import get_session
+    from train_models import TRAINABLE_MODEL_NAMES
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.model_name not in TRAINABLE_MODEL_NAMES:
+        raise HTTPException(
+            400,
+            f"학습 불가 모델 (advisory_only 또는 미지원): {req.model_name}",
+        )
+    dataset_id = _train_target_or_400(session)
+
+    job_id = str(_uuid.uuid4())
+    _TRAIN_JOBS[job_id] = {
+        "job_id": job_id,
+        "session_id": session_id,
+        "dataset_id": dataset_id,
+        "model_name": req.model_name,
+        "status": "running",
+        "result": None,
+        "error": None,
+    }
+    _asyncio.create_task(_run_train_job(job_id, dataset_id, req))
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "model_name": req.model_name,
+        "dataset_id": dataset_id,
+        "session_id": session_id,
+    }
+
+
+@app.get("/api/model/{session_id}/train/status")
+async def model_train_status(session_id: str, job_id: str) -> dict:
+    """STEP 3c — 폴링: 학습 job 현재 상태 (running/completed/failed)."""
+    job = _TRAIN_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"train job not found: {job_id}")
+    if job.get("session_id") != session_id:
+        raise HTTPException(403, "job session mismatch")
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "model_name": job["model_name"],
+        "dataset_id": job.get("dataset_id"),
+        "error": job.get("error"),
+    }
+
+
+@app.get("/api/model/{session_id}/train/result")
+async def model_train_result(session_id: str, job_id: str) -> dict:
+    """STEP 3c — 학습 결과 조회. running이면 status만, 끝났으면 result/error."""
+    job = _TRAIN_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"train job not found: {job_id}")
+    if job.get("session_id") != session_id:
+        raise HTTPException(403, "job session mismatch")
+    if job["status"] == "running":
+        return {"job_id": job_id, "status": "running"}
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "model_name": job["model_name"],
+        "result": job.get("result"),
+        "error": job.get("error"),
+        "lineage_id": job.get("lineage_id"),
+    }
 
 
 @app.get("/api/model/{session_id}/recommend")
