@@ -908,3 +908,80 @@ STEP 3a 백엔드 5 엔드포인트(/eda/plan·render·summary·freeform·freefo
 사용자가 표준화된 데이터에 대해: ① EDA 실행 클릭 → ② LLM이 차트 추천 → ③ recharts로 시각화 → ④ "AI 요약" 클릭으로 한국어 해설 → ⑤ 자연어로 자유 분석 요청 → ⑥ AI 코드 미리보기 → ⑦ 승인 → ⑧ 실행 결과 + lineage 표시. STEP 3a 백엔드의 5 엔드포인트가 모두 화면으로 연결.
 
 다음: STEP 3c (실 ML 학습 — SMOTE/Under 실 적용 + 모델 fit) — 별도 브랜치.
+
+## 2026-06-02 — STEP 3c: Page 6 ML 학습 실엔진 (백엔드)
+
+명세: `docs/specs/STEP_3c_ml_training_engine.md`. 브랜치: `feature/step3-eda-ml`.
+
+STEP 3b까지 골격이었던 Page 6 학습("학습 시작" → 모달 안내)을 실엔진으로. /recommend(1B-3c)는 그대로 보존, /train만 신설. task별 분기(지도/비지도), 파라미터 화이트리스트(clamp+notice), OOM 가드, 백그라운드 + 폴링, lineage 추적까지. 모두 결정론 (random_state=42).
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-141 | `scikit-learn==1.5.2`, `xgboost==2.1.3`, `imbalanced-learn==0.12.4`, `joblib==1.4.2` 도입 (CPU 학습). lightgbm 미도입(추천 풀에 없음) | 트리 모델은 CPU + 26GB RAM 충분 — GPU 8GB(LLM 전용)와 무관. backend Dockerfile 재빌드로 4 패키지 임포트 성공 확인 |
+| D-142 | `agents/ml/train_models.py` `TRAIN_MODELS` 4종 매핑(RandomForestRegressor/Classifier, XGBoostClassifier, IsolationForest) + `TRAINABLE_MODEL_NAMES` frozenset. advisory_only(CNNClassifier 등)는 매핑에 없음 → /train 400 자동 거부 | balance_options `BALANCE_OPTION_IDS`(D-107) / chart_types `CHART_TYPE_IDS`(D-120) 패턴 일관. modules.yaml.recommended_models 풀과 1:1(advisory 제외) |
+| D-143 | task별 분기: regression(R²/RMSE + importance), classification(Acc/F1/이진AUC + confusion + importance), anomaly(n_anomaly/anomaly_ratio + score_distribution + importance None). 지도는 타겟 필요, 비지도(IsolationForest)는 타겟 없음 | 각 모델이 제대로 작동. 비지도에 타겟 강요하면 모순. confusion은 classification만, score 분포는 anomaly만 |
+| D-144 | `agents/ml/param_whitelist.py` `ALLOWED_PARAMS` — 모델별 범위(tuple)/허용 목록(list)/`"fixed"`. `validate_and_clamp_params`는 범위 초과 시 clamp + `notices` 알림. 무조건 파기 X | 비현실값(환각/낭비)만 거름. 적합한 범위(10~500 등)는 통과 → 학습 품질 영향 0. /train/validate로 사용자 사전 확인(D-149). 옵션 카드 D-111 "결정의 의미 보존" 일관 |
+| D-145 | `RANDOM_STATE = 42` 전역 고정. 사용자/LLM이 다른 random_state 보내도 무시(notice) + 42 유지. train_test_split, RF/XGB/IF의 random_state, OOM 가드의 row 샘플링 모두 42 | 재현성 — 같은 데이터 + 같은 params → 같은 metrics + 같은 importance hash. TEST 4에서 2회 학습 byte-identical(metrics/CM/importance) 확인 |
+| D-146 | OOM 가드 2종: 카테고리 컬럼 unique > `CATEGORY_MAX_UNIQUE=100` → one-hot 폭발 방지로 제외(notice); 행 > `ROW_SAMPLE_THRESHOLD=200_000` → 결정론 샘플링(notice) | 실데이터 대비(synthetic 무발동). ITEM_CODE(2535 unique) one-hot이 OOM 주원인 — 검증에서 정상 발동 확인. CPU 학습이라 8GB VRAM 무관 |
+| D-147 | `POST /train` → `_TRAIN_JOBS[job_id]` 인메모리 등록 + `asyncio.create_task(_run_train_job)` 백그라운드. 학습 본체는 `await asyncio.to_thread(run_training, ...)` — CPU 블로킹이 이벤트 루프 안 막음 | TEST 10에서 학습 중 /health 35ms, /train/status 17ms 응답 확인. 동기 학습 호출이 polling/다른 요청을 차단하지 않음 |
+| D-148 | 학습 성공·실패 모두 `harness.lineage.record(transformation_type="model_train")`. 성공: `{model_name, task, metrics, params_used, notices, model_path, session_id}`. 실패: `{model_name, error, status:"failed", session_id}`. `applied_by_agent="user_approved_train"`, `user_approval_id=session_id`, `can_rollback=False`(학습은 rollback 의미 X) | 3a-2 freeform(D-128) 패턴 일관 — "어떤 모델, 어떤 파라미터, 어떤 결과/실패" 완전 추적. TEST 11에서 성공 4 + 실패 1(잘못된 타겟) 모두 lineage 기록 확인 |
+| D-149 | `POST /train/validate` — 학습 전 파라미터 검증 endpoint. `{safe_params, notices, needs_confirmation}` 반환. 프론트(3d)가 notices를 사용자에게 보여주고 "조정 진행 / 취소" 결정 받게 | TEST 5에서 `n_estimators=100000 → 500`, `max_depth=99 → 30`, `random_state=999 → 42`, `foobar 무시` 4종 notice 정상 반환. 옵션 카드 강제 선택(D-111) 발상 — 사용자 인지 확보 |
+| D-150 | `agents/ml/` 신규 패키지(`__init__.py`, `train_models.py`, `param_whitelist.py`, `train_engine.py`). `sys.path.insert(0, ROOT/"agents"/"ml")` — 디렉터리별 path 추가 패턴(D-130 동일) | `agents/` 자체를 path에 넣으면 기존 `from inspector import inspect` 회귀(D-130에서 발생). 디렉터리별 path 규칙으로 회귀 0. 절대 import(`from train_models import ...`) |
+
+### 구현 산출물
+- `backend/requirements.txt` — sklearn/xgboost/imbalanced-learn/joblib 추가 (4행)
+- `agents/ml/__init__.py` — 패키지 docstring (3원칙)
+- `agents/ml/train_models.py` — `TRAIN_MODELS`(4종 dict) + `TRAINABLE_MODEL_NAMES`(frozenset)
+- `agents/ml/param_whitelist.py` — `RANDOM_STATE=42`, `ALLOWED_PARAMS`(4 모델 × 4 파라미터), `validate_and_clamp_params(name, requested) → (safe, notices)`
+- `agents/ml/train_engine.py` — `CATEGORY_MAX_UNIQUE=100`, `ROW_SAMPLE_THRESHOLD=200_000`, `MODELS_ROOT`, `prepare_features`(타겟 분리 + OOM 가드 + one-hot + 결측 0), `feature_importance`, `run_training`(task 분기 + 직렬화)
+- `backend/main.py` — `sys.path.insert agents/ml` + `TrainReq` + `_TRAIN_JOBS` + `_train_target_or_400` + `_run_train_job`(asyncio.to_thread + lineage 성공/실패) + 4 신규 엔드포인트:
+  - `POST /api/model/{sid}/train/validate` (사전 확인, D-149)
+  - `POST /api/model/{sid}/train` (백그라운드 시작, job_id 반환)
+  - `GET /api/model/{sid}/train/status?job_id=` (폴링)
+  - `GET /api/model/{sid}/train/result?job_id=` (결과)
+
+### 검증 결과 (명세 §11 체크리스트, 실 HTTP + 다회 학습)
+학습 엔진 (task 분기):
+- 도커 재빌드 후 `import sklearn/xgboost/imblearn/joblib` 성공 (1.5.2 / 2.1.3 / 0.12.4 / 1.4.2)
+- **분류** RandomForestClassifier(target=PASS_YN): Acc 0.972, F1 0.958, AUC 0.532, CM `[[0,17],[0,583]]` (불균형 데이터 영향), top3 importance TEMP/PRESS_FORCE/CYCLE_TIME, lineage `7026887f`
+- **회귀** RandomForestRegressor(target=PRESS_FORCE): R² -0.13, RMSE 15.45, top features TEMP/CYCLE_TIME, lineage `f9606edd`
+- **비지도** IsolationForest(target=None, timeseries 800행): n_anomaly=40, anomaly_ratio=0.05(contamination 0.05 그대로), score_distribution 30bin, importance None(IF), lineage `d30ef3ff`
+- 재현성(TEST 4): RFClassifier 2회 학습 metrics/CM/top5 importance hash 완전 동일 (`2bbc6d8260699d06`)
+- advisory_only(CNNClassifier) → HTTP 400 `"학습 불가 모델 (advisory_only 또는 미지원)"`
+- 환각 모델(NeuralOracleXYZ) → HTTP 400
+
+화이트리스트 + OOM 가드:
+- /train/validate(n_estimators=100000, max_depth=99, random_state=999, foobar=42) → safe_params `{n_estimators:500, max_depth:30, random_state:42}` + notices 4개("최대 500으로 조정", "최대 30으로 조정", "42로 고정", "허용 파라미터가 아님 — 무시") + `needs_confirmation:true`
+- 고차원 카테고리 자동 제외: ITEM_CODE(2535) / LOT No.(800) / TimeStamp(800) → notice 표시 (정상 발동)
+- row 20만+ 가드: synthetic 데이터(3000/800행)에선 미발동 — 코드 경로 확인됨
+
+백그라운드 + 폴링:
+- POST /train → job_id 즉시 반환(running 상태)
+- GET /train/status → running → completed 전이 (TEST 10에서 17ms 응답)
+- GET /train/result → 학습 결과 (metrics, confusion/score_dist, importance, notices, lineage_id)
+- **이벤트 루프 비차단**: 학습 진행 중 /health 35ms, /train/status 17ms 응답 (asyncio.to_thread 정상 동작)
+
+lineage + 회귀:
+- 성공 학습 → `model_train` entry: `{model_name, task, metrics, params_used, notices, model_path, session_id}` 기록
+- 실패 학습(잘못된 타겟 'NONEXISTENT_COL') → status:"failed" + lineage `{model_name, error, status:"failed"}` 기록 (감사 누락 0)
+- /api/lineage?dataset_id=press_forming.csv → 8 entries 중 6 `model_train` (성공 + 실패 모두 포함)
+- /api/model/{sid}/recommend 정상 (LLM 추천 + fit_score + advisory_only 마킹 — 회귀 0)
+- Page 1~5(/select·/questions·/eda/*·/execute_pipeline·/pipeline/approve 등) 영향 0 — 신규 엔드포인트만 추가
+
+문서:
+- decisions.md D-141~D-150 추가
+- variable_index_v5.md STEP 3c 본문 섹션 추가
+- 강조 마커(별표) 0건 — 문서 정책 준수 (decisions.md / variable_index_v5.md 모두)
+
+### 헌법 정합
+- "LLM 제안, 규칙 결정" 모델링 적용: LLM 추천(/recommend, 기존 1B-3c) + 코드 학습(scikit-learn/xgboost 결정론) + 규칙 안전 거름(화이트리스트 clamp+notice)
+- 데이터 외부 전송 0: 모든 학습 로컬 CPU. LLM은 로컬 ollama
+- "AI 자율 + 사람 통제 + 추적": LLM이 모델 추천 → 사용자가 파라미터 선택(노티스 보고 결정) → 학습 → lineage 기록
+- 8GB VRAM 정합: 트리 모델은 CPU+26GB RAM. GPU(LLM 8GB)와 분리 → 학습이 LLM 병목 안 받음 / advisory_only(CNN) 자동 거부로 VRAM 폭주 방지
+- 회귀 안전 (다중 레벨): /recommend 불변 / Page 1~5 영향 0 / sys.path 디렉터리별 패턴(D-130 일관) / 신규 엔드포인트만 추가
+- 옵션 카드(D-110/D-111) 패턴 일관: 파라미터 화이트리스트 clamp+notice는 "사용자 인지 후 결정"의 모델링 적용. 무조건 파기 X(옵션 카드도 디폴트 자동 선택 X)
+
+### STEP 3c 완료 마일스톤 (브랜치 작업, 백엔드)
+사용자가 표준화된 데이터에 대해 LLM 추천 모델을 선택하면: ① 파라미터 사전 검증(`/train/validate`) → ② 백그라운드 학습(`/train`) → ③ 폴링(`/status`) → ④ 결과 조회(`/result`)로 task별 메트릭(confusion / R² / score 분포 + feature importance) + lineage_id 반환. 화이트리스트가 비현실값 거르고, OOM 가드가 고차원 카테고리 자동 제외. 모두 결정론 + 감사 가능.
+
+다음: STEP 3d (Page 6 학습 UI — TrainSkeletonModal 교체 + recharts confusion/score chart + lineage 표시) — 별도 브랜치 가능.
