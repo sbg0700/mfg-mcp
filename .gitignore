@@ -9,3 +9,5 @@ data/synthetic/inspection-image/
 data/synthetic/event-log/
 data/synthetic/order/
 *.patch
+# STEP 3c — ML 학습 산출물 (.joblib는 재학습으로 복원, lineage가 메타 보유)
+data/models/
