@@ -35,9 +35,9 @@
 
 | 모델 | 양자화 | 역할 | 설치 |
 |---|---|---|---|
-| `gemma4:e2b` | Q4_K_M | 8GB 기준점 (GPU 100% 적재 유일) + **N% 보조** | **미설치 → pull 필요** `[OPEN: 시점]` |
-| `gemma4:e4b` | Q4_K_M | 8GB 균형 (현 개발 기본) + **헤드라인 N% 주인공** | 설치됨 |
-| `gemma4:26b` | Q4_K_M | 운영(24GB+ 전제) + **negative-result 앵커** | 설치됨 — **§9-4 강등 규칙 적용** |
+| `gemma4:e2b` | Q4_K_M | 8GB **하한**(GPU 100% 적재 유일) + 보조 N% — **품질 게이트(HO1 스모크) 통과 시 대안 자격** | **미설치 → pull 필요** `[OPEN: 시점]` |
+| `gemma4:e4b` | Q4_K_M | 8GB **균형 현실선** + 동일모델 최적화 N% 주력 | 설치됨 |
+| `gemma4:26b` | Q4_K_M | **목표 모델(주인공)** — 8GB 가용성 판정 + 파라미터·하네스 실용권 시험 | 설치됨 — **§9-4 강등 규칙 적용** |
 
 - **양자화 = Q4_K_M 고정.** Q3/Q2 추가 pull은 **선택**(진단 후, 시간 남으면) → `[OPEN]`.
 - **제외**: 31B Dense·super\*/uncensored (blueprint Part 1-5). 측정 1회 적재도 금지.
@@ -157,7 +157,7 @@
 | 모델 | 프롬프트 | num_ctx | keep_alive | N | 비고 |
 |---|---|---|---|---|---|
 | e2b, e4b | P1·P2·P3 | 적재 기본값 `[OPEN]` | warm(10m) | 7 (+워밍업1 cold) | 헤드라인 baseline |
-| 26b | P1만 | 적재 기본값 `[OPEN]` | warm | **3** | §9-4 강등 — negative-result 확인 전용 |
+| 26b | P1만 | 적재 기본값 `[OPEN]` | warm | **3** | 목표 모델 시험 → 스래싱 시 §9-4 강등(negative-result). 양자화 진입 시험은 §5-3 |
 
 ### 5-2. 최적화 배터리 (e4b 주, e2b 보조)
 > **헤드라인 N% 정의 `[LOCKED]`**: **1순위 = per-lever 보고**(레버별 baseline 대비 ΔN% — 귀속이 깨끗하고
@@ -177,16 +177,29 @@
 | num_ctx | `num_ctx` {적재 기본값 `[OPEN]`, 2048} | e4b × P1·P2·P3 | 7 | 보조(H1 demote — Part 6-2). **기본이 이미 ≤2048이면 이 실험 무의미 → skip**(H1 demote 이중 확정) |
 | **all-levers (헤드라인)** | warm + 최적 num_gpu(+유효 시 num_ctx) 동시 | e4b × P1·P2·P3 | 7 | 단일 헤드라인 N%. 유효 레버만 합침 |
 
-### 5-3. e2b 품질 스모크 (HO1 go/no-go)
+### 5-3. 26b 양자화 진입 시험 (목표 모델 — 8GB 실용권) `[OPEN: Q3/Q2 pull 시]`
+> blueprint §5-0·6-3의 핵심 질문: **양자화(Q3/Q2)로 26b를 8GB 실용권에 넣을 수 있나** — MoE 스래싱을
+> 못 잡는 파라미터 레버와 달리 **적재율 자체를 줄이는 유일한 구조적 레버**. §9-4 강등(스래싱 시 N=3 중단)과
+> **별개로**, 양자화 변형은 시도 가치가 있다(시간 허용 시).
+
+| 실험 | 레버 | 셀 | N | 비고 |
+|---|---|---|---|---|
+| 26b 양자화 진입 | 양자화 {Q4 → Q3/Q2 pull} | 26b × P1 | 3 | `[OPEN: Q3/Q2 pull]`. **적재율·size_vram·CPU/GPU 분배·단일호출 시간 재측정 → 8GB 실용권 진입 판정.** 여전히 T=60s 초과면 "양자화로도 불가" 확정(§9-4 강등) |
+
+> 판정: Q3/Q2에서 단일 호출이 T 이내로 떨어지고 품질이 버티면 → "8GB+양자화로 26b 가능"(강한 긍정).
+> 안 되면 → "양자화로도 8GB 불가, 24GB+ 필요"(정직한 부정). 둘 다 §5-0 핵심 질문의 valuable한 답.
+
+### 5-4. e2b 품질 스모크 (HO1 go/no-go)
 e2b pull 직후 P1·P2·P3 × N=2, **품질만**(JSON 유효·추천 합리성). 미통과 시 "8GB→e2b 권장" 서사 보류.
 
-### 5-4. 관찰자효과 A/B 캘리브레이션 `[LOCKED]`
+### 5-5. 관찰자효과 A/B 캘리브레이션 `[LOCKED]`
 e4b × P1·P2·P3 × N=7을 **샘플러 on vs off**로 측정. **반드시 같은 단독창 안 back-to-back**(다른 시간 = 노이즈 교란). 판정 = §9-2.
 
-### 5-5. 실행량·소요 추정 `[추론]`
+### 5-6. 실행량·소요 추정 `[추론]`
 총 ~200회 내외(baseline + keep_alive·num_gpu(①진단+②본측정)·num_ctx·all-levers 조합, 대부분 e2b ~3s /
 e4b ~8s 단일 호출 → 컴퓨트 ~20–30분) + 26b ~3×120s(~6분) + cooldown.
 **단독창 1–2 세션이면 충분.** 26b를 풀 배터리로 돌리면 수 시간 → §9-4로 차단.
+**26b 양자화 진입 시험(§5-3)은 Q3/Q2 pull 시 선택** — pull 시간 + 3회 재측정 추가(별도 단독창 권장).
 
 ---
 
@@ -276,14 +289,17 @@ sampler_on(bool), git_commit, notes
 
 ## §10. baseline (block 5)
 
-- **정의** = blueprint Part 5-1: "현 설계 메인(26b) + e4b가 오늘 8GB 박스에서 무튜닝으로 도는 controlled 수치".
+- **정의** = blueprint Part 5-1: "각 모델이 측정 환경 구축 후, protocol 통제 조건에서 무튜닝(레버 미적용)으로 도는 controlled 수치".
 - **"무튜닝"의 정확한 의미 `[LOCKED 해석]`**: baseline은 **측정-통제 config(재현용 temp=0·num_predict=512 등 §3
   통제값)에서 최적화 레버 미적용** 상태다. **literal 운영 default가 아니다** — 운영은 backend가 옵션을 안 set해
   Ollama 기본(temp~0.8 등)으로 돈다(§3 전제). 즉 N%는 "통제 config 내 레버 전후"를 잰다.
   **운영 그대로의 분포는 passive(A)가 별도 측정**해 함께 보고한다(둘을 섞지 않음 = 회의론 방어·정직성 핵심).
-- **역할 분리** = Part 5-2: **e4b = 헤드라인 N% / e2b = 보조 / 26b = negative-result 앵커**.
-- **근거 1줄**: "8GB VRAM 초과로 Ollama가 자동 CPU offload — 현 하드웨어 실제 운영 조건."
-- **예비값** `[실측: 알파 / byeonggab89]`:
+- **역할** = Part 5-2: **26b = 목표 모델(주인공, 8GB 가용성 판정+하네스 시험) / e4b = 균형 현실선·최적화 N% 주력 / e2b = 8GB 하한(품질 게이트)**.
+- **근거 1줄**: "8GB VRAM 초과로 Ollama가 자동 CPU offload — 현 하드웨어 실제 조건."
+- **확정 절차 `[LOCKED]`**: baseline은 **HO3에서 (1) 실행파일·코드 정리 완료 후 (2) protocol 조건 controlled 측정
+  (3) CV로 재현성 확인된 수치만 인정.** 아래 알파 값은 **baseline이 아니라 개발 중 참고치**(자릿수·방향 sanity +
+  진단 가설 근거). blueprint 부록 B 주의와 동일.
+- **개발 중 참고치 (baseline 아님)** `[byeonggab89, 알파]`:
 
 | 작업 | e4b | 26b |
 |---|---|---|
@@ -307,7 +323,7 @@ sampler_on(bool), git_commit, notes
 | 5 | cooldown 초 | myeongsun97 | HO1 (발열 측정 후) |
 | 6 | 26b 박스 quiesce 강도 | 팀원 협의 | HO1 전 |
 | 7 | 추천 정확도 정답셋 | byeonggab89 + myeongsun97 | HO3 전 |
-| 8 | Q3/Q2 추가 pull 여부 | myeongsun97 | 진단 후 |
+| 8 | Q3/Q2 추가 pull 여부 (→ 26b 양자화 진입 시험 §5-3 활성화) | myeongsun97 | 진단 후 |
 | **9 ★** | **실제 적재 num_ctx 기본값** (backend 미설정 → §3·§5 baseline 전제) | byeonggab89(/api/ps·적재로그) | **HO1 — 측정 전 선결** |
 | **10 ★** | **고정 입력 데이터셋 실재화** (재생성 seed+sha256 또는 fixtures 커밋, §2-2) | myeongsun97 | **HO1 — 측정 전 선결** |
 
