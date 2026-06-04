@@ -3,11 +3,11 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { get } from '../api.js'
 import Toast from '../components/Toast.jsx'
 import ModelCard from './ModelCard.jsx'
-import TrainSkeletonModal from './TrainSkeletonModal.jsx'
+import TrainModal from './TrainModal.jsx'
 
 // Page 6 — 모델링 (spec-2 Part 7).
 // 추천(LLM, recommended_models 풀에서 fit_score)은 실동작.
-// 실제 학습은 골격(모달 안내) — STEP 3에서 실엔진 도입.
+// STEP 3c 학습 실엔진(task 분기 + 화이트리스트 + 폴링 + lineage) + STEP 3d UI.
 export default function ModelingPage() {
   const [params] = useSearchParams()
   const sid = params.get('session') || ''
@@ -109,18 +109,13 @@ export default function ModelingPage() {
         </section>
       )}
 
-      <div className="muted skeleton-note" style={{ marginTop: 24 }}>
-        ※ 실제 ML 학습 엔진(RandomForest/XGBoost/IsolationForest fit + 지표 산출)은
-        STEP 3에서 도입됩니다. 본 페이지는 추천(LLM 추론)까지 실동작.
-      </div>
-
       <div style={{ marginTop: 24 }}>
         <Link to={`/pipeline/run?session=${sid}`} className="btn">
           ← Page 4로 돌아가기
         </Link>
       </div>
 
-      <TrainSkeletonModal model={trainModel} onClose={() => setTrainModel(null)} />
+      <TrainModal model={trainModel} sessionId={sid} onClose={() => setTrainModel(null)} />
       <Toast message={toast} onClose={() => setToast('')} />
     </div>
   )
