@@ -474,7 +474,7 @@ monitoring/
 │  ├─ 0_resource_blueprint_phase1_v0_1.md   ← 본 문서(phase-1 단일 진실원본, 진입점)
 │  ├─ 0_resource_protocol_phase1_v0_1.md    (phase-1 고정값 계약, 부록 C 기반)
 │  ├─ 0_resource_README_v0_1.md             (진입 가이드 — phase 무관 상위, phase-1/2 갈래 안내, 예정)
-│  ├─ 2_TEAMMATE_claude_memory.md           (작업 규칙 단일 소스 — §4 관찰성/포트 포함 최신본)
+│  ├─ BG_TEAMMATE_claude_memory.md           (작업 규칙 단일 소스 — §4 관찰성/포트 포함 최신본)
 │  ├─ BG_TROUBLESHOOT_llm_resource_optimization.md  (상세 방법론 원본)
 │  ├─ 1_HO1~4_phase1_v0_1.md                (phase-1 실행 핸드오프, 본 문서 확정 후)
 │  └─ (예정) 0_resource_*_phase2_*.md / 1_HO*_phase2_*.md  ← phase-2(EDA·모델링) — STEP 3 후 신설
@@ -488,7 +488,7 @@ monitoring/
 TEAMMATE(어떻게 행동) → 본 blueprint(왜/무엇) → protocol(고정값) → handoff(실행 단계).
 
 ### 11-3. git 규칙 (TEAMMATE 단일 소스 — 요약+포인터)
-git/커밋/충돌/측정순도 규칙은 **`monitoring/docs/2_TEAMMATE_claude_memory.md`에만** 둔다(복제 drift 방지).
+git/커밋/충돌/측정순도 규칙은 **`monitoring/docs/BG_TEAMMATE_claude_memory.md`에만** 둔다(복제 drift 방지).
 - 작업 브랜치 `feature/llm-profiling`만. **main 직접 push 금지. `git init`·`reset`·`rebase` 금지.**
 - 커밋 = Conventional Commits(영어). 논리 단위 완성 + 사용자 컨펌 시 답변 마지막에 커밋 명령.
 - **새 파일 우선**(`monitoring/`). **불가피한 기존 수정 = `backend/llm.py` PROFILE 훅뿐**(게이트+사전공유).
@@ -504,7 +504,7 @@ git/커밋/충돌/측정순도 규칙은 **`monitoring/docs/2_TEAMMATE_claude_me
 ## Part 12. AI 컨텍스트 사용 가이드
 
 ### 12-1. 새 세션 1차 컨텍스트
-1. `monitoring/docs/2_TEAMMATE_claude_memory.md` (작업 규칙)
+1. `monitoring/docs/BG_TEAMMATE_claude_memory.md` (작업 규칙)
 2. 본 문서 `0_resource_blueprint_phase1_v0_1.md`
 3. `0_resource_protocol_phase1_v0_1.md`
 - 본체 맥락 필요 시: `0_CONSOLIDATED_PROJECT_DESIGN.md` (본체 합본)

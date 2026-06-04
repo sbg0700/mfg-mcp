@@ -14,7 +14,7 @@
 | 문서 | 역할 | 언제 보나 |
 |---|---|---|
 | **0_resource_README_v0_1** (본 문서) | 진입 가이드·라우팅 | 맨 처음 |
-| **2_TEAMMATE_claude_memory** | 작업 규칙(git·커밋·충돌·측정순도) 단일 소스 | 작업 전 필수 |
+| **BG_TEAMMATE_claude_memory** | 작업 규칙(git·커밋·충돌·측정순도) 단일 소스 | 작업 전 필수 |
 | **0_resource_blueprint_phase1_v0_1** | 왜·무엇 (설계·서사·역할·가설) | 맥락 파악 |
 | **0_resource_protocol_phase1_v0_1** | 고정값 계약 (사전등록·측정 파라미터·판정) | 측정 직전 |
 | **1_HO_all_phase1_v0_1** (실행 시 `1_HO1~4_phase1_`로 분리) | 실행 핸드오프 (선결·투두·검증 게이트) | 실행 단계 |
@@ -24,7 +24,7 @@
 > blueprint/protocol에 양보(특히 시계=CLOCK_MONOTONIC, 훅=passive 전용).
 
 ## 3. 읽는 순서
-**2_TEAMMATE(작업 규칙) → blueprint_phase1(왜·무엇) → protocol_phase1(고정값) → handoff(실행).**
+**BG_TEAMMATE(작업 규칙) → blueprint_phase1(왜·무엇) → protocol_phase1(고정값) → handoff(실행).**
 역할별 진입: 팀원=TEAMMATE+blueprint / 측정 실행자=protocol+handoff / 새 AI 세션=아래 §5 프롬프트.
 
 **phase 갈래**: 현재 문서는 전부 **phase-1(앞단 MCP·Agent 파이프라인 LLM)**. **phase-2(EDA·모델링·코드생성)는
@@ -42,7 +42,7 @@ phase-1 완료 후 STEP 3에서 main 구현 코드를 보고 별도 문서(`*_ph
 ```
 이 브랜치(feature/llm-profiling)의 phase-1 리소스 프로파일링 작업을 이어간다.
 먼저 monitoring/docs/의 다음을 순서대로 읽어라:
-1) 2_TEAMMATE_claude_memory.md  (작업·git 규칙 — 절대 준수)
+1) BG_TEAMMATE_claude_memory.md  (작업·git 규칙 — 절대 준수)
 2) 0_resource_blueprint_phase1_v0_1.md  (설계·서사 — 단일 진실원본)
 3) 0_resource_protocol_phase1_v0_1.md  (측정 고정값 — 사전등록 계약)
 4) 1_HO_all_phase1_v0_1.md  (실행 핸드오프)

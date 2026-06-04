@@ -9,7 +9,7 @@
 > cherry-pick 차단 = "N% 개선"의 정직성 담보**.
 >
 > **상위 문서**: 설계 근거·이유는 `0_resource_blueprint_phase1_v0_1.md`(이하 blueprint). 충돌 시 **blueprint(설계)
-> 우선**, 본 문서는 그 아래 고정값 계약. 작업 규칙은 `2_TEAMMATE_claude_memory.md`. 상세 방법론 원본은
+> 우선**, 본 문서는 그 아래 고정값 계약. 작업 규칙은 `BG_TEAMMATE_claude_memory.md`. 상세 방법론 원본은
 > `BG_TROUBLESHOOT_llm_resource_optimization.md`.
 >
 > **Snapshot**: 2026-06-02 v0_1 (측정 코드 미작성 / 측정 미시작 / 서명 전).

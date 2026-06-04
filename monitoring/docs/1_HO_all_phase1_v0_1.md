@@ -4,7 +4,7 @@
 > 모델링·코드생성)는 phase-1 완료 후 STEP 3에서 별도 핸드오프(`1_HO*_phase2_*`).
 >
 > **상위 문서**: 설계=`0_resource_blueprint_phase1_v0_1.md`(해당 Part 참조) / 고정값=`0_resource_protocol_phase1_v0_1.md`(해당 § 참조)
-> / 작업 규칙=`2_TEAMMATE_claude_memory.md` / 방법론 원본=`BG_TROUBLESHOOT_llm_resource_optimization.md`.
+> / 작업 규칙=`BG_TEAMMATE_claude_memory.md` / 방법론 원본=`BG_TROUBLESHOOT_llm_resource_optimization.md`.
 > 충돌 시 **blueprint(설계) > protocol(고정값) > 본 문서(실행)** 순. 본 문서는 그 둘을 실행으로 옮길 뿐, 값을 새로 만들지 않는다.
 >
 > **Snapshot**: 2026-06-02 v0_1 (측정 코드 미작성 / 측정 미시작 / protocol §12 서명 전).
