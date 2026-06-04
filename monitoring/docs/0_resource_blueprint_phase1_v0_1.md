@@ -23,7 +23,7 @@
 > `공유 서버` = 측정이 도는 단일 GPU 호스트(`LINUX-server`). 본 브랜치 작업 영역 = `repo/monitoring/`.
 >
 > **명명·버전 정책**: `0_` = 글로벌 설계층(README·blueprint·protocol, 먼저 전부 읽음) /
-> `1_` = 핸드오프 실행층(`1_HO*`). 버전 `v0_1` = 알파 전. 측정 결과 반영 시 `v0_2`로 갱신.
+> `1_` = 핸드오프 실행층(`1_HO*`) / `BG_` = 팀원(myeongsun) 제공·팀원 도메인 참조층(작업 규칙·방법론 원본 — phase 무관). 버전 `v0_1` = 알파 전. 측정 결과 반영 시 `v0_2`로 갱신.
 > 파일명·본문 버전 표기는 **언더스코어(`v0_1`)로 통일**.
 
 ---
@@ -481,8 +481,8 @@ monitoring/
 └─ (코드 예정) llm_resource_sampler.py / ps_poller.py / bench_battery.py / analyze_logs.py
 ```
 > 직전 `0_resource_MASTER_CONTEXT_v0_1`·`0_resource_blueprint_v0_1`(초안)은 본 문서로 **통합·retire**.
-> **TROUBLESHOOT §3-4 sync 필요**: "훅=passive 전용 / controlled=API 직접 호출"로 갱신(현재 in-band 중심 서술).
-> (명명 prefix(0_/1_/2_) 정리는 추후 — 지금은 단일 home·내용 최신성 우선.)
+> **TROUBLESHOOT §3-4 sync 완료**: "훅=passive 전용 / controlled=API 직접 호출" 갱신 노트 반영됨(TROUBLESHOOT §3-4 "갱신됨" 블록).
+> (명명 prefix `0_`/`1_`/`BG_` 체계는 헤더 §명명·버전 정책에 정의됨 — 지금은 단일 home·내용 최신성 우선.)
 
 ### 11-2. 수행자 진입 순서
 TEAMMATE(어떻게 행동) → 본 blueprint(왜/무엇) → protocol(고정값) → handoff(실행 단계).

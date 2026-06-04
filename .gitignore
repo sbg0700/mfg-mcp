@@ -17,3 +17,6 @@ results/
 *.db
 *.duckdb
 *.sqlite
+
+# Claude Code 일회성 작업지시 scratch (적용 후 역할 종료 — 커밋 안 함)
+_CC_*
