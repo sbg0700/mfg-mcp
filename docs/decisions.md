@@ -985,3 +985,72 @@ lineage + 회귀:
 사용자가 표준화된 데이터에 대해 LLM 추천 모델을 선택하면: ① 파라미터 사전 검증(`/train/validate`) → ② 백그라운드 학습(`/train`) → ③ 폴링(`/status`) → ④ 결과 조회(`/result`)로 task별 메트릭(confusion / R² / score 분포 + feature importance) + lineage_id 반환. 화이트리스트가 비현실값 거르고, OOM 가드가 고차원 카테고리 자동 제외. 모두 결정론 + 감사 가능.
 
 다음: STEP 3d (Page 6 학습 UI — TrainSkeletonModal 교체 + recharts confusion/score chart + lineage 표시) — 별도 브랜치 가능.
+
+## 2026-06-02 — STEP 3d: Page 6 학습 UI (TrainModal)
+
+명세: `docs/specs/STEP_3d_training_ui.md`. 브랜치: `feature/step3-eda-ml`.
+
+STEP 3c 학습 백엔드(4 엔드포인트 + lineage)를 화면으로. TrainSkeletonModal(25줄 골격)을 TrainModal로 교체 — task 분기(지도 vs 비지도), 폴링, 시각화(confusion CSS 그리드 + 3b 차트 재사용), lineage 표시까지. ModelingPage·ModelCard·/recommend 모두 보존 (회귀 0).
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-151 | `TrainSkeletonModal.jsx` 삭제 + `TrainModal.jsx` 신설(교체). ModelingPage는 import 교체 + `sessionId={sid}` prop 추가 + skeleton-note 안내문 제거. ModelCard / /recommend 미변경 | 명세 §6 — "교체 = TrainSkeletonModal 한 컴포넌트". 회귀 0: `onTrain(rec)`/executable·advisory 분리·"← Page 4로 돌아가기" 링크 모두 보존. 25줄 dead code 보존하면 cruft — `git rm`이 깔끔 |
+| D-152 | `GET /api/model/{sid}/data_profile` 신설 — `build_eda_profile`(3a, LLM 0) 그대로 호출, 컬럼 메타만 반환. `/eda/plan`(LLM e4b 9초) 재호출 회피 | 타겟 드롭다운에 LLM 불필요(parquet 메타만). 명세 §2 — "Page 6에서 /eda/plan 재호출 비효율". `_pick_eda_target`(3a) 재사용 — 비-이미지 모듈 자동 선택. LLM 0 audit: data_profile은 generate 호출 0 |
+| D-153 | TrainModal task 분기: 지도(`regression`/`classification`) = 타겟 컬럼 드롭다운(/data_profile + 필터) + KPI(R²/RMSE 또는 Acc/F1/AUC) + (분류만)confusion matrix + feature importance / 비지도(`anomaly`) = 타겟 없음 + contamination 슬라이더(0.01~0.5, step 0.01) + KPI(전체/이상치/이상 비율/contamination) + score 분포 | 각 모델에 맞는 입력·결과. 비지도(IsolationForest)에 타겟 강요 안 함(D-143 백엔드 분기와 정합). 사용자 인지 명확 — 모달에 "task" 라벨 표시 |
+| D-154 | Confusion Matrix = 자체 CSS 그리드 + 색 농도(`agents/eda`/3b recharts 의존성 0). 대각선(정답) = `--c-quality` 초록 농도 `rgba(22,163,74, 0.15+ratio*0.55)`, 오답 = `--c-maintenance` 주황 농도 `rgba(234,88,12, 0.10+ratio*0.45)`. 셀 hover 툴팁 + 대각선 셀 font-weight 강조 | recharts에 heatmap 컴포넌트 없음 — SVG/외부 라이브러리 도입 회피(D-118 일관). CSS Grid `gridTemplateColumns: auto repeat(N, 1fr)`로 n×n + 라벨 헤더·행 자동. 불균형 시각화(FAIL 못 잡음 = 좌하단 비대각) 즉시 보임 |
+| D-155 | 3b 차트 재사용: `Histogram`(score 분포 — bins/counts 형태 1:1), `CorrelationBar`(feature importance — 어댑터 `{target_column:'중요도', columns:features, values:importances}`). 단 `ChartCard` 디스패처(`CHART_TYPE_IDS` frozenset)는 **EDA 전용 유지** — Page 6은 컴포넌트만 import | 환각 방어 contract(D-120/D-132) 보호 — CHART_TYPES에 train 차트 추가하면 EDA LLM이 학습 chart_type을 추천해 의미 충돌. 컴포넌트만 재사용(데이터 어댑터로 형태 맞춤) → 코드 재사용 + contract 분리 |
+| D-156 | 폴링: `setInterval` 1초 간격(`/train/status` → 완료 시 `/train/result`). cleanup 다중 안전 — (a) 모달 unmount `useEffect` cleanup, (b) 사용자 닫기 클릭 `closeAndStop`, (c) 새 학습 시작 시 `stopPolling` 재설정, (d) "다시 학습"·완료 모두 stopPolling. `pollRef = useRef(null)` + `clearInterval(pollRef.current); pollRef.current=null` 패턴 | 메모리 누수 0. 진행 표시 `train-progress`에 job_id 8자 표시(D-148 lineage 추적과 일관). React Hooks 규칙 준수 — early return은 모든 useState/useEffect 호출 후 (`if (!model) return null`을 hooks 뒤로) |
+| D-157 | 타겟 컬럼 필터 (지도): regression → `c.is_numeric === true`(예: PRESS_FORCE, INJECTION VELOCITY 같은 숫자). classification → `!c.is_numeric \|\| c.n_unique <= 10`(저카디널리티/범주 — PASS_YN 같은 라벨). 드롭다운 항목 라벨 `"PASS_YN (범주 2종)"`/`"PRESS_FORCE (숫자)"` 명확 | UX — 잘못된 타겟 선택 사전 방지. ITEM_CODE(2535종) 같은 ID 컬럼은 분류 후보로 통과되지만(필터가 약함) OOM 가드(D-146)가 추가 안전. 회귀에 PASS_YN 같은 string은 백엔드 ValueError로 failed lineage |
+| D-158 | TrainModal 입력 단계 → 폴링 진행 → 결과 단계 흐름. 결과에 `notices`(화이트리스트 clamp+OOM 가드 알림) + `lineage_id` 표시. "다시 학습"으로 결과 초기화 + 같은 모달 재사용 (모달 닫지 않고 재시도) | 옵션 카드 D-111/D-135 패턴 — 사용자 결정 흐름 단일 모달 내 완결. lineage_id 8자 표시는 3a-2 freeform 결과(D-135) 패턴 일관. "완료" = closeAndStop으로 폴링 정리 + 모달 닫기 |
+
+### 구현 산출물
+- `backend/main.py` — `GET /api/model/{sid}/data_profile` 신규(`build_eda_profile` 호출, LLM 0)
+- `frontend/src/step6_modeling/TrainModal.jsx` 신규 — task 분기 + 폴링 cleanup + TrainResult 내부 컴포넌트 + Kpi 내부 컴포넌트
+- `frontend/src/step6_modeling/charts/ConfusionTable.jsx` 신규 — CSS 그리드 + 색 농도(대각선/오답) + 셀 hover title
+- `frontend/src/step6_modeling/ModelingPage.jsx` 수정 — import 교체(`TrainSkeletonModal` → `TrainModal`), `sessionId={sid}` 전달, skeleton-note 제거
+- `frontend/src/step6_modeling/TrainSkeletonModal.jsx` 삭제 (`git rm`, dead code)
+- `frontend/src/styles.css` — 신규 클래스(`.train-modal`/`.train-field`/`.train-notices`/`.train-progress`/`.train-result`/`.train-chart-block`/`.train-lineage`/`.metrics-grid`/`.kpi-card`/`.kpi-accent`/`.kpi-label`/`.kpi-value`/`.confusion-wrap`/`.confusion-title`/`.confusion-grid`/`.cm-corner`/`.cm-head`/`.cm-rowhead`/`.cm-cell`/`.cm-diag`/`.cm-off`). 기존 클래스 미수정
+
+### 검증 결과 (명세 §9 체크리스트, 브라우저 e2e + curl)
+task별 모달 UI (Playwright):
+- 지도 분류 RandomForestClassifier(press_forming.csv + quality_classification): 타겟 드롭다운 `ITEM_CODE(범주 2535종)/LOT_NO(범주 60종)/PASS_YN(범주 2종)` — 분류 필터 작동. PASS_YN 선택 후 학습 → confusion 4 cells(2×2 PASS/FAIL) + 대각선 2개(초록 농도) + 4 KPIs(Accuracy/F1/AUC/학습-검증) + importance SVG(CorrelationBar 재사용) + lineage `bcdc2265`
+- 지도 회귀 RandomForestRegressor(cnc_machine_injection + process_optimization): 타겟 드롭다운 `1ST INJECTION VELOCITY(숫자)/2ND.../3RD...` — **회귀 필터 numeric만 작동**(범주 컬럼 비표시). 학습 → KPI(R²/RMSE/학습-검증) + importance SVG + confusion 부재(정상)
+- 비지도 IsolationForest(cnc_machine_injection + predictive_maintenance): 타겟 드롭다운 없음(target select 0개), contamination 슬라이더(1개) + 슬라이더 값 변경 동작. 학습 → histogram SVG 1개(Histogram 재사용) + confusion 0개 + 4 KPIs(전체/이상치/이상 비율/contamination)
+- /data_profile end-to-end(LLM 0): 0.5초 미만 응답, `available:true` + columns 6개 + dataset_id/modality
+
+폴링 + 결과:
+- POST /train → job_id → setInterval 1초 폴링 /status → completed 전이 → /result 자동 호출 → result state set
+- "⏳ 학습 진행 중… (1초 폴링, job 8자)" 표시 가시 확인
+- 모달 닫기(완료 또는 backdrop) → cleanup → modal count = 0 확인
+- React Hooks 규칙 준수 검증 — `if (!model) return null`를 hooks 뒤로 이동 후 "Expected static flag was missing" 경고 0건
+
+시각화:
+- ConfusionTable: CSS 그리드, 대각선 `--c-quality` 농도(`rgba(22,163,74,a)`) / 오답 `--c-maintenance` 농도(`rgba(234,88,12,a)`), 셀 hover에 `실제 X → 예측 Y: V` 표시
+- score 분포: Histogram 재사용(bins/counts 1:1, column='anomaly_score')
+- feature importance: CorrelationBar 재사용(어댑터 `{target_column:'중요도', columns, values}`)
+- notices: "안전 조정·가드 알림" 박스(`.train-notices`, L2 톤 maintenance 좌측 보더). 화이트리스트(D-144) + OOM(D-146) clamp/제외 메시지 표시
+- lineage_id 8자 표시(`.train-lineage code`) — SI 추적성 시각화
+
+화이트리스트 알림:
+- "파라미터 확인"(/train/validate) → notices 영역 표시 + safe_params 노출. notices가 빈 경우 "조정 사항 없음. 안전 범위 통과."
+
+회귀 0:
+- `/recommend` 정상(rec 키 8개 그대로: name/fit_score/rationale_ko/context_reflections/task/when/from_node/advisory_only)
+- `/eda/render` 정상(class_distribution 차트 data PASS 2915/FAIL 85)
+- `frontend/src/step5_analyze/charts/ChartCard.jsx` diff 0줄 — `CHART_TYPE_IDS` 환각 방어 contract 보존(D-120 일관)
+- Page 1~5(`step1_line/`/`step2_user_input_pipeline/`/`step3_user_input_data/`/`step4_standardize/`/`step5_analyze/`) 코드 변경 0
+- styles.css 기존 클래스 미수정(139줄 추가만)
+- `git diff --stat`: backend/main.py(+27), step6_modeling/ModelingPage.jsx(±11), TrainSkeletonModal(-25 삭제), styles.css(+138) — STEP 3d 범위만
+- 강조 마커(별표) 0건 — 문서 정책 준수 (decisions.md / variable_index_v5.md)
+
+### 헌법 정합
+- "LLM 제안, 규칙 결정"의 학습 UI 완성: LLM 모델 추천(/recommend, 기존) → 사용자 타겟/contamination 선택 → 코드 학습(결정론, random_state=42) → 시각화 + lineage
+- 데이터 외부 전송 0: /data_profile은 parquet 직접 읽기, recharts는 빌드 타임 번들. LLM은 로컬 ollama
+- 추적성 시각화: lineage_id 표시 + notices 박스로 "어떤 안전 조정이 일어났는가" 사용자에게 가시화 — SI 컴플라이언스
+- 회귀 안전 (다중 레벨): TrainSkeletonModal 1개만 교체 / styles.css 신규만 / Page 1~5 0 / ChartCard 디스패처 무변경(CHART_TYPE_IDS 보호) / /recommend·/eda/* 모두 보존
+- 차트 재사용 + contract 분리(D-155): 3b 컴포넌트 재사용으로 중복 0, ChartCard 디스패처는 EDA 환각 방어 contract 그대로 — 재사용과 contract 보호 양립
+
+### STEP 3d 완료 마일스톤 (브랜치 작업, 프론트엔드)
+사용자가 Page 5에서 분석 목적을 선택하면 Page 6에서: ① LLM이 적합한 모델을 추천(fit_score) → ② 모델 카드의 "학습 시작" 클릭 → ③ task별 입력(지도=타겟 드롭다운 / 비지도=contamination 슬라이더) → ④ "파라미터 확인"으로 notices 사전 확인 → ⑤ "학습 시작" → 1초 폴링 → ⑥ 결과: KPI 카드 + (분류)confusion CSS 그리드 / (회귀)R²/RMSE / (비지도)score 분포 + feature importance + notices 박스 + lineage_id 표시. STEP 3 전체(3a EDA + 3b EDA UI + 3c 학습 백엔드 + 3d 학습 UI) 완성.
+
+다음: 별도 브랜치 — main 머지 또는 후속 기능(파라미터 수동 입력 UI · 모델 비교 · 추론 엔드포인트 등).

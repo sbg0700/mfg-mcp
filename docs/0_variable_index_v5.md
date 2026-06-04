@@ -457,6 +457,40 @@ Page 6 학습 골격(TrainSkeletonModal — 1B-3c) → 실엔진. /recommend(1B-
 
 lineage record (D-148): `transformation_type="model_train"`, `applied_by_agent="user_approved_train"`, `user_approval_id=session_id`, `can_rollback=False`. `params`에 model_name/task/metrics/params_used/notices/model_path/session_id 동봉. 실패도 동일하게 `{model_name, error, status:"failed", session_id}` 기록.
 
+### STEP 3d Page 6 학습 UI (브랜치 `feature/step3-eda-ml`, D-151~D-158)
+TrainSkeletonModal 골격(1B-3c)을 TrainModal로 교체. STEP 3c 백엔드 4 엔드포인트를 화면으로. ModelingPage·ModelCard·/recommend·Page 1~5·ChartCard EDA 디스패처 모두 보존.
+
+| 엔드포인트 | req | res 핵심 |
+|---|---|---|
+| `GET /api/model/{sid}/data_profile` (신규, D-152) | (없음) | `{available, dataset_id, modality, rows, n_cols, columns:[{name, dtype, is_numeric, n_unique, null_count, range?, mean?, std?, top_values?}]}` — LLM 0, `build_eda_profile`(3a) 재사용 |
+
+`frontend/src/step6_modeling/`:
+| 파일 | 역할 |
+|---|---|
+| `ModelingPage.jsx` | import 교체(`TrainSkeletonModal` → `TrainModal`) + `sessionId={sid}` 전달 + skeleton-note 안내문 제거 (D-151). ModelCard·executable/advisory 분리·"← Page 4로 돌아가기" 링크 보존 |
+| `ModelCard.jsx` | 미변경 — `onTrain(rec)` 부모로 전달 (rec={name, fit_score, task, when, from_node, advisory_only, rationale_ko, context_reflections}) |
+| `TrainModal.jsx` (신규) | task 분기 — 지도(`regression`/`classification`) 타겟 드롭다운 + 비지도(`anomaly`) contamination 슬라이더. /train/validate(notices 사전 확인) + /train(폴링 시작). 결과 단계 → TrainResult 렌더. React Hooks 규칙 — 모든 useState/useEffect 호출 후 `if (!model) return null` (D-156) |
+| `TrainResult` (TrainModal 내부) | task별 시각화 — regression(R²/RMSE KPI + importance) / classification(Acc/F1/AUC KPI + confusion + importance) / anomaly(KPI + score 분포). notices 박스 + lineage_id 8자 표시 |
+| `Kpi` (TrainModal 내부) | `{label, value, accent?}` — `.kpi-card`, accent시 `--c-process` 보더+값 색 |
+| `charts/ConfusionTable.jsx` (신규) | CSS 그리드 + 색 농도(D-154). props `{labels:[str], matrix:[[int]]}`. 대각선 = `rgba(22,163,74, 0.15+ratio*0.55)`(초록 농도, `.cm-diag`) / 오답 = `rgba(234,88,12, 0.10+ratio*0.45)`(주황 농도, `.cm-off`). 셀 hover `title="실제 X → 예측 Y: V"` |
+
+3b 차트 재사용 (D-155, ChartCard 디스패처 미변경):
+- `step5_analyze/charts/Histogram` — score 분포(`anomaly`) bins/counts 1:1 재사용
+- `step5_analyze/charts/CorrelationBar` — feature importance 어댑터 `{target_column:'중요도', columns:features, values:importances}`
+
+폴링 흐름 (D-156, `pollRef = useRef(null)`, 1초 setInterval):
+1. POST `/train` → `setJob({job_id, status:'running'})` → `startPolling(jobId)` → `setInterval` 등록
+2. 1초마다 GET `/train/status?job_id=` → `setJob({...status})`
+3. status가 `running` 아니면 `stopPolling()` → GET `/train/result?job_id=` → completed면 `setResult` / 실패면 `setError`
+4. cleanup: useEffect unmount / closeAndStop / 새 학습 시작 시 모두 `clearInterval(pollRef.current); pollRef.current=null`
+
+타겟 컬럼 필터 (D-157, /data_profile.columns 받은 후 클라이언트 필터):
+- `regression` → `c.is_numeric === true` (예: `PRESS_FORCE (숫자)`)
+- `classification` → `!c.is_numeric \|\| c.n_unique <= 10` (예: `PASS_YN (범주 2종)`)
+- `anomaly` → 드롭다운 미렌더 (supervised=false)
+
+styles.css 신규 클래스 (D-140 패턴 일관 — 추가만): `.train-modal`/`.train-field`/`.train-notices`/`.train-progress`/`.train-result`/`.train-chart-block`/`.train-lineage`/`.metrics-grid`/`.kpi-card`/`.kpi-accent`/`.kpi-label`/`.kpi-value`/`.confusion-wrap`/`.confusion-title`/`.confusion-grid`/`.cm-corner`/`.cm-head`/`.cm-rowhead`/`.cm-cell`/`.cm-diag`/`.cm-off`. 기존 `.modal-backdrop`/`.modal`/`.modal-actions`/`.btn`/`.chart-error` 재사용.
+
 ### `backend/llm.py` 헬퍼 (1B-3d B3, D-101)
 | 심볼 | 역할 |
 |---|---|
@@ -614,3 +648,4 @@ lineage record (D-148): `transformation_type="model_train"`, `applied_by_agent="
 - 2026-06-02: STEP 3a 반영 (브랜치 `feature/step3-eda-ml`) — Page 5 EDA 골격을 실엔진으로. 3a-1 LLM 차트 추천(`/eda/plan`) + 결정론 차트 데이터(`/eda/render`, 8 chart 종 — fft/boxplot/histogram/class_dist/correlation/scatter/pareto/rms_trend) + LLM 자연어 요약(`/eda/summary`). 3a-2 자연어 코드 EDA(`/eda/freeform` + `/eda/freeform/approve`) + 3중 안전(AST 화이트리스트 + builtins 차단 샌드박스 + 사용자 승인 + lineage). `agents/eda/__init__.py`·`chart_types.py`(`CHART_TYPES`·`CHART_TYPE_IDS` frozenset·`FUNCTION_CHART_GUIDE`)·`eda_engine.py`(`build_eda_profile`·`compute_chart_data`·`llm_recommend_charts`·`llm_chart_summary`·가드 4종)·`code_sandbox.py`(`ALLOWED_NODES`·`FORBIDDEN_NAMES`·`validate_eda_code`·`sandbox_exec`) 신규. `_pick_eda_target` 헬퍼 + `sys.path.insert(0, ROOT/"agents"/"eda")` (D-130). D-118~D-130 결정. parquet 직접 로드(MCP 7도구 계약 무손상) / scipy 미도입(numpy.fft) / inspection-image EDA 제외 / 회귀 0(`/select`·`/questions`·`/aggregate_context` 불변)
 - 2026-06-02: STEP 3b 반영 (브랜치 `feature/step3-eda-ml`) — Page 5 EDA 차트 UI 실엔진. recharts ^3.8.1 도입(빌드 타임 번들, 런타임 외부 호출 0). `step5_analyze/charts/` 9 파일(ChartCard 디스패처 + 8 차트 컴포넌트 + common.js). BoxPlot은 ComposedChart + ErrorBar(D-133). `FreeformEda.jsx` 자연어 EDA UI(코드 미리보기 → 승인/취소 → 결과+lineage_id). AnalyzePage skeleton 한 블록만 교체 + savedResult 복원(D-138) + key_findings details 폴딩(D-139). styles.css 신규 클래스만(D-140). D-131~D-140 결정. 사용자 명시 클릭 모델(D-134, /plan 자동 호출 X), AI 요약 차트별 클릭만(D-136). 회귀 0(/select·QuestionRadioGroup·"다음→Page 6" 링크·다른 페이지 모두 보존)
 - 2026-06-02: STEP 3c 반영 (브랜치 `feature/step3-eda-ml`) — Page 6 ML 학습 실엔진(백엔드). `/api/model/{sid}/train/validate`·`/train`·`/train/status`·`/train/result` 4 신규 엔드포인트(`/recommend` 보존, 회귀 0). `agents/ml/` 신규 패키지(`train_models.py`·`param_whitelist.py`·`train_engine.py`). task 분기 — regression(R²/RMSE+importance) / classification(Acc/F1/AUC+confusion+importance) / anomaly(IsolationForest, n_anomaly+score_distribution). 파라미터 화이트리스트 clamp+notice(`ALLOWED_PARAMS`, D-144). `random_state=42` 고정(D-145). OOM 가드 — 카테고리 100+ 제외 + row 20만+ 샘플링(D-146). `asyncio.to_thread` 백그라운드(이벤트 루프 비차단, D-147). lineage `model_train` 성공·실패 모두 기록(D-148). 도커 재빌드(scikit-learn 1.5.2/xgboost 2.1.3/imbalanced-learn 0.12.4/joblib 1.4.2 — CPU 학습). D-141~D-150 결정. Page 1~5 영향 0, advisory_only(CNN 등) 자동 차단.
+- 2026-06-02: STEP 3d 반영 (브랜치 `feature/step3-eda-ml`) — Page 6 학습 UI 실엔진. `TrainSkeletonModal` 삭제(`git rm`) → `TrainModal.jsx` 신규(task 분기: 지도 타겟 드롭다운+confusion / 비지도 contamination 슬라이더+score 분포). `ConfusionTable.jsx` 신규(CSS 그리드 + 색 농도 — 대각선 quality 초록 / 오답 maintenance 주황, D-154). `GET /api/model/{sid}/data_profile` 신규(LLM 0, build_eda_profile 재사용 — `/eda/plan` LLM 9초 회피, D-152). 3b 차트 재사용 — Histogram(score), CorrelationBar(importance 어댑터) — ChartCard EDA 디스패처 무변경(CHART_TYPE_IDS 환각 방어 contract 보호, D-155). 폴링 1초 + setInterval cleanup 다중 안전(D-156, React Hooks 규칙 준수). ModelingPage·ModelCard·/recommend 보존(회귀 0). styles.css 신규 클래스만(D-140 일관). D-151~D-158 결정. Page 1~5 영향 0.
