@@ -10,7 +10,7 @@
 >
 > **상위 문서**: 설계 근거·이유는 `0_resource_blueprint_phase1_v0_1.md`(이하 blueprint). 충돌 시 **blueprint(설계)
 > 우선**, 본 문서는 그 아래 고정값 계약. 작업 규칙은 `2_TEAMMATE_claude_memory.md`. 상세 방법론 원본은
-> `1_BG_TROUBLESHOOT_llm_resource_optimization.md`.
+> `BG_TROUBLESHOOT_llm_resource_optimization.md`.
 >
 > **Snapshot**: 2026-06-02 v0_1 (측정 코드 미작성 / 측정 미시작 / 서명 전).
 >
@@ -326,7 +326,7 @@ sampler_on(bool), git_commit, notes
 |---|---|---|---|
 | 1 | 프롬프트 텍스트 P1/P2/P3 + 각 sha256 | byeonggab89 | §2-3, HO1 전 |
 | 2 | 핀 커밋 해시 (STEP 1B 완료) | byeonggab89 | §2-3 |
-| 3 | e2b pull 시점 | 단독창 협의 | HO1 |
+| 3 | e2b pull (공유 데몬 모델스토어 쓰기 → admin/byeonggab89 조율. CLI 불가[실측]/HTTP `/api/pull`은 가능성 `[추론: HO1 확인]`. pull 1회로 공유) | admin/byeonggab89 조율 | HO1 |
 | 4 | num_gpu 스윕 단계값 | myeongsun97 | HO1 (적재 보고 후) |
 | 5 | cooldown 초 | myeongsun97 | HO1 (발열 측정 후) |
 | 6 | 26b 박스 quiesce 강도 | 팀원 협의 | HO1 전 |

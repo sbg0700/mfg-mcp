@@ -4,7 +4,7 @@
 > 모델링·코드생성)는 phase-1 완료 후 STEP 3에서 별도 핸드오프(`1_HO*_phase2_*`).
 >
 > **상위 문서**: 설계=`0_resource_blueprint_phase1_v0_1.md`(해당 Part 참조) / 고정값=`0_resource_protocol_phase1_v0_1.md`(해당 § 참조)
-> / 작업 규칙=`2_TEAMMATE_claude_memory.md` / 방법론 원본=`1_BG_TROUBLESHOOT_llm_resource_optimization.md`.
+> / 작업 규칙=`2_TEAMMATE_claude_memory.md` / 방법론 원본=`BG_TROUBLESHOOT_llm_resource_optimization.md`.
 > 충돌 시 **blueprint(설계) > protocol(고정값) > 본 문서(실행)** 순. 본 문서는 그 둘을 실행으로 옮길 뿐, 값을 새로 만들지 않는다.
 >
 > **Snapshot**: 2026-06-02 v0_1 (측정 코드 미작성 / 측정 미시작 / protocol §12 서명 전).
@@ -48,7 +48,7 @@ HO2 계측 도구 ──(검증 통과한 sampler·poller·battery·join·DuckDB
 |---|---|---|
 | 1·2 | 프롬프트 P1/P2/P3 텍스트·sha256 + 핀 커밋(STEP 1B 완료) | HO1 (byeonggab89) |
 | 9·10 | num_ctx 적재 기본값 / 데이터셋 실재화 | **HO1 — 측정 전 선결** |
-| 3 | e2b pull | HO1 (단독창) |
+| 3 | e2b pull (공유 데몬 — admin/byeonggab89 조율, pull 경로 HO1 확인) + 적재확인은 단독창 | HO1 |
 | 6 | 26b 박스 quiesce 강도 | HO1 전 (팀원 협의) |
 | 4·5 | num_gpu 스윕 단계값 / cooldown 초 | HO1 (진단 중 확정) |
 | 8 | Q3/Q2 pull 여부 (→ §5-3 활성화) | HO1 진단 후 |
@@ -72,7 +72,7 @@ protocol §1(모델)·§2(프롬프트·데이터셋)·§3(제어값)·§9-4(T=6
 1. **데이터셋 실재화 (OPEN10)** — `generate.py` 고정 seed 재생성 **또는** `monitoring/fixtures/` 커밋. 실제 파일명 확정 + sha256 기록(protocol §2-2). *재현 안 되면 이후 전부 무의미 → 1번.*
 2. **프롬프트 캡처 (OPEN1·2)** — byeonggab89가 핀 커밋(STEP 1B 완료)에서 P1/P2/P3 payload 캡처 → `monitoring/prompts/{P1,P2,P3}.json` + sha256. AggregatedContext 동일 스냅샷 포함.
 3. **환경 확정** — `pynvml`/`psutil` userspace import 검증 / `nproc`·swap·KV 동작 확인 / **num_ctx 적재 기본값 확인 (OPEN9)**: `/api/ps` + (가능 시 byeonggab89 적재로그). *4096 가정 금지 — 실제값 확정.*
-4. **e2b pull (OPEN3)** — 단독창에서. pull 후 `/api/ps`로 GPU 100% 적재 확인.
+4. **e2b pull (OPEN3)** — **공유 Ollama 데몬(`localhost:11434`) 모델스토어에 쓰는 작업이라 admin/byeonggab89 조율**로 pull. pull 경로는 HO1에서 확인: CLI는 불가(바이너리 없음 [실측]), **HTTP `POST /api/pull`은 데몬이 대신 수행하므로 read 권한자도 트리거 가능할 수 있음 `[추론: HO1 확인]`** — 다만 공유 자원 쓰기라 어느 경로든 조율. pull 후 `/api/tags`에 `gemma4:e2b` 뜨는지 확인 → 단독창에서 `/api/ps`로 GPU 100% 적재 확인. *모델은 공유 데몬이 서빙하므로 내 홈 별도 적재 불필요 — pull 1회로 공유.*
 5. **[서명 게이트] protocol §12** — OPEN 1·2·9·10·6 채워지면 protocol 완성 → myeongsun97 + byeonggab89 서명. **서명 후 진단 측정 시작**(§0-3).
 6. **num_gpu 스윕 ①진단 (OPEN4)** — e4b × P1, `num_gpu` 현재→상향 단계. 각 단계 `(size_vram via /api/ps, decode tok/s via in-band, OOM)` 기록 → **(A) 회수 가능 vs (B) 구조적 CPU 핀 판정** + 최적 num_gpu 1값 선정(blueprint Part 6-1).
 7. **e2b 품질 스모크 (go/no-go)** — e2b × P1·P2·P3 × 1~2회, JSON 파싱·추천 합리성만. **미통과 시 "8GB→e2b 권장" 서사 보류**(blueprint Part 6-5).
