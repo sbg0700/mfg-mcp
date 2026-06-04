@@ -8,7 +8,7 @@
 
 ## 0. 작업 정체성
 - **담당**: LLM 리소스 모니터링·프로파일링 + Ollama 자원 할당 최적화 (한계 하드웨어 RTX 3070 8GB).
-- **상세 설계도**: `docs/specs/TROUBLESHOOT_llm_resource_optimization.md` (이 문서가 작업 명세).
+- **작업 명세**: phase-1 설계 3종 — `monitoring/docs/0_resource_blueprint_phase1_v0_1.md`(설계·단일 진실원본) / `0_resource_protocol_phase1_v0_1.md`(고정값 계약) / `1_HO_all_phase1_v0_1.md`(실행 핸드오프). 진입 = `0_resource_README_v0_1.md`. 상세 방법론 원본 = `monitoring/docs/BG_TROUBLESHOOT_llm_resource_optimization.md`.
 - **작업 브랜치**: `feature/llm-profiling` (이 브랜치에서만 작업).
 
 ---
@@ -48,10 +48,10 @@
 
 ### 3-1. 기본 — 새 Py 파일로
 - 프로파일러·샘플러·분석·벤치마크는 **새 파일**로 만든다. 기존 파일 수정 최소화.
-- 권장 위치: `monitoring/` 또는 `tools/profiling/` 디렉터리 신설 (본진 코드와 물리적 분리).
+- 권장 위치: `monitoring/` 디렉터리 (본진 코드와 물리적 분리).
   - 예: `monitoring/llm_resource_sampler.py`, `monitoring/ps_poller.py`, `monitoring/bench_battery.py`,
        `monitoring/analyze_logs.py`
-- 로그 출력도 별도 디렉터리: `logs/profiling/` (gitignore 대상 — 측정 데이터는 커밋 안 함).
+- 로그 출력도 별도 디렉터리: `monitoring/logs/` (gitignore 대상 — 측정 데이터는 커밋 안 함).
 
 ### 3-2. 불가피한 기존 파일 수정 — 격리·최소·사전 공유
 설계도상 `backend/llm.py`의 `generate()`에 PROFILE 훅(call_id, origin_ts_ns)이 필요하다. 이건 기존 파일 수정이므로:
@@ -69,7 +69,7 @@
 - `frontend/` — STEP 2b(설계자)가 작업. UI 리소스 표시가 필요하면 설계자와 별도 협의.
 - `catalogs/`, `harness/` — 설계 헌법 영역.
 - `docs/decisions.md` — 설계자가 관리. 팀원 결정은 트러블슈팅 문서 안에 기록.
-→ 측정은 "본진을 관측"하되 "본진을 바꾸지 않는다" (사이드카 원칙, 설계도 §3-1 방식 ii).
+→ 측정은 "본진을 관측"하되 "본진을 바꾸지 않는다" (사이드카 원칙, blueprint Part 4-3).
 
 ---
 
@@ -82,6 +82,7 @@
   `127.0.0.1` bind 한정 + 인증 적용, 기존 점유 포트(P2 `6380`/`8001` 등) 회피, 포트 번호는
   사전 확인 후 지정. 외부 노출 0 — 본체 헌법 §4("외부 노출은 고객용 웹 대시보드뿐")와 정합하며,
   이 모니터링 대시보드는 고객 노출 대상이 아니라 **내부 개발·측정 도구**다.
+- **현재 상태**: 신규 포트·관찰성 스택·측정 컨테이너는 **미도입** — 측정은 userspace HTTP(`/api/*`) + nvidia-smi/pynvml/psutil만(blueprint Part 1-4·7-2). 위 규칙은 향후 도입 시의 조건부 안전장치다.
 
 ---
 
@@ -99,7 +100,7 @@ git log --oneline -3          # 현재 위치 확인
 ---
 
 ## 6. 완료·보고
-- 트러블슈팅 결과(트레이드오프 표, 최적화 전후, 서사 문서)는 `docs/specs/` 또는 `monitoring/`에 정리.
+- 트러블슈팅 결과(트레이드오프 표, 최적화 전후, 서사 문서)는 `monitoring/docs/`에 정리.
 - 본진 수정분(llm.py 훅 등)은 설계자에게 별도 보고 → 머지 전 검토.
 - main 병합은 나중에 GitHub PR로 (설계자와 함께). 팀원 단독 main push 금지.
 
