@@ -1296,6 +1296,33 @@ async def _run_train_job(job_id: str, dataset_id: str, req: TrainReq) -> None:
         )
 
 
+@app.get("/api/model/{session_id}/data_profile")
+async def model_data_profile(session_id: str) -> dict:
+    """STEP 3d — 타겟 컬럼 드롭다운용 경량 메타. LLM 0 (parquet 읽기만).
+    /eda/plan(LLM 9초)을 Page 6에서 재호출하는 비효율 회피. 3a `build_eda_profile` 재사용."""
+    from session_store import get_session
+    from eda_engine import build_eda_profile
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "available": False,
+                "reason": "EDA/학습 대상 데이터 없음 (표준화 미완료 또는 이미지 모달리티)"}
+    profile = build_eda_profile(dataset_id, modality)
+    if not profile.get("available"):
+        return {"session_id": session_id, "available": False,
+                "reason": profile.get("reason"),
+                "dataset_id": dataset_id, "modality": modality}
+    return {
+        "session_id": session_id, "available": True,
+        "dataset_id": dataset_id, "modality": modality,
+        "rows": profile.get("rows"), "n_cols": profile.get("n_cols"),
+        "columns": profile.get("columns", []),
+    }
+
+
 @app.post("/api/model/{session_id}/train")
 async def model_train(session_id: str, req: TrainReq) -> dict:
     """STEP 3c — 학습 시작. 백그라운드 task 생성, job_id 즉시 반환.
