@@ -17,12 +17,15 @@ from pathlib import Path
 
 # 레포 루트를 path에 (harness, schemas import)
 ROOT = Path(__file__).resolve().parent.parent.parent
-for p in (str(ROOT), str(ROOT / "agents" / "planner"), str(ROOT / "backend")):
+for p in (str(ROOT), str(ROOT / "agents" / "planner"),
+          str(ROOT / "agents" / "executor"),  # STEP 2a: balance_options import 위해
+          str(ROOT / "backend")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 from harness.guardrails import OPERATION_PERMISSION, Permission  # noqa: E402
 from planner_schemas import PlanStep, PreprocessingPlan  # noqa: E402
+from balance_options import BALANCE_OPTIONS  # noqa: E402 — STEP 2a 코드 고정 옵션 풀
 
 
 def _permission_for(operation: str) -> str:
@@ -188,6 +191,9 @@ async def plan(data_profile: dict, constraints: dict | None = None,
         op = cand["operation"]
         if op not in OPERATION_PERMISSION:
             continue  # 안전장치 (후보는 이미 유효하지만 이중 검증)
+        # ★STEP 2a (D-103): balance_classes step에 옵션 풀 첨부 (LLM 0 — 코드 고정 목록).
+        # 미리보기(preview)는 df가 필요하므로 execute_pipeline의 suspend 직전에 채움 (D-104).
+        available_options = list(BALANCE_OPTIONS) if op == "balance_classes" else []
         steps.append(PlanStep(
             order=i, operation=op, target_column=cand.get("target_column"),
             permission_level=_permission_for(op),
@@ -196,6 +202,7 @@ async def plan(data_profile: dict, constraints: dict | None = None,
             semantic_group=cand.get("semantic_group"),
             group_members=cand.get("group_members", []),
             strategy=cand.get("strategy"),
+            available_options=available_options,
         ))
 
     requires_approval = any(s.permission_level in ("L2", "L3") for s in steps)

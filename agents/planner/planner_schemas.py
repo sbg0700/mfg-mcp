@@ -40,11 +40,17 @@ class PlanStep(BaseModel):
     semantic_group: str | None = None
     group_members: list[str] = Field(default_factory=list)
     strategy: str | None = None
+    # ★STEP 2a (D-103): 옵션 카드 — strategy 식별자 방식.
+    # available_options: 코드 고정 옵션 풀(LLM 생성 X). preview: 결정론 미리보기(LLM 0).
+    # balance_classes에만 채워지고 다른 step은 빈 채로 — 회귀 0.
+    available_options: list[dict] = Field(default_factory=list)
+    preview: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def step_key(self) -> str:
         """순서(order)와 무관한 안정적 식별자. 승인 매칭에 사용.
-        order는 LLM이 매번 다르게 배열할 수 있어 승인이 어긋남 → operation+대상으로 고정."""
+        order는 LLM이 매번 다르게 배열할 수 있어 승인이 어긋남 → operation+대상으로 고정.
+        ★STEP 2a: 옵션 선택은 step_key를 바꾸지 않음 — 기존 승인 누적과 호환.★"""
         target = self.semantic_group or self.target_column or "global"
         return f"{self.operation}:{target}"
 

@@ -22,6 +22,8 @@ export default function StandardizePage() {
   const [toast, setToast] = useState('')
   const [loadErr, setLoadErr] = useState('')
   const [dismissedAlarms, setDismissedAlarms] = useState([])
+  // STEP 2b (D-110): 옵션 카드 선택 상태 — {step_key: option_id}. ApprovalCard에 전달.
+  const [selectedOptions, setSelectedOptions] = useState({})
 
   // 진입 시 GET /sessions/{id}로 복원 — 이미 completed면 aggregated_context 같이 가져오기
   useEffect(() => {
@@ -67,10 +69,17 @@ export default function StandardizePage() {
     }
   }
 
-  async function onApprove(step_key, stage_order, module_index) {
+  // STEP 2b: 옵션 카드에서 사용자가 옵션을 1개 클릭할 때 호출 ({step_key: option_id} 누적)
+  function onSelectOption(step_key, option_id) {
+    setSelectedOptions((prev) => ({ ...prev, [step_key]: option_id }))
+  }
+
+  async function onApprove(step_key, stage_order, module_index, selected_option = null) {
     setBusy(true)
     try {
-      await post(`/pipeline/${sid}/approve`, { step_key, stage_order, module_index })
+      // STEP 2b: 옵션 있는 step은 selected_option 동봉. 백엔드 STEP 2a가 BALANCE_OPTION_IDS로 필터.
+      await post(`/pipeline/${sid}/approve`,
+                 { step_key, stage_order, module_index, selected_option })
       // 세션 갱신해 approved_step_keys 반영
       await refresh()
     } catch (e) {
@@ -84,8 +93,10 @@ export default function StandardizePage() {
     setBusy(true)
     try {
       for (const s of remainingSteps) {
+        // STEP 2b: 옵션 있는 step은 selectedOptions에서 꺼냄 (강제 선택 가드는 ApprovalCard가)
+        const sel = selectedOptions[s.step_key] || null
         await post(`/pipeline/${sid}/approve`,
-                   { step_key: s.step_key, stage_order, module_index })
+                   { step_key: s.step_key, stage_order, module_index, selected_option: sel })
       }
       await refresh()
     } catch (e) {
@@ -195,6 +206,8 @@ export default function StandardizePage() {
             pending={pending}
             approvedKeys={view.approved_step_keys}
             busy={busy}
+            selectedOptions={selectedOptions}
+            onSelectOption={onSelectOption}
             onApprove={onApprove}
             onApproveAll={onApproveAll}
             onResume={onResume}

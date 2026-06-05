@@ -27,6 +27,8 @@ sys.path.insert(0, str(ROOT / "agents" / "planner"))
 sys.path.insert(0, str(ROOT / "agents" / "executor"))
 sys.path.insert(0, str(ROOT / "agents" / "validator"))
 sys.path.insert(0, str(ROOT / "agents" / "aggregator"))   # STEP 1B-2b
+sys.path.insert(0, str(ROOT / "agents" / "eda"))          # STEP 3a
+sys.path.insert(0, str(ROOT / "agents" / "ml"))           # STEP 3c
 sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
@@ -268,6 +270,36 @@ _NODE_MODALITY: dict[str, str] = {
 }
 
 
+# ★STEP 2a (D-104): suspend 시 balance_classes 미리보기용 df 로드.
+#   Executor의 데이터 로더(_resolve / _load_eventlog)를 재사용 — 일관성 유지.
+#   balance_classes pending step이 없으면 로드 자체를 건너뜀(불필요 I/O 회피).
+def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict]):
+    """미리보기 필요시에만 df 로드 (balance_classes pending step 있을 때).
+    실패해도 파이프라인은 계속 (preview만 빠짐). LLM 0 — 순수 데이터 I/O."""
+    if not any(s.get("operation") == "balance_classes" and s.get("target_column")
+               for s in pending_steps):
+        return None
+    try:
+        import pandas as pd
+        if modality in ("timeseries", "order"):
+            from executor import _resolve
+            path = _resolve(dataset_id, modality)
+            for enc in ("utf-8-sig", "cp949", "latin1"):
+                try:
+                    return pd.read_csv(path, encoding=enc, low_memory=False)
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            return None
+        if modality == "event-log":
+            from executor import _load_eventlog
+            df, _path, _n = _load_eventlog(dataset_id)
+            return df
+        # inspection-image: balance_classes 의미 없음
+        return None
+    except Exception:
+        return None
+
+
 def _resolve_modality(module: dict, node_id: str | None = None) -> str:
     """모듈/노드에서 modality 결정. 우선순위:
     1) module["modality"] 명시,
@@ -501,6 +533,31 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 ]
                 if unapproved:
                     session["status"] = "awaiting_approval"
+                    # ★STEP 2a (D-104): balance_classes pending step에 available_options + 결정론 미리보기 첨부.
+                    #   df는 미리보기 시점에만 로드 (Executor와 별개 — 가벼움). LLM 호출 없음.
+                    preview_df = _maybe_load_df_for_preview(dataset_id, modality, unapproved)
+                    pending_steps_payload = []
+                    for s in unapproved:
+                        ps = {
+                            "step_key": s.get("step_key"),
+                            "order": s.get("order"),
+                            "operation": s.get("operation"),
+                            "permission_level": s.get("permission_level"),
+                            "target_column": s.get("target_column"),
+                            "semantic_group": s.get("semantic_group"),
+                            "rationale": s.get("rationale"),
+                            "available_options": s.get("available_options", []),
+                        }
+                        # balance_classes에만 preview 채움 (다른 step은 빈 채로 — 회귀 0)
+                        if (s.get("operation") == "balance_classes" and preview_df is not None
+                                and s.get("target_column")):
+                            try:
+                                from balance_options import compute_balance_preview
+                                ps["preview"] = compute_balance_preview(preview_df, s["target_column"])
+                            except Exception as _e:
+                                ps["preview"] = {"applicable": False,
+                                                 "reason": f"preview 계산 실패: {_e}"}
+                        pending_steps_payload.append(ps)
                     session["pending"] = {
                         "stage_order": so,
                         "node_id": node_id,
@@ -509,15 +566,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                         "dataset_id": dataset_id,
                         "modality": modality,
                         "plan": plan_result,
-                        "pending_steps": [{
-                            "step_key": s.get("step_key"),
-                            "order": s.get("order"),
-                            "operation": s.get("operation"),
-                            "permission_level": s.get("permission_level"),
-                            "target_column": s.get("target_column"),
-                            "semantic_group": s.get("semantic_group"),
-                            "rationale": s.get("rationale"),
-                        } for s in unapproved],
+                        "pending_steps": pending_steps_payload,
                     }
                     save_session(req.session_id, session)
                     return {"status": "awaiting_approval",
@@ -525,8 +574,11 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                             "session": public_view(session)}
 
                 # 4) Executor (전부 승인됨) + Validator (사후 6종)
+                # ★STEP 2a (D-103): 세션에 저장된 옵션 선택을 Executor로 전달 (balance_classes 분기).
+                selected_options = session.get("selected_options") or {}
                 execution = await run_execute(plan_result, approved_keys=approved,
-                                              modality=modality)
+                                              modality=modality,
+                                              selected_options=selected_options)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
                 validation["pre_validation"] = pre_validation  # 사전 결과도 첨부
@@ -584,21 +636,32 @@ class ApproveReq(BaseModel):
     step_key: str
     stage_order: int | None = None    # 참고/로깅용
     module_index: int | None = None
+    # ★STEP 2a (D-103): 옵션 카드 선택 결과 (balance_classes 등). 없으면 옵션 무관 작업.
+    selected_option: str | None = None
 
 
 @app.post("/api/pipeline/{session_id}/approve")
 async def pipeline_approve(session_id: str, req: ApproveReq) -> dict:
     """단건 승인 — step_key를 누적 승인 목록에 추가.
-    resume은 클라이언트가 /api/execute_pipeline 재호출로 트리거 (폴링형, D-51)."""
+    resume은 클라이언트가 /api/execute_pipeline 재호출로 트리거 (폴링형, D-51).
+    ★STEP 2a (D-103): selected_option이 오면 허용 옵션 집합(BALANCE_OPTION_IDS)만 저장.
+    허용 외 값은 무시(환각 방어). 옵션 없는 step은 selected_option=None 그대로 동작."""
     from session_store import get_session, save_session
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
     if req.step_key not in session["approved_step_keys"]:
         session["approved_step_keys"].append(req.step_key)
+    # ★옵션 저장 — 환각 방어 필터 (허용된 옵션 id만 통과)
+    if req.selected_option:
+        from balance_options import BALANCE_OPTION_IDS
+        if req.selected_option in BALANCE_OPTION_IDS:
+            session.setdefault("selected_options", {})[req.step_key] = req.selected_option
+        # 허용 외 옵션은 조용히 무시 (저장 안 함) — 환각·오타·악의적 입력 방어
     save_session(session_id, session)
     return {"approved": True, "step_key": req.step_key,
             "approved_count": len(session["approved_step_keys"]),
+            "selected_option": (session.get("selected_options") or {}).get(req.step_key),
             "stage_order": req.stage_order, "module_index": req.module_index}
 
 
@@ -774,6 +837,565 @@ async def analyze_select(session_id: str, req: AnalyzeSelectReq) -> dict:
     save_session(session_id, session)
     return {"session_id": session_id, "analysis_purpose": req.analysis_purpose,
             "function_axis": fn_axis, "free_input": req.free_input}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STEP 3a — Page 5 EDA 실엔진 (LLM 판단 + 코드 실행)
+# ─────────────────────────────────────────────────────────────────────────
+# 3원칙:
+#   ① LLM이 어떤 차트가 필요한지 추천 (제안)       → /eda/plan
+#   ② 코드가 결정론으로 차트 데이터 계산 (LLM 0)    → /eda/render
+#   ③ LLM이 한국어로 차트 요약 (숫자 인용만)         → /eda/summary
+# 데이터 출처: data/processed/{dataset_id}__processed.parquet (Executor 산출물).
+# inspection-image 모달리티는 EDA 제외 (skeleton 유지).
+
+
+def _pick_eda_target(session: dict) -> tuple[str | None, str | None]:
+    """세션의 module_results에서 EDA 대상 (dataset_id, modality)을 선택.
+    inspection-image는 제외 (EDA 의미 없음). 첫 번째 비-이미지 모듈을 채택."""
+    results = session.get("module_results") or {}
+    # 모듈 키 정렬 (stage_order.module_index)
+    def _key(k: str) -> tuple[int, int]:
+        try:
+            a, b = k.split(".", 1)
+            return int(a), int(b)
+        except (ValueError, AttributeError):
+            return -1, -1
+    for mk in sorted(results.keys(), key=_key):
+        mr = results[mk] or {}
+        mod = mr.get("modality")
+        ds = mr.get("dataset_id")
+        if mod == "inspection-image":
+            continue
+        if ds and mod:
+            return str(ds), str(mod)
+    return None, None
+
+
+class EdaPlanReq(BaseModel):
+    # 명시 override (옵션) — 보통은 user_intent.function_axis_focus 사용
+    function_axis: str | None = None
+
+
+class EdaRenderReq(BaseModel):
+    charts: list[dict]   # eda_plan에서 추천된 항목 그대로 (chart_type, target_column, ...)
+
+
+class EdaSummaryReq(BaseModel):
+    chart_type: str
+    stats: dict
+    findings: list[dict] | None = None
+
+
+@app.post("/api/analyze/{session_id}/eda/plan")
+async def eda_plan(session_id: str, req: EdaPlanReq | None = None) -> dict:
+    """STEP 3a-1 ① LLM 차트 추천 + 환각 방어 필터. 결과는 session["eda_plan"]."""
+    from session_store import get_session, save_session
+    from eda_engine import (
+        build_eda_profile, llm_recommend_charts, filter_recommendations,
+        fallback_charts_from_guide,
+    )
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    ctx = session.get("aggregated_context") or {}
+    function_axis = (
+        (req.function_axis if req else None)
+        or (ctx.get("user_intent") or {}).get("function_axis_focus")
+        or "process"
+    )
+
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "available": False,
+                "reason": "EDA 대상 모듈 없음 (inspection-image 제외 또는 미완료)",
+                "function_axis": function_axis}
+
+    profile = build_eda_profile(dataset_id, modality)
+    if not profile.get("available"):
+        return {"session_id": session_id, "available": False,
+                "reason": profile.get("reason"),
+                "function_axis": function_axis,
+                "dataset_id": dataset_id, "modality": modality}
+
+    model = session.get("model")
+    parsed = await llm_recommend_charts(profile, ctx, function_axis, modality, model)
+
+    llm_status = "ok"
+    llm_error = None
+    if parsed.get("_llm_failed"):
+        llm_status = "failed"
+        llm_error = parsed.get("error")
+        raw_recs: list[dict] = []
+    else:
+        raw_recs = parsed.get("recommendations") or []
+
+    valid = filter_recommendations(raw_recs, modality)
+    if not valid:
+        valid = fallback_charts_from_guide(function_axis, modality)
+
+    session["eda_plan"] = valid
+    save_session(session_id, session)
+
+    return {
+        "session_id": session_id, "available": True,
+        "function_axis": function_axis, "modality": modality,
+        "dataset_id": dataset_id,
+        "recommended_charts": valid,
+        "profile": profile,
+        "llm_status": llm_status, "llm_error": llm_error,
+        "model_used": model,
+    }
+
+
+@app.post("/api/analyze/{session_id}/eda/render")
+async def eda_render(session_id: str, req: EdaRenderReq) -> dict:
+    """STEP 3a-1 ② 추천 차트의 데이터·통계 결정론 계산 (LLM 0).
+    같은 parquet + 같은 spec → 같은 결과 (재현성 보장)."""
+    from session_store import get_session, save_session
+    from eda_engine import (
+        load_processed_df, compute_chart_data,
+    )
+    from chart_types import CHART_TYPE_IDS, CHART_TYPES
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "charts": [],
+                "reason": "EDA 대상 모듈 없음"}
+
+    df = load_processed_df(dataset_id)
+    if df is None:
+        return {"session_id": session_id, "charts": [],
+                "reason": f"processed parquet 부재 ({dataset_id})"}
+
+    results: list[dict] = []
+    for spec in req.charts or []:
+        if not isinstance(spec, dict):
+            continue
+        ct = spec.get("chart_type")
+        if ct not in CHART_TYPE_IDS:
+            results.append({"chart_type": ct, "error": "허용되지 않은 chart_type",
+                            "label": None})
+            continue
+        if modality not in CHART_TYPES[ct]["modality"]:
+            results.append({"chart_type": ct, "error": f"modality '{modality}' 미지원",
+                            "label": CHART_TYPES[ct]["label"]})
+            continue
+        try:
+            data = compute_chart_data(df, ct, spec, modality)
+        except Exception as e:
+            data = {"error": f"compute_chart_data 실패: {e}"}
+        results.append({
+            "chart_type": ct,
+            "label": CHART_TYPES[ct]["label"],
+            "data": data,
+        })
+
+    session["eda_results"] = results
+    save_session(session_id, session)
+    return {"session_id": session_id, "dataset_id": dataset_id,
+            "modality": modality, "charts": results}
+
+
+@app.post("/api/analyze/{session_id}/eda/summary")
+async def eda_summary(session_id: str, req: EdaSummaryReq) -> dict:
+    """STEP 3a-1 ③ 차트 stats → 한국어 2~3문장 요약 (LLM, 환각 방어: 숫자 그대로)."""
+    from session_store import get_session
+    from eda_engine import llm_chart_summary
+    from chart_types import CHART_TYPE_IDS
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.chart_type not in CHART_TYPE_IDS:
+        raise HTTPException(400, f"unknown chart_type: {req.chart_type}")
+
+    model = session.get("model")
+    parsed = await llm_chart_summary(req.chart_type, req.stats,
+                                     req.findings or [],
+                                     session.get("analysis_purpose"), model)
+    if parsed.get("_llm_failed"):
+        return {"session_id": session_id, "chart_type": req.chart_type,
+                "llm_status": "failed", "llm_error": parsed.get("error"),
+                "model_used": model, "summary": "", "key_points": []}
+    return {"session_id": session_id, "chart_type": req.chart_type,
+            "llm_status": "ok", "model_used": model,
+            "summary": str(parsed.get("summary", "")),
+            "key_points": list(parsed.get("key_points", []) or [])}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STEP 3a-2 — 자연어 코드 생성 EDA (안전 설계)
+# ─────────────────────────────────────────────────────────────────────────
+# 4단계: ① 자연어 요청 → ② LLM 코드 생성 → ③ AST 화이트리스트 검증
+#        → ④ 미리보기 + 사용자 승인 → ⑤ 샌드박스 실행 + lineage 기록
+class EdaFreeformReq(BaseModel):
+    user_query: str           # 한국어 자연어 (예: "FAIL 케이스만 분포 보여줘")
+
+
+class EdaApproveCodeReq(BaseModel):
+    approved: bool = True     # False면 cancelled
+
+
+@app.post("/api/analyze/{session_id}/eda/freeform")
+async def eda_freeform(session_id: str, req: EdaFreeformReq) -> dict:
+    """STEP 3a-2 ①②③④ — 자연어 → LLM 코드 생성 → AST 검증 → 미리보기 (실행은 승인 후)."""
+    from session_store import get_session, save_session
+    from eda_engine import build_eda_profile
+    from code_sandbox import llm_generate_eda_code, validate_eda_code
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "status": "rejected",
+                "reason": "EDA 대상 모듈 없음"}
+
+    profile = build_eda_profile(dataset_id, modality)
+    if not profile.get("available"):
+        return {"session_id": session_id, "status": "rejected",
+                "reason": profile.get("reason")}
+
+    model = session.get("model")
+    gen = await llm_generate_eda_code(req.user_query, profile, model)
+    if gen.get("_llm_failed"):
+        return {"session_id": session_id, "status": "llm_failed",
+                "error": gen.get("error"), "model_used": model}
+
+    code = gen.get("code", "")
+    ok, reason = validate_eda_code(code)
+    if not ok:
+        return {"session_id": session_id, "status": "rejected",
+                "reason": reason, "code": code, "model_used": model,
+                "query": req.user_query}
+
+    # 승인 대기 — 코드 미리보기만 반환 (실행 X)
+    session["pending_eda_code"] = {"code": code, "query": req.user_query,
+                                   "dataset_id": dataset_id, "modality": modality}
+    save_session(session_id, session)
+    return {"session_id": session_id, "status": "awaiting_approval",
+            "code": code, "query": req.user_query, "model_used": model,
+            "dataset_id": dataset_id, "modality": modality}
+
+
+@app.post("/api/analyze/{session_id}/eda/freeform/approve")
+async def eda_freeform_approve(session_id: str, req: EdaApproveCodeReq) -> dict:
+    """STEP 3a-2 ⑤ — 승인 → 샌드박스 실행 → lineage 기록 (감사 가능).
+    실행 직전 AST 재검증(이중 안전). 거부되면 lineage 기록 없음."""
+    from session_store import get_session, save_session
+    from eda_engine import load_processed_df
+    from code_sandbox import sandbox_exec, validate_eda_code
+    from harness.lineage import record as lineage_record
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+
+    pending = session.get("pending_eda_code")
+    if not pending:
+        return {"session_id": session_id, "status": "no_pending",
+                "reason": "승인할 코드 없음 (먼저 /eda/freeform 호출)"}
+
+    if not req.approved:
+        session.pop("pending_eda_code", None)
+        save_session(session_id, session)
+        return {"session_id": session_id, "status": "cancelled"}
+
+    code = pending["code"]
+    dataset_id = pending["dataset_id"]
+
+    # 실행 직전 AST 재검증 (이중 안전 — pending 저장 후 누군가 직접 _SESSIONS 조작했을 경우 방어)
+    ok, reason = validate_eda_code(code)
+    if not ok:
+        session.pop("pending_eda_code", None)
+        save_session(session_id, session)
+        return {"session_id": session_id, "status": "rejected_at_exec",
+                "reason": reason}
+
+    df = load_processed_df(dataset_id)
+    if df is None:
+        return {"session_id": session_id, "status": "rejected_at_exec",
+                "reason": f"processed parquet 없음: {dataset_id}"}
+
+    exec_result = sandbox_exec(code, df, timeout_seconds=5)
+    if not exec_result["ok"]:
+        # 실행 실패도 lineage에 기록 (감사 — "사용자가 승인했으나 실행 실패")
+        lineage_id = lineage_record(
+            dataset_id=dataset_id,
+            transformation_type="eda_freeform_code",
+            params={"query": pending["query"], "code": code,
+                    "approved": True, "exec_error": exec_result["error"]},
+            applied_by_agent="user_approved_freeform_eda",
+            user_approval_id=session_id,
+            can_rollback=True,   # 읽기 전용이라 사실상 rollback 불필요
+        )
+        session.pop("pending_eda_code", None)
+        save_session(session_id, session)
+        return {"session_id": session_id, "status": "exec_failed",
+                "error": exec_result["error"], "lineage_id": lineage_id,
+                "code": code, "query": pending["query"]}
+
+    # 성공 — lineage 기록 (감사 가능)
+    lineage_id = lineage_record(
+        dataset_id=dataset_id,
+        transformation_type="eda_freeform_code",
+        params={"query": pending["query"], "code": code,
+                "approved": True, "result_type": exec_result["result_type"]},
+        applied_by_agent="user_approved_freeform_eda",
+        user_approval_id=session_id,
+        can_rollback=True,
+    )
+    session.pop("pending_eda_code", None)
+    # 최근 실행 결과 저장 (UI가 조회 가능하도록)
+    session["last_eda_freeform_result"] = {
+        "query": pending["query"], "code": code,
+        "result": exec_result["result"], "result_type": exec_result["result_type"],
+        "lineage_id": lineage_id,
+    }
+    save_session(session_id, session)
+    return {"session_id": session_id, "status": "executed",
+            "result": exec_result["result"], "result_type": exec_result["result_type"],
+            "lineage_id": lineage_id,
+            "code": code, "query": pending["query"]}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STEP 3c — Page 6 ML 학습 실엔진 (백그라운드 + 폴링)
+# ─────────────────────────────────────────────────────────────────────────
+# 핵심: /recommend는 그대로 (회귀 0), /train만 신설.
+# task 분기 / 화이트리스트 clamp+notice / OOM 가드 / random_state=42 / lineage.
+# CPU 학습이라 LLM(8GB VRAM)과 무관. asyncio.to_thread로 이벤트 루프 안 막음.
+
+import asyncio as _asyncio  # 별칭 — uvicorn 내부 asyncio 충돌 방지
+import uuid as _uuid
+
+# 학습 job 인메모리 저장 (세션과 별개 — 같은 패턴 _STORE/_SESSIONS)
+_TRAIN_JOBS: dict[str, dict] = {}
+
+
+class TrainReq(BaseModel):
+    model_name: str                            # TRAINABLE_MODEL_NAMES 안만 통과
+    target_column: str | None = None           # 지도학습만 (비지도는 None)
+    params: dict = {}                          # LLM/사용자 제안 — 화이트리스트로 거름
+    contamination: float = 0.05                # 비지도(IsolationForest)만
+
+
+@app.post("/api/model/{session_id}/train/validate")
+async def model_train_validate(session_id: str, req: TrainReq) -> dict:
+    """STEP 3c — 학습 전 파라미터 화이트리스트 검증 (사용자 사전 확인).
+    notices가 있으면 프론트가 "조정 후 진행/취소" 결정 받음."""
+    from session_store import get_session
+    from train_models import TRAINABLE_MODEL_NAMES
+    from param_whitelist import validate_and_clamp_params
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.model_name not in TRAINABLE_MODEL_NAMES:
+        raise HTTPException(
+            400,
+            f"학습 불가 모델 (advisory_only 또는 미지원): {req.model_name}",
+        )
+    safe, notices = validate_and_clamp_params(req.model_name, req.params)
+    return {
+        "model_name": req.model_name,
+        "safe_params": safe,
+        "notices": notices,
+        "needs_confirmation": len(notices) > 0,
+    }
+
+
+def _train_target_or_400(session: dict) -> str:
+    """학습 대상 dataset_id (3a _pick_eda_target 재사용 — 비-이미지 첫 모듈).
+    None이면 400."""
+    dataset_id, _modality = _pick_eda_target(session)
+    if not dataset_id:
+        raise HTTPException(400, "학습 대상 데이터 없음 (표준화 미완료 또는 이미지 모달리티)")
+    return dataset_id
+
+
+async def _run_train_job(job_id: str, dataset_id: str, req: TrainReq) -> None:
+    """백그라운드 학습 job 실행. CPU 블로킹은 thread executor로 위임 — 이벤트 루프 안 막음.
+    성공·실패 모두 lineage 기록 (감사 누락 0)."""
+    from train_engine import run_training
+    from harness.lineage import record as lineage_record
+
+    job = _TRAIN_JOBS.get(job_id, {})
+    try:
+        result = await _asyncio.to_thread(
+            run_training,
+            dataset_id,
+            req.model_name,
+            req.target_column,
+            req.params,
+            req.contamination,
+        )
+        # run_training이 error를 반환했으면 failed로 마크 (예: parquet 부재)
+        if result.get("status") == "error":
+            job["status"] = "failed"
+            job["error"] = result.get("error")
+            job["result"] = result
+            lineage_record(
+                dataset_id=dataset_id,
+                transformation_type="model_train",
+                params={
+                    "model_name": req.model_name,
+                    "error": result.get("error"),
+                    "status": "failed",
+                    "session_id": job.get("session_id"),
+                },
+                applied_by_agent="user_approved_train",
+                user_approval_id=job.get("session_id"),
+                can_rollback=False,
+            )
+            return
+        # 성공
+        job["status"] = "completed"
+        job["result"] = result
+        lineage_id = lineage_record(
+            dataset_id=dataset_id,
+            transformation_type="model_train",
+            params={
+                "model_name": req.model_name,
+                "task": result.get("task"),
+                "metrics": result.get("metrics"),
+                "params_used": result.get("params_used"),
+                "notices": result.get("notices"),
+                "model_path": result.get("model_path"),
+                "session_id": job.get("session_id"),
+            },
+            applied_by_agent="user_approved_train",
+            user_approval_id=job.get("session_id"),
+            can_rollback=False,
+        )
+        job["lineage_id"] = lineage_id
+        result["lineage_id"] = lineage_id
+    except Exception as e:  # 학습 중 예외 (타겟 부재/ value error 등)
+        job["status"] = "failed"
+        job["error"] = f"{type(e).__name__}: {e}"
+        lineage_record(
+            dataset_id=dataset_id,
+            transformation_type="model_train",
+            params={
+                "model_name": req.model_name,
+                "error": job["error"],
+                "status": "failed",
+                "session_id": job.get("session_id"),
+            },
+            applied_by_agent="user_approved_train",
+            user_approval_id=job.get("session_id"),
+            can_rollback=False,
+        )
+
+
+@app.get("/api/model/{session_id}/data_profile")
+async def model_data_profile(session_id: str) -> dict:
+    """STEP 3d — 타겟 컬럼 드롭다운용 경량 메타. LLM 0 (parquet 읽기만).
+    /eda/plan(LLM 9초)을 Page 6에서 재호출하는 비효율 회피. 3a `build_eda_profile` 재사용."""
+    from session_store import get_session
+    from eda_engine import build_eda_profile
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    dataset_id, modality = _pick_eda_target(session)
+    if not dataset_id:
+        return {"session_id": session_id, "available": False,
+                "reason": "EDA/학습 대상 데이터 없음 (표준화 미완료 또는 이미지 모달리티)"}
+    profile = build_eda_profile(dataset_id, modality)
+    if not profile.get("available"):
+        return {"session_id": session_id, "available": False,
+                "reason": profile.get("reason"),
+                "dataset_id": dataset_id, "modality": modality}
+    return {
+        "session_id": session_id, "available": True,
+        "dataset_id": dataset_id, "modality": modality,
+        "rows": profile.get("rows"), "n_cols": profile.get("n_cols"),
+        "columns": profile.get("columns", []),
+    }
+
+
+@app.post("/api/model/{session_id}/train")
+async def model_train(session_id: str, req: TrainReq) -> dict:
+    """STEP 3c — 학습 시작. 백그라운드 task 생성, job_id 즉시 반환.
+    환각 방어: TRAINABLE_MODEL_NAMES 외 모델 거부 (advisory_only CNN 등 자동 차단).
+    target_column 유효성은 학습 시점에 검증 (잘못된 컬럼은 failed → lineage 기록)."""
+    from session_store import get_session
+    from train_models import TRAINABLE_MODEL_NAMES
+
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    if req.model_name not in TRAINABLE_MODEL_NAMES:
+        raise HTTPException(
+            400,
+            f"학습 불가 모델 (advisory_only 또는 미지원): {req.model_name}",
+        )
+    dataset_id = _train_target_or_400(session)
+
+    job_id = str(_uuid.uuid4())
+    _TRAIN_JOBS[job_id] = {
+        "job_id": job_id,
+        "session_id": session_id,
+        "dataset_id": dataset_id,
+        "model_name": req.model_name,
+        "status": "running",
+        "result": None,
+        "error": None,
+    }
+    _asyncio.create_task(_run_train_job(job_id, dataset_id, req))
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "model_name": req.model_name,
+        "dataset_id": dataset_id,
+        "session_id": session_id,
+    }
+
+
+@app.get("/api/model/{session_id}/train/status")
+async def model_train_status(session_id: str, job_id: str) -> dict:
+    """STEP 3c — 폴링: 학습 job 현재 상태 (running/completed/failed)."""
+    job = _TRAIN_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"train job not found: {job_id}")
+    if job.get("session_id") != session_id:
+        raise HTTPException(403, "job session mismatch")
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "model_name": job["model_name"],
+        "dataset_id": job.get("dataset_id"),
+        "error": job.get("error"),
+    }
+
+
+@app.get("/api/model/{session_id}/train/result")
+async def model_train_result(session_id: str, job_id: str) -> dict:
+    """STEP 3c — 학습 결과 조회. running이면 status만, 끝났으면 result/error."""
+    job = _TRAIN_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"train job not found: {job_id}")
+    if job.get("session_id") != session_id:
+        raise HTTPException(403, "job session mismatch")
+    if job["status"] == "running":
+        return {"job_id": job_id, "status": "running"}
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "model_name": job["model_name"],
+        "result": job.get("result"),
+        "error": job.get("error"),
+        "lineage_id": job.get("lineage_id"),
+    }
 
 
 @app.get("/api/model/{session_id}/recommend")

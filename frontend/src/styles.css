@@ -201,6 +201,41 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
   font-size: 11px; font-weight: 700; min-width: 28px; text-align: center;
 }
 
+/* Option cards (STEP 2b D-110) — 기존 approval 톤 유지 (panel-2, c-process, c-quality, border) */
+.opt-group { margin-top: 10px; margin-left: 32px; }
+.opt-current { font-size: 12px; margin-bottom: 8px; }
+.opt-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+.opt-card {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px; text-align: left; cursor: pointer;
+  color: var(--text); transition: border-color 0.15s, box-shadow 0.15s;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.opt-card:hover:not(:disabled) { border-color: var(--c-process); }
+.opt-card:disabled { opacity: 0.6; cursor: not-allowed; }
+.opt-card.selected {
+  border-color: var(--c-process); border-width: 2px; padding: 9px;
+  box-shadow: 0 0 0 1px var(--c-process) inset;
+}
+.opt-card-head { display: flex; align-items: center; gap: 6px; }
+.opt-label { font-weight: 600; font-size: 13px; flex: 1; }
+.opt-badge {
+  background: var(--c-quality); color: white; font-size: 10px;
+  padding: 1px 6px; border-radius: 4px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.opt-preview {
+  font-size: 13px; font-weight: 700; color: var(--c-process);
+}
+.opt-sub { font-size: 11px; }
+.opt-desc { font-size: 11px; line-height: 1.35; }
+.opt-caution { font-size: 11px; color: var(--c-maintenance); margin-top: 2px; }
+.opt-actions { margin-top: 10px; }
+.opt-warn { margin-top: 8px; font-size: 12px; }
+
 /* Findings list */
 .findings-section { margin-top: 16px; background: var(--panel); padding: 16px 18px; border-radius: 8px; }
 .validator-summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -290,3 +325,268 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 .modal-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
 
 
+
+/* ────────────────────────────────────────────────────────── */
+/* STEP 3b — EDA 차트 UI (recharts) — 기존 다크 톤 유지        */
+/* 기존 .eda-skeleton/.skeleton-note는 더 이상 렌더 X (회귀 0)  */
+/* ────────────────────────────────────────────────────────── */
+.eda-charts {
+  margin-top: 24px;
+  background: var(--panel);
+  padding: 16px 18px;
+  border-radius: 8px;
+}
+.eda-charts h2 { margin: 0 0 8px 0; font-size: 18px; }
+.eda-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px 0; }
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.chart-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.chart-card-head strong { font-size: 13px; color: var(--text); }
+.chart-footer { font-size: 11px; margin-top: 6px; }
+.chart-error {
+  color: var(--c-maintenance);
+  font-size: 13px;
+  padding: 8px 10px;
+  background: rgba(234, 88, 12, 0.08);
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  border-radius: 4px;
+  margin-top: 4px;
+}
+.btn-sm {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+.btn-sm:hover:not(:disabled) { background: var(--panel); border-color: var(--c-process); }
+.btn-sm:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* 차트 AI 요약 — 차트 카드 내부 하단 */
+.chart-summary {
+  margin-top: 10px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  color: var(--text);
+}
+.chart-keypoints {
+  list-style: disc inside;
+  padding: 0;
+  margin: 6px 0 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.chart-keypoints li { margin: 2px 0; }
+
+/* 자연어 EDA (3a-2 화면 — 시스템 정체성) */
+.freeform-eda {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.freeform-eda h3 { margin: 0 0 4px 0; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.freeform-input { display: flex; gap: 8px; margin-top: 8px; }
+.freeform-input input {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.freeform-input input:disabled { opacity: 0.6; }
+.freeform-approve {
+  margin-top: 12px;
+  background: var(--panel-2);
+  padding: 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--c-maintenance);  /* L2 톤 — 승인 필요 */
+}
+.code-preview {
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--text);
+  margin: 0;
+  white-space: pre-wrap;
+}
+.freeform-actions { display: flex; gap: 8px; margin-top: 10px; }
+.freeform-result { margin-top: 12px; }
+.result-json {
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--text);
+  margin: 0;
+}
+
+/* key_findings collapsed (skeleton 자리 보관) */
+.findings-details { margin-top: 14px; }
+.findings-details > summary { cursor: pointer; font-size: 12px; padding: 4px 0; }
+
+/* ────────────────────────────────────────────────────────── */
+/* STEP 3d — Page 6 학습 모달 (TrainModal)                    */
+/* 기존 .modal/.modal-backdrop/.modal-actions 재사용, 신규만 */
+/* ────────────────────────────────────────────────────────── */
+.train-modal {
+  max-width: 760px;
+  width: 92%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.train-field { margin: 14px 0; }
+.train-field label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.train-field select,
+.train-field input[type="range"] {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.train-field select:disabled,
+.train-field input[type="range"]:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.train-notices {
+  margin: 12px 0;
+  background: var(--panel-2);
+  padding: 10px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--c-maintenance);
+  font-size: 12px;
+}
+.train-notices strong { display: block; margin-bottom: 4px; color: var(--text); }
+.train-notices ul { list-style: disc inside; padding: 0; margin: 4px 0 0 4px; }
+.train-notices code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.train-progress {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.train-progress code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+/* 학습 결과 */
+.train-result { margin-top: 8px; }
+.train-result h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: var(--text);
+}
+.train-chart-block { margin: 16px 0; }
+.train-lineage {
+  font-size: 11px;
+  margin: 12px 0 4px 0;
+}
+.train-lineage code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* KPI 카드 */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.kpi-card {
+  background: var(--panel-2);
+  padding: 12px 10px;
+  border-radius: 6px;
+  text-align: center;
+  border: 1px solid var(--border);
+}
+.kpi-card.kpi-accent { border-color: var(--c-process); }
+.kpi-label { font-size: 11px; }
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 2px;
+}
+.kpi-card.kpi-accent .kpi-value { color: var(--c-process); }
+
+/* Confusion Matrix (CSS 그리드) */
+.confusion-wrap { margin: 14px 0; }
+.confusion-title {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.confusion-grid {
+  display: inline-grid;
+  gap: 2px;
+  background: var(--border);
+  padding: 2px;
+  border-radius: 4px;
+}
+.cm-corner,
+.cm-head,
+.cm-rowhead,
+.cm-cell {
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 13px;
+  background: var(--panel-2);
+}
+.cm-corner { background: var(--panel-2); }
+.cm-head, .cm-rowhead {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cm-cell {
+  min-width: 56px;
+  border-radius: 3px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.cm-cell.cm-diag { font-weight: 700; }
