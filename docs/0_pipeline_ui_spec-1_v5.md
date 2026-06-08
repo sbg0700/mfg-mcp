@@ -563,110 +563,49 @@ CREATE INDEX IF NOT EXISTS idx_datalake_function ON datalake.entries(function);
 CREATE INDEX IF NOT EXISTS idx_datalake_site     ON datalake.entries(site);
 ```
 
-### 1-6. Data Lake 정책 (v4 전면 재작성)
+### 1-6. Data Lake 정책 (DL 재설계 — 전면 재작성)
 
-#### 통합 인터페이스 원칙
+#### 통합 진입점 원칙 (DB catalog 단일)
 
-사용자 입장에서 데이터 선택은 항상 동일한 동작:
+데이터 진입·셀렉·엔진 연결은 **`datalake_id` 한 가지**만 안다. 물리 경로는 `data_path` 컬럼이 추상화하므로 셀렉·엔진은 경로를 모른다. 물리 경로는 선택 항목이 아니라 `data/lake/<datalake_id>/`로 **귀결**(KAMP·신규 대등 — 핵심 메시지 정합, D-159).
 
 ```
-Page 3 데이터 선택 → Data Lake 카탈로그에서 1개 선택
+Page 3 데이터 선택 → catalog에서 1개 선택(datalake_id) → datalake.get(id) → {data_path, modality}
 ```
 
-크기 차이는 시스템 내부에서만 분기. 사용자가 "작은 건 웹, 큰 건 서버" 같은 분리 없음.
-
-#### Data Lake 디렉터리 구조
+#### 디렉터리 구조 (flat)
 
 ```
 data/lake/
-  ├── kamp/                       # 시스템 기본 제공 (KAMP 34개)
-  │   ├── L1_press_forming/
-  │   │   ├── data.csv
-  │   │   └── metadata.json       # 모달리티/인코딩/Function 힌트
-  │   ├── L1_cnc_lathe_quality/
-  │   │   ├── data.csv (386 MB)
-  │   │   └── metadata.json
-  │   └── ...
-  ├── registered/                 # 사용자가 등록한 데이터셋
-  │   ├── <datalake_id>/
-  │   │   ├── data.csv (or .zip, folder)
-  │   │   └── metadata.json
-  │   └── ...
-  └── catalog.json                # 전체 통합 인덱스 (자동 갱신)
+  ├── <datalake_id>/          # KAMP·사용자 등록 동일 패턴
+  │   └── data.csv (or folder/zip)
+  └── ...
 ```
+`data/lake/`는 외부폴더(서버) → gitignore 무관. 마이그레이션할 기존 데이터 없음(합성데이터 미생성, 클린 출발).
 
-#### KAMP 데이터셋 사전 등록
+#### 적재 (ingest) — 외부 도구
 
-시스템 첫 기동 시 자동:
-1. `data/lake/kamp/` 스캔
-2. 각 데이터셋의 `metadata.json` 읽음
-3. `datalake.entries` 테이블에 INSERT (source="kamp")
+`tools/datalake_ingest.py`: `~/FINAL/1_data` 스캔 → 메타 자동생성 → `data/lake/<id>/` 복사 + catalog INSERT. (DL-2에서 구현·KAMP 5.1G 적재.)
 
-KAMP 34개는 시스템에 사전 마운트, 사용자가 등록할 필요 없음. 사용자는 단순히 카탈로그에서 선택만.
+메타 출처(결정론, 사람 교정 가능):
+- `modality` = 파일포맷/폴더
+- `function` = L1~L4 접두사 시드 + lines.yaml
+- `site`
+- `vid` = 라인 (D-162)
 
-#### 사용자 신규 등록 (2 방식)
+KAMP 5.1G = 3 module(**metal / forming_joining / polymer** = module_1/2/3). 대부분 일반 CSV+헤더(ASCII). `order` modality 0건(데모 제외 인지). 멱등 재적재(upsert) + dry-run 먼저.
 
-| 방식 | 사용 케이스 | UX |
-|---|---|---|
-| **A. 파일 업로드** | 100MB 이하 일반 데이터 | Page 3 의 "[+ 새 등록]" → 모달 → 파일 선택 → POST `/api/datalake/register` (multipart) |
-| **B. 서버 경로 지정** | 100MB+ 대용량, 사전 준비된 데이터 | Page 3 의 "[+ 새 등록]" → 모달 → 서버 경로 입력 (`/data/lake/registered/...`) → POST `/api/datalake/register` (path mode) |
+> **★ FFT 광폭/숫자헤더 (L3 vibration):** 컬럼=주파수값(숫자헤더, 수천 개) → per-column 부적합. 적재도구·catalog는 **컬럼-그룹 descriptor**로 등록(`column_kind=group`, 예: `fft_spectrum: N개 numeric-header, 단위·범위`). 제약도 per-column이 아닌 집계/대역형 (D-161, R0 사용자 확인 완료).
 
-두 방식 모두 같은 모달, 같은 API. 사용자가 보기엔 "등록" 한 가지 동작.
+#### 결정론 modality 라우터
 
-#### `/api/datalake/list` 요청·응답
+`datalake.get(datalake_id) → {data_path, modality}` 가 데이터→엔진 경계의 단일 해석점. 기존 `_resolve`(timeseries/order) + 이미지 경로 + event-log 경로 **3곳을 통합**. LLM 0 (D-163). 라우터 뒤 `pd.read_csv(path) → Inspector~학습`은 변경 0(additive seam, D-164).
 
-요청 (필터 옵션):
-```
-GET /api/datalake/list?modality=timeseries&function=process&source=kamp
-```
+#### 사용자 신규 등록
 
-응답:
-```python
-{
-  "entries": [DataLakeEntry, ...]  # Part 1-2 (사) 형식
-}
-```
+등록 API 표면(`/api/datalake/register` Mode A 업로드 / Mode B 서버경로)은 변경 없음(R1 범위 외). 등록 데이터도 `data/lake/<id>/`로 귀결, 같은 catalog INSERT 경로. KAMP는 적재 도구로 사전 등록되어 사용자는 카탈로그에서 선택만.
 
-#### `/api/datalake/register` 요청·응답
-
-**Mode A — 파일 업로드 (multipart)**:
-```
-POST /api/datalake/register
-Content-Type: multipart/form-data
-
-name: <str>
-modality: <str> (optional, auto-detect)
-function_hint: <str> (optional)
-file: <binary>
-```
-
-**Mode B — 서버 경로**:
-```
-POST /api/datalake/register
-Content-Type: application/json
-
-{
-  "name": <str>,
-  "modality": <str>,
-  "function_hint": <str>,
-  "server_path": "/data/lake/registered/my_data.csv"
-}
-```
-
-응답 (양 모드 공통):
-```python
-{
-  "datalake_id": str,
-  "name": str,
-  "modality": str,
-  "size_bytes": int,
-  "data_path": str           # 서버 내부 경로 (사용자에게는 보여주지 않음)
-}
-```
-
-#### Data Lake vs 기존 `data/synthetic/`
-
-기존 더미 데이터 (`repo/data/synthetic/`) 는 Data Lake 의 `kamp/` 하위로 통합 또는 별도 source="synthetic" 으로 등록. 권장: `data/lake/kamp/` 로 이전 + 통합 카탈로그.
+> 자료구조: `DataLakeEntry`=Part 1-2(사), per-column=`datalake.columns`, 제약=`datalake.constraints` (Part 1-5).
 
 ### 1-7. 사용자 승인 UI 정책 (v4 갱신 — 카드 + 자연어 2단계 환각 방어)
 
