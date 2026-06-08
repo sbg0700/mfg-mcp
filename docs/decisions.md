@@ -1054,3 +1054,31 @@ task별 모달 UI (Playwright):
 사용자가 Page 5에서 분석 목적을 선택하면 Page 6에서: ① LLM이 적합한 모델을 추천(fit_score) → ② 모델 카드의 "학습 시작" 클릭 → ③ task별 입력(지도=타겟 드롭다운 / 비지도=contamination 슬라이더) → ④ "파라미터 확인"으로 notices 사전 확인 → ⑤ "학습 시작" → 1초 폴링 → ⑥ 결과: KPI 카드 + (분류)confusion CSS 그리드 / (회귀)R²/RMSE / (비지도)score 분포 + feature importance + notices 박스 + lineage_id 표시. STEP 3 전체(3a EDA + 3b EDA UI + 3c 학습 백엔드 + 3d 학습 UI) 완성.
 
 다음: 별도 브랜치 — main 머지 또는 후속 기능(파라미터 수동 입력 UI · 모델 비교 · 추론 엔드포인트 등).
+
+## 2026-06-08 — datalake-redesign R1: 명세 patch (Master 저작 → CC 적용)
+
+명세: BLUEPRINT(설계 SSOT) §5 매핑표를 본진 명세에 반영. 순수 문서·코드 0. 브랜치: `feature/datalake-redesign`.
+대상: spec-1 §1-2/§1-5/§1-6/§1-9-1/Part3/§4-3, blueprint Part4-2, variable_index §8.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-159 | 물리경로 A/B 폐기 → **DB catalog 단일 진입점**. `data_path` 컬럼이 경로 추상화 → 셀렉·엔진은 `datalake_id`만 인지, 물리경로는 `data/lake/<id>/`로 귀결(선택 아님). **D-53 supersede** (D-53 "datalake_id=기존 dataset_id 직접 사용, 카탈로그 미도입 전제"는 카탈로그 도입으로 폐기) | A/B는 결정 항목이 아니었음. 합성데이터 미생성·KAMP 외부폴더 → 마이그레이션 대상 0(클린 출발). KAMP·신규 대등 = 핵심 메시지("어떤 데이터가 와도") 정합 |
+| D-160 | catalog = **정규화 3테이블**(asyncpg): `datalake.entries`(타입드 인덱스 컬럼) + `datalake.columns`(per-column) + `datalake.constraints`(per datalake_id+column). 단일 JSONB metadata 폐기. 비대칭 수용: catalog=DB / session·lineage=인메모리(Sprint 2 postgres) | anti-silent-conversion — 런타임 슬롯/폴더 추론 대신 권위 컬럼. Silent 변환이 SI 장애 주원인 → 타입드 인덱스로 구조 차단. 멱등·비파괴(CREATE IF NOT EXISTS, DROP 금지) |
+| D-161 | `datalake.columns.column_kind = scalar \| group`. FFT 광폭/숫자헤더(L3 vibration, 컬럼=주파수값 수천)는 per-column 부적합 → **컬럼-그룹 descriptor**(`fft_spectrum: N개 numeric-header, 단위·범위`). 제약도 집계/대역형 | R0 KAMP 확인 + 사용자 확인 완료. per-column 폼이 수천 컬럼에 깨짐 → 그룹 단위로 구조화 |
+| D-162 | `vid`(가상 그룹 ID) = **공정 흐름(라인) 단위·단일**(1 데이터셋=1 흐름). 인계서 `hash(process+module)`에서 라인 단위로 교정. `reusable_flag`로 후속 다대다(reference 공유) 무손실 확장. `function`/`site`는 vid 내 별도 필터 컬럼(vid 종속 아님). 전파 3곳(스키마→`_build_agent_record`→`_build_stage_chain`), 결정론·LLM 0(D-59 유지) | Page 1 라인 선택이 자연스러운 흐름 경계. 단일 시작 + flag로 확장 = 무손실. 흐름·계보 컨텍스트의 기반 |
+| D-163 | **modality 결정론 라우터** `datalake.get(id) → {data_path, modality}`. 기존 `_resolve`(timeseries/order) + 이미지 경로 + event-log 경로 3곳 통합. LLM 0 | 데이터→엔진 경계 단일 해석점. 모달리티 분기 중복 제거, 환각 방어(결정론) |
+| D-164 | **엔진 보존 이음매(additive seam)** — 데이터→엔진 경계(`dataset_id→파일경로`)만 `datalake.get`으로 추상화. 뒤의 `pd.read_csv → Inspector·Planner·Executor·Validator·학습`은 변경 0. **D-66/D-67 validator(제약=원본 backup parquet 직접 대조) 변형 0 계승** — 신규 resolve 아님, lineage 보존 | 검증된 엔진 불변 = 롤백 최소화(PROTOCOL §3). 구 경로 생존. D-67의 "원본 기준 검증"은 정확성·추적성 자산이라 그대로 |
+| D-165 | Page 2 모델 = **4 function 모듈(P/Q/M/R) 배치** + P 체인(`chain_order`) + M/Q→P 묶음(`attached_to`). module 스키마 +`vid`/+`chain_order`/+`attached_to`. 기존 `(function,dataset_role)` 중복 차단 규칙 폐기(같은 function 복수 허용). 이중 처리: MCP=개별 주체 / EDA=흐름 내 위치 | 사용자 비전의 공정 흐름 구성. 데이터셋 드래그가 아니라 기능 슬롯 배치 → 데이터 바인딩은 Page 3 분리 |
+| D-166 | Page 3 셀렉 = **vid × function × site 메타필터 → 카드 UI** → 제한 목록 셀렉. 기존 modality+function 드롭다운 대체 | vid로 흐름 범위 한정 → 카드로 선택지 축소. 메타 기반 진입 |
+| D-167 | 제약 가드 = **무조건 유저 입력**(시스템 제안 0, D-43 강화). prefill = `datalake.constraints`(유저 과거 승인값) **제안만** — 잠금/자동적용 금지, 매칭돼도 **항상 재승인 게이트**. 키 스코프 = `datalake_id+column`. 머지 = **세션 오버라이드 > 카탈로그 prefill(재승인) > 빈칸**. 변경 시 "이번만 vs 메모리 업데이트(영속)" 질문. 불변식: catalog 제약 = 제안이지 디폴트 아님 | SI는 고객사 머신별 limit을 모름 → 선택권 유저. 캐시 자동 고정 = 사실상 시스템 디폴트 = D-43 위반. 재승인으로 "LLM/시스템 제안, 사람 결정" 보존 |
+| D-168 | validator **"제약 공백/상태 알람"** 신설(데이터-미업로드 알람과 대칭). 승인 게이트 = Page 3 입력 시점 / 상태 알람 = validator 시점. MCP `/check_constraints` = 죽은 코드(미호출) 명시 | 제약 미입력/공백을 validator가 표면화 — 데이터 알람과 동일 패턴. 검증 책임 위치 명확화 |
+| D-169 | EDA **slim stage_chain** — `eda_engine.py` payload에 `node_id + downstream_implication`만 1키 + system prompt 1줄 추가. `main_findings`는 `key_findings`와 중복이라 생략. 상류(aggregator/main) 0. 결정론 `compute_chart_data` 무관(D-59 생명선 0) | 현 EDA가 stage_chain을 빌드만 하고 미소비 — main.py가 이미 ctx 통째로 넘기는데 안 꺼내 씀. e4b/26b JSON 안정성·8GB 토큰 위해 slim. "작은 엔진 손"(additive) |
+| D-170 | `AggregatedContext` +`analysis_groups`(additive, shape는 DL-4 확정). 원칙 잠금: **이종 매핑 부재 + lineage 흐름 컨텍스트 = 상보** — 이종 데이터를 스키마로 융합 안 함(개별 주체 유지), vid/stage_chain/lineage로 흐름·계보 관계 부여(+@ 컨텍스트). 데이터 비종속(D-82) → 메타 기반 catalog로 진화 | 융합 없이 흐름·계보로 관계 부여 = 안전한 +@. lineage 흐름 컨텍스트 강화는 후속 추가기능. 적재도구 메타 자동생성으로 "파일 넣고 한 번 적재=끝" 비종속성 유지 |
+
+### 정합 확인
+- D-53 supersede 명시(D-159), D-66/D-67 변형 0 계승 명시(D-164), D-43 강화(D-167), D-59 생명선 보존(D-163/169), D-82 진화(D-170).
+- spec-1 §1-2/§1-5/§1-6/§1-9-1/Part3/§4-3 + blueprint Part4-2 + variable_index §8 동기 패치.
+- 코드 0 — 본 블록은 R1(문서) 산출. 구현은 DL-1~DL-5.
+
+### R1 완료 = DL-1 진입 가능
+다음: DL-1(DB 연결 + catalog 접근 계층). 진입 선결(PROTOCOL §3/§4): ① `.env` DB 접속(127.0.0.1:5432, 자격=시크릿) ② 변경 전 build+smoke green ③ 공유 PG(byeonggab89) 첫 쓰기 전 백업.
