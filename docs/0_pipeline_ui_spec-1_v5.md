@@ -161,12 +161,18 @@
 {
   "session_id": str,
   "line_id": str,
+  "vid": str,                      # DL 신규 — 공정 흐름(라인) 단위 가상 그룹 ID (D-162). Page 1 라인 선택에서 결정
   "stages": [
     {
       "stage_order": int,
       "node_id": str,
       "modules": [
-        { "function": str, "dataset_role": str }
+        {
+          "function": str,         # "process"|"quality"|"maintenance"|"reference" — 같은 function 복수 허용 (D-165)
+          "dataset_role": str,
+          "chain_order": int | None,   # DL 신규 — P(process) 모듈의 흐름 순서. P가 아니면 None (D-165)
+          "attached_to": str | None    # DL 신규 — M/Q 모듈이 부착된 P 모듈 식별자(예: "stageN.idxM"). P/R이면 None (D-165)
+        }
       ]
     }
   ]
@@ -181,6 +187,7 @@
 {
   "session_id": str,
   "line_id": str,
+  "vid": str,                          # DL 신규 — 공정 흐름 가상 그룹 ID (D-162)
   "stages": [
     {
       "stage_order": int,
@@ -189,9 +196,11 @@
         {
           "function": str,
           "dataset_role": str,
-          "datalake_id": str | None,    # v4 신규 — Data Lake 데이터셋 ID
-          "constraints": {               # 사용자가 직접 입력 (typical_ranges 디폴트 없음)
-            "<constraint_key>": "<value>"
+          "chain_order": int | None,    # DL 신규 — P 모듈 흐름 순서 (D-165)
+          "attached_to": str | None,    # DL 신규 — M/Q→P 부착 (D-165)
+          "datalake_id": str | None,    # Data Lake catalog 키. 실제 파일경로는 datalake.get(id)→data_path로 백엔드 조회 (D-159/D-163)
+          "constraints": {               # 사용자가 직접 입력 (디폴트 없음, D-43). prefill은 제안일 뿐 항상 재승인 (D-167)
+            "<column>": "<value>"        # 키 스코프 = datalake_id+column (D-167)
           }
         }
       ]
@@ -200,7 +209,7 @@
 }
 ```
 
-> v3의 `data_path` → v4 `datalake_id` 로 변경. 실제 파일 경로는 백엔드가 Data Lake catalog에서 조회.
+> v3 `data_path` → `datalake_id`. 실제 파일경로는 `datalake.get(datalake_id)→{data_path, modality}` 결정론 라우터가 조회(D-163, LLM 0). 제약 키는 `datalake_id+column` 스코프(D-167).
 
 #### (라) `PipelineResults` — Page 4 응답, Page 5 입력 (v4 코드 확인 갱신)
 
@@ -317,7 +326,12 @@ class StepResult:
       "downstream_implication": str
     }
   ],
-  
+
+  # DL 신규 — 흐름·계보 관계 컨텍스트 (이종 매핑 부재 + lineage 상보, D-170)
+  # vid 흐름 내 위치 + column-group descriptor(column_kind=group)를 EDA로 표면화.
+  # 상세 필드 shape는 DL-4(EDA/aggregator 스레딩)에서 확정 — 본 키는 additive, 결정론(LLM 0).
+  "analysis_groups": list[dict] | None,
+
   # 각 에이전트 판단 기록 (사용자 비전 핵심 — Page 4 의 표준화 과정 전체)
   "agent_records": [
     {
@@ -384,15 +398,18 @@ class StepResult:
 
 ```python
 {
-  "datalake_id": str,            # UUID 또는 식별자 (예: "kamp_L1_press_forming")
+  "datalake_id": str,            # 식별자 (예: "kamp_L1_press_forming")
   "source": str,                 # "kamp" | "user_registered"
   "name": str,                   # 사용자 친화 이름
   "modality": str,               # "timeseries" | "inspection-image" | "event-log" | "order"
-  "function_hint": str | None,   # 추정 Function (process 등)
+  "function": str | None,        # DL — process/quality/maintenance/reference (L1~L4 접두사 시드 + lines.yaml 결정론, 사람 교정 가능)
+  "site": str | None,            # DL 신규 — 공장/사이트 (vid 내 별도 필터 컬럼, D-162)
+  "vid": str | None,             # DL 신규 — 공정 흐름 가상 그룹 ID (라인 단위, D-162)
   "size_bytes": int,
   "encoding": str | None,
+  "reusable_flag": bool,         # DL 신규 — 후속 다대다(reference 공유) 무손실 확장 플래그 (D-162)
   "registered_at": str,          # ISO timestamp
-  "data_path": str               # 서버 내부 경로 (사용자 노출 안 함)
+  "data_path": str               # 서버 내부 경로 (data/lake/<id>/, 사용자 노출 안 함)
 }
 ```
 
