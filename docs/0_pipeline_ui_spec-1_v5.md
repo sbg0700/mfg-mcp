@@ -901,7 +901,7 @@ HTML5 native DnD. 드롭 시 module 객체에 `{function, chain_order|None, atta
 | 빈 Stage 허용 (list에 등장 안 함) | 저장 시 자동 | OK |
 | 최소 1+ Stage 에 1+ 모듈 필요 | "다음" 클릭 시 | "최소 1개 모듈" 토스트 |
 | `max_modules` 초과 금지 | 드롭 시 | 거부 + 토스트 |
-| 같은 Stage 중복 모듈 금지 | 드롭 시 | 거부 + 토스트 |
+| M/Q는 같은 Stage 내 존재하는 P에만 부착 (부착 무결성) | 드롭 시 | 위반 시 거부 + 토스트 (D-165) |
 
 ### 3-7. API 호출
 
@@ -946,8 +946,8 @@ async function handleNext() {
 - [ ] 카드 드래그 동작
 - [ ] 박스 드롭 → 모듈 추가
 - [ ] `max_modules` 초과 거부
-- [ ] 중복 모듈 거부
-- [ ] 다른 Node 모듈 거부
+- [ ] 같은 function 복수 허용 (중복 차단 폐기, D-165)
+- [ ] M/Q 부착 무결성 (같은 Stage 내 존재하는 P에만 부착)
 - [ ] [×] 제거 동작
 - [ ] 새로고침 복원
 - [ ] "다음" → Page 3 이동
