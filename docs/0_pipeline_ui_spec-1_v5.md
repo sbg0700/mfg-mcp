@@ -1007,94 +1007,33 @@ URL: /pipeline/data?session=<uuid>
 - 한 번에 여러 카드 펼침 가능
 - 펼친 카드 안에 ([데이터 선택] + [제약 입력]) 영역
 
-### 4-3. 데이터 선택 영역 (v4 전면 재작성)
+### 4-3. 데이터 선택 영역 (DL 재설계 — 전면 재작성)
 
-#### Data Lake 카탈로그 드롭다운
+#### vid × function × site 메타필터 → 카드 UI
 
-페이지 진입 시 자동 호출:
+Page 3 진입 시 `vid`(Page 1·2에서 결정) 기준으로 catalog를 거른 뒤, `function`·`site` 메타필터로 좁힌 **카드 목록**에서 선택:
 ```
-GET /api/datalake/list?modality=<inferred>&function=<module.function>
+GET /api/datalake/list?vid=<vid>&function=<module.function>&site=<optional>
 ```
-
-`<inferred>` 는 모듈의 `dataset_role` 에서 추정한 modality. 정확한 모달리티 분기 어렵다면 전체 list 반환.
-
-응답으로 받은 `entries` 를 드롭다운에 표시:
-```
-⊙ KAMP / L3_mold_condition (0.4 MB)
-○ KAMP / L3_mold_anomaly (325 MB)
-○ 사용자 / 내 데이터 (12 MB)
-```
+응답 `entries`(Part 1-2 사)를 카드로 표시(이름/modality/크기). 제한된 목록에서 1개 선택 → `datalake_id` 바인딩.
 
 #### 신규 등록 모달
 
-"[+ 새 데이터셋 등록]" 선택 시 모달 열림:
+등록 API 표면 변경 없음(Mode A 업로드 / Mode B 서버경로, Part 1-6). 등록 후 catalog 갱신 + 자동 선택.
 
-```
-┌────────────────────────────────────────────────┐
-│ 새 데이터셋 등록                                │
-│                                                 │
-│ 이름:        [_____________]                   │
-│ 모달리티:    [▼ 자동 감지 / timeseries / ...]   │
-│ Function 힌트: [▼ process / quality / ... ]    │
-│                                                 │
-│ 등록 방식:                                      │
-│   ⊙ 파일 업로드 (~100MB)                       │
-│     [파일 선택]                                 │
-│                                                 │
-│   ○ 서버 경로 (대용량/사전 준비)               │
-│     [/data/lake/registered/_______]            │
-│                                                 │
-│ [취소]                              [등록]      │
-└────────────────────────────────────────────────┘
-```
+#### 제약 — 핵심 가드 (D-167)
 
-#### 클라이언트 동작
+- **입력 = 무조건 유저.** 시스템은 범용 범위조차 제안 0 (D-43 강화). 근거: SI는 고객사 머신별 스펙·limit을 정확히 모름 → 선택권을 유저에게.
+- **prefill = `datalake.constraints`(유저 과거 승인값) 제안일 뿐** — 절대 잠금/자동적용 아님. 흐름/공장/데이터셋이 같아도 "같은 선택 = 같은 제약" 강제 금지. 매칭돼도 **항상 재승인 게이트** 통과해야 적용.
+- 키 스코프 = `datalake_id + column`.
+- **머지 우선순위 = 세션 오버라이드 > 카탈로그 prefill(재승인) > 빈칸(유저 입력).**
+- 변경 시 = "이번만" vs "메모리 업데이트(영속)" 질문.
+- **불변식:** catalog 제약 = 기억 보조(제안)이지 권위(디폴트)가 아니다. 캐시값 자동 고정 = 사실상 시스템 디폴트 = D-43 위반.
 
-```javascript
-async function handleDataSelect(stage_order, module_index, datalake_id) {
-  // 모듈에 datalake_id 설정
-  setModuleDatalakeId(stage_order, module_index, datalake_id);
-  
-  // 메타 조회 (모달리티/인코딩 등 표시용)
-  const metaResponse = await fetch(`/api/datalake/${datalake_id}/metadata`);
-  const meta = await metaResponse.json();
-  setModuleMeta(stage_order, module_index, meta);
-}
+#### 검증·알람
 
-async function handleRegister(form) {
-  let response;
-  if (form.mode === "upload") {
-    const formData = new FormData();
-    formData.append("name", form.name);
-    formData.append("modality", form.modality);
-    formData.append("function_hint", form.function_hint);
-    formData.append("file", form.file);
-    response = await fetch("/api/datalake/register", {
-      method: "POST",
-      body: formData
-    });
-  } else {  // path mode
-    response = await fetch("/api/datalake/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        modality: form.modality,
-        function_hint: form.function_hint,
-        server_path: form.server_path
-      })
-    });
-  }
-  if (!response.ok) {
-    showError(await response.json());
-    return;
-  }
-  const newEntry = await response.json();
-  // 카탈로그 갱신 + 자동 선택
-  refreshDatalakeList();
-  handleDataSelect(stage_order, module_index, newEntry.datalake_id);
-}
-```
+- 제약 검증 = `validator`가 **원본 backup parquet 직접 대조**(정규화 출력 아님 — D-67 계승, 변형 0). MCP `/check_constraints`는 죽은 코드(미호출).
+- 알람 = validator 단계의 **"제약 공백/상태 알람"**(데이터-미업로드 알람과 대칭) 신설(D-168). 승인 게이트 = Page 3 입력 시점 / 상태 알람 = validator 시점.
 
 ### 4-4. 제약 입력 폼 (v4 전면 재작성)
 
@@ -1145,9 +1084,9 @@ cycle_time_sec (초) *  [범위]   [_______] ~ [_______]
 
 #### 사용자 입력 디폴트 정책
 
-**디폴트 값 없음**. 사용자가 처음 들어가면 빈 폼.
+**디폴트 값 없음**. 사용자가 처음 들어가면 빈 폼. `datalake.constraints` prefill이 있으면 **제안으로만** 표시(잠금 아님, 항상 재승인 — §4-3 제약 가드, D-167).
 
-이유: 페트병/볼펜대 등 제품마다 typical_ranges 다름. 사전 디폴트는 오히려 혼동. 사용자가 자기 데이터에 맞게 입력.
+이유: 페트병/볼펜대 등 제품마다 typical_ranges 다름. 사전 디폴트는 오히려 혼동. 사용자가 자기 데이터에 맞게 입력. 캐시 제안을 자동 고정하면 사실상 시스템 디폴트가 되어 D-43 위반.
 
 #### 제약 추가/삭제
 
