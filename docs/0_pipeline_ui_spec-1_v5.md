@@ -516,24 +516,51 @@ CREATE TABLE IF NOT EXISTS pipelines.sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON pipelines.sessions(status);
 
--- v4 신규: Data Lake catalog
+-- DL 재설계: Data Lake catalog = 정규화 3테이블 (asyncpg). 단일 JSONB metadata 폐기.
+-- anti-silent-conversion: 런타임 슬롯/폴더 추론 대신 권위 타입드 인덱스 컬럼 (D-160).
+-- 비대칭 수용: catalog=DB / session·lineage=인메모리(Sprint 2 postgres).
+-- 멱등·비파괴: CREATE ... IF NOT EXISTS, DROP 금지 (PROTOCOL §3).
 CREATE SCHEMA IF NOT EXISTS datalake;
 
 CREATE TABLE IF NOT EXISTS datalake.entries (
     datalake_id    TEXT PRIMARY KEY,
     source         TEXT NOT NULL,         -- "kamp" | "user_registered"
     name           TEXT NOT NULL,
-    modality       TEXT,
-    function_hint  TEXT,
+    modality       TEXT,                  -- 4종 (decode router 입력, D-163)
+    function       TEXT,                  -- process/quality/maintenance/reference
+    site           TEXT,                  -- 공장/사이트 (vid 내 별도 필터, D-162)
+    vid            TEXT,                  -- 공정 흐름 가상 그룹 ID (라인 단위, D-162)
     size_bytes     BIGINT,
     encoding       TEXT,
-    data_path      TEXT NOT NULL,         -- 서버 내부 경로
-    registered_at  TIMESTAMPTZ DEFAULT now(),
-    metadata       JSONB                  -- 추가 메타 (컬럼 수, 행 수 등)
+    data_path      TEXT NOT NULL,         -- data/lake/<id>/ (경로 추상화, D-159)
+    reusable_flag  BOOLEAN DEFAULT FALSE, -- 후속 다대다 무손실 확장 (D-162)
+    registered_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- per-column 메타. column_kind = scalar | group (FFT 광폭/숫자헤더 = group descriptor, D-161)
+CREATE TABLE IF NOT EXISTS datalake.columns (
+    datalake_id    TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
+    name           TEXT NOT NULL,         -- scalar=컬럼명 / group=그룹명(예: "fft_spectrum")
+    dtype          TEXT,
+    column_kind    TEXT NOT NULL DEFAULT 'scalar',  -- 'scalar' | 'group'
+    group_desc     JSONB,                 -- group일 때만: {n_cols, header_kind:"numeric", unit, range}
+    PRIMARY KEY (datalake_id, name)
+);
+
+-- 제약. 유저 승인으로만 채움 (시스템/modules.yaml/프로파일 절대 안 채움, D-43/D-167)
+CREATE TABLE IF NOT EXISTS datalake.constraints (
+    datalake_id    TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
+    column         TEXT NOT NULL,         -- 키 스코프 = datalake_id + column (D-167)
+    constraint     JSONB NOT NULL,        -- 유저 과거 승인값 (prefill 제안 소스, 잠금 아님)
+    approved_at    TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (datalake_id, column)
 );
 
 CREATE INDEX IF NOT EXISTS idx_datalake_modality ON datalake.entries(modality);
-CREATE INDEX IF NOT EXISTS idx_datalake_source ON datalake.entries(source);
+CREATE INDEX IF NOT EXISTS idx_datalake_source   ON datalake.entries(source);
+CREATE INDEX IF NOT EXISTS idx_datalake_vid      ON datalake.entries(vid);
+CREATE INDEX IF NOT EXISTS idx_datalake_function ON datalake.entries(function);
+CREATE INDEX IF NOT EXISTS idx_datalake_site     ON datalake.entries(site);
 ```
 
 ### 1-6. Data Lake 정책 (v4 전면 재작성)
