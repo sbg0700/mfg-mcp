@@ -549,11 +549,11 @@ CREATE TABLE IF NOT EXISTS datalake.columns (
 
 -- 제약. 유저 승인으로만 채움 (시스템/modules.yaml/프로파일 절대 안 채움, D-43/D-167)
 CREATE TABLE IF NOT EXISTS datalake.constraints (
-    datalake_id    TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
-    column         TEXT NOT NULL,         -- 키 스코프 = datalake_id + column (D-167)
-    constraint     JSONB NOT NULL,        -- 유저 과거 승인값 (prefill 제안 소스, 잠금 아님)
-    approved_at    TIMESTAMPTZ DEFAULT now(),
-    PRIMARY KEY (datalake_id, column)
+    datalake_id     TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
+    column_name     TEXT NOT NULL,          -- 키 스코프 = datalake_id + column_name (D-167/D-171)
+    constraint_spec JSONB NOT NULL,         -- 유저 과거 승인값 (prefill 제안 소스, 잠금 아님)
+    approved_at     TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (datalake_id, column_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_datalake_modality ON datalake.entries(modality);
