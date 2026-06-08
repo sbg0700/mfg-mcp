@@ -614,6 +614,12 @@ LLM 클라이언트:
 - Lineage 누락 = 위반
 - LLM이 실수해도 시스템이 잡음
 
+#### (DL 신규) datalake.get — 데이터→엔진 결정론 라우터 (additive seam)
+- 위 4 메커니즘 **앞단**의 데이터 진입점. `datalake.get(datalake_id) → {data_path, modality}` (D-163, LLM 0)
+- 기존 `_resolve`(timeseries/order) + 이미지 경로 + event-log 경로 3곳을 단일 해석점으로 통합
+- 라우터 뒤 `pd.read_csv(path) → Inspector~Validator~학습`은 **로직 변경 0**(additive seam, D-164). 핵심 compute 엔진 불변
+- 제약 검증의 원본 backup 기준(D-67)도 변형 0 계승 — 신규 resolve 아님, lineage 보존
+
 ### 4-3. STEP 1B 확장 — Planner 프롬프트
 
 옵션 E 자료구조에 따라 Planner LLM 프롬프트에 컨텍스트 3종 추가:
