@@ -11,3 +11,7 @@ data/synthetic/order/
 *.patch
 # STEP 3c — ML 학습 산출물 (.joblib는 재학습으로 복원, lineage가 메타 보유)
 data/models/
+
+# DL 로컬 지시용 핸드오프 (원격 미보존 — 로컬 전용, 2026-06-08 사용자 지시)
+docs/datalake_redesign/DL_R1_FINAL_DL1_ENTRY.md
+docs/datalake_redesign/R1_HANDOFF_spec_patch.md
