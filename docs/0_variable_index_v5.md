@@ -230,13 +230,13 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | 자료구조 | 정의 | 생성 시점 | 저장 |
 |---|---|---|---|
 | `LineCatalog` | spec-1.md Part 1-2 (가) | 시스템 정적 | `catalogs/lines.yaml` (실재, STEP 1B-1) |
-| `PipelineStructure` | spec-1.md Part 1-2 (나) | Page 2 출력 | DB `sessions.structure` (JSONB) |
-| `PipelineFull` | spec-1.md Part 1-2 (다) | Page 3 출력 | DB `sessions.full_data` + 파일 시스템 |
+| `PipelineStructure` | spec-1.md Part 1-2 (나) | Page 2 출력 | DB `sessions.structure` (JSONB) — DL: module +chain_order/attached_to, top +vid (D-162/165) |
+| `PipelineFull` | spec-1.md Part 1-2 (다) | Page 3 출력 | DB `sessions.full_data` + 파일 시스템 — DL: module +chain_order/attached_to/datalake_id, top +vid (D-162/165) |
 | **`PipelineSession` | STEP 1B-2a 명세 §2 | `/api/sessions/create` 시점 | **`backend/session_store.py::_SESSIONS` 인메모리 (D-52, Sprint 2에 postgres) |
 | `PipelineResults` | spec-1.md Part 1-2 (라) | Page 4 출력 | DB `sessions.results` + `lineage.transformations` |
 | `PipelineStatus` | spec-2.md Part 5-2 | Page 4 실시간 | 메모리 (현재 폴링; SSE는 1B-3) |
 | `AnalysisQuestion` | spec-1.md Part 1-2 (마) | Page 5 자동 생성 | DB `sessions.analysis` |
-| `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록 시점 | DB `datalake.entries` |
+| `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록/적재 시점 | DB 정규화 3테이블 `datalake.entries`(+vid/site/reusable_flag) · `datalake.columns`(column_kind scalar\|group) · `datalake.constraints`(유저 승인값) — D-160/161 |
 | **`AggregatedContext` | spec-1.md Part 1-2 (바) | execute_pipeline 완료 직후 자동 트리거 (D-63) | **실재 (STEP 1B-2b): `session["aggregated_context"]` 인메모리 캐시, Sprint 2에 postgres |
 
 특히 `AggregatedContext` 의 `agent_records` 필드 = MCP 4단 판단 기록 보존 (사용자 비전 핵심).
@@ -268,6 +268,7 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | B | `key_findings` | 결정론 추출 (Inspector flags + Executor done steps + Validator issues). type ∈ {class_imbalance, missing_values, dtype_mixed, transformation_applied, sequence_normalized, constraint_violation, validation_concern} |
 | C | `function_axis_summary` | `{process,quality,maintenance,reference}` 4키 고정, finding 분류 |
 | D | `stage_chain` | `[{stage_order, node_id, main_findings, downstream_implication}]` — 함의는 사전정의 7종 템플릿 매핑 |
+| D' | `analysis_groups` | DL 신규 — vid 흐름 위치 + column-group descriptor를 EDA로 표면화. shape는 DL-4 확정. 결정론(LLM 0). D-170 |
 | E | `agent_records` | 4단 기록 원본 보존 (Inspector/Planner/Executor/Validator 손실 0) |
 | F | `user_intent` | 이번 범위 항상 `None` (Page 5 미구현, D-64) |
 
