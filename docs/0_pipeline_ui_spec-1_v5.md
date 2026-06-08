@@ -852,81 +852,34 @@ URL: /pipeline/build?session=<uuid>
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3-2. 좌측 카탈로그 패널
+### 3-2. 좌측 카탈로그 패널 (DL 재설계)
 
-- Line의 Node 목록 표시
-- 각 Node 아래에 `available_modules` 카드 나열
-- 카드 정보: `function` 라벨 (색상 구분) + `hint_dataset`
-- 카드는 `draggable={true}` HTML 속성
+좌측은 데이터셋이 아니라 **4 function 모듈 팔레트**(P/Q/M/R):
+- process(파랑) / quality(초록) / maintenance(주황) / reference(회색)
+- 각 카드 `draggable={true}`. 데이터 바인딩은 Page 3에서 수행(여기선 function 슬롯만 배치).
 
-색상 매핑:
-- process: 파랑
-- quality: 초록
-- maintenance: 주황
-- reference: 회색
+### 3-3. 우측 Stage 박스 + 흐름 모델 (DL 재설계)
 
-### 3-3. 우측 Stage 박스
+stage 구성 = **P 체인(순서) + 각 P노드의 M/Q 묶음**.
+- P(process) 모듈: `chain_order`로 흐름 순서 형성 (P1 — P2 — P3 …).
+- M/Q 모듈: 특정 P에 `attached_to`로 부착(묶음 단위).
+- R(reference): 흐름 비종속(부착 없음).
+- 기준 스케치: `P1 — P2{+M1} — P3{+Q1} — P4{+Q2,M2,M3}`.
 
-- Line의 `stages` 순서대로 박스 N개 (`max_stages`) 미리 렌더링
-- 각 박스 라벨: `Stage <order>: <node_display_name>`
-- 박스 내부: 추가된 모듈 카드 + "(드래그해서 모듈 추가)" 빈 영역
-- 박스 사이 화살표 (↓) — 시간순 흐름 시각화
-- `max_modules` 초과 시 드롭 거부 + 토스트
+**같은 function 복수 허용**(D-165) — 기존 `(function, dataset_role)` 중복 차단 규칙 폐기.
 
-### 3-4. 드래그앤드롭 동작 명세
+**이중 처리:** MCP 표준화 = 파일을 개별 주체로 / EDA = 흐름 내 위치 컨텍스트로(vid·stage_chain, Part 1-2 바).
 
-#### HTML5 native DnD 권장 구현
+### 3-4. 드래그앤드롭 동작 명세 (DL 재설계)
 
-```javascript
-function onDragStart(e, moduleSpec) {
-  e.dataTransfer.setData("application/json", JSON.stringify({
-    function: moduleSpec.function,
-    hint_dataset: moduleSpec.hint_dataset,
-    source_node_id: moduleSpec.node_id
-  }));
-  e.dataTransfer.effectAllowed = "copy";
-}
+HTML5 native DnD. 드롭 시 module 객체에 `{function, chain_order|None, attached_to|None}` 기록.
+- P 모듈 드롭 → 해당 stage P 체인 끝에 `chain_order` 부여.
+- M/Q 모듈 드롭 → 부착할 P 선택(UI) → `attached_to` 설정.
+- `max_modules` 초과 시 드롭 거부 + 토스트.
+- **중복 차단 폐기:** 같은 function 복수 허용(D-165). 부착 무결성만 검증(M/Q는 같은 stage 내 존재하는 P에만 부착).
+- 제거: 카드 [×] / Delete 키. P 제거 시 그 P에 부착된 M/Q의 `attached_to` 정리.
 
-function onDrop(e, stage_order, target_node_id) {
-  e.preventDefault();
-  const data = JSON.parse(e.dataTransfer.getData("application/json"));
-  
-  if (data.source_node_id !== target_node_id) {
-    toast("이 모듈은 다른 공정 노드에 속합니다");
-    return;
-  }
-  if (stages[stage_order].modules.length >= stages[stage_order].max_modules) {
-    toast(`최대 ${stages[stage_order].max_modules}개 모듈까지 가능`);
-    return;
-  }
-  const exists = stages[stage_order].modules.some(
-    m => m.function === data.function && m.dataset_role === data.hint_dataset
-  );
-  if (exists) {
-    toast("이미 추가된 모듈입니다");
-    return;
-  }
-  
-  setStages(prev => {
-    const next = [...prev];
-    next[stage_order].modules.push({
-      function: data.function,
-      dataset_role: data.hint_dataset
-    });
-    return next;
-  });
-}
-
-function onDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = "copy";
-}
-```
-
-#### 모듈 제거
-
-- 박스 안 모듈 카드 우상단 [×] → 제거
-- 키보드 Delete (포커스된 카드)
+> 전환기: 신규 Page 2 경로는 feature-gate로 구 경로와 병존, DL-5 green 후 구 경로 제거(PROTOCOL §3).
 
 ### 3-5. 상태 천이
 
