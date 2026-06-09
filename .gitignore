@@ -15,3 +15,5 @@ data/models/
 # DL 로컬 지시용 핸드오프 (원격 미보존 — 로컬 전용, 2026-06-08 사용자 지시)
 docs/datalake_redesign/DL_R1_FINAL_DL1_ENTRY.md
 docs/datalake_redesign/R1_HANDOFF_spec_patch.md
+docs/datalake_redesign/DL_DL1_WORKLOG.md
+docs/datalake_redesign/R1_WORKLOG.md
