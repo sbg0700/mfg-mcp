@@ -398,7 +398,7 @@ class StepResult:
 
 ```python
 {
-  "datalake_id": str,            # 식별자 (예: "kamp_L1_press_forming")
+  "datalake_id": str,            # 식별자 (예: "L1_press_forming" = manifest hint_dataset 권위; source=kamp는 별도 컬럼, D-173)
   "source": str,                 # "kamp" | "user_registered"
   "name": str,                   # 사용자 친화 이름
   "modality": str,               # "timeseries" | "inspection-image" | "event-log" | "order"
@@ -407,6 +407,8 @@ class StepResult:
   "vid": str | None,             # DL 신규 — 공정 흐름 가상 그룹 ID (라인 단위, D-162)
   "size_bytes": int,
   "encoding": str | None,
+  "format": str | None,          # DL-2 — 원본 파일 포맷(csv/xlsx 등). canonical 정규화 후 원본 추적 (D-174, #11 lineage)
+  "company": str | None,         # DL-2 — 멀티테넌트 필터 차원 (현 KAMP=kamp degenerate, site 형제, D-174)
   "reusable_flag": bool,         # DL 신규 — 후속 다대다(reference 공유) 무손실 확장 플래그 (D-162)
   "registered_at": str,          # ISO timestamp
   "data_path": str               # 서버 내부 경로 (data/lake/<id>/, 사용자 노출 안 함)
@@ -532,15 +534,21 @@ CREATE TABLE IF NOT EXISTS datalake.entries (
     vid            TEXT,                  -- 공정 흐름 가상 그룹 ID (라인 단위, D-162)
     size_bytes     BIGINT,
     encoding       TEXT,
+    format         TEXT,                  -- DL-2: 원본 파일 포맷 (canonical 정규화 후 원본 추적, D-174/#11)
     data_path      TEXT NOT NULL,         -- data/lake/<id>/ (경로 추상화, D-159)
     reusable_flag  BOOLEAN DEFAULT FALSE, -- 후속 다대다 무손실 확장 (D-162)
+    company        TEXT,                  -- DL-2: 멀티테넌트 필터 (현 kamp degenerate, site 형제, D-174)
     registered_at  TIMESTAMPTZ DEFAULT now()
 );
 
--- per-column 메타. column_kind = scalar | group (FFT 광폭/숫자헤더 = group descriptor, D-161)
+-- DL-2: 기존 테이블(DL-1 생성)에는 CREATE IF NOT EXISTS가 스킵되므로 ALTER로 멱등 추가 (DROP 0, PROTOCOL §3)
+ALTER TABLE datalake.entries ADD COLUMN IF NOT EXISTS format  TEXT;
+ALTER TABLE datalake.entries ADD COLUMN IF NOT EXISTS company TEXT;
+
+-- per-column 메타. column_kind = scalar | group (광폭/숫자헤더 = group descriptor, D-161; vibration=waveform D-176)
 CREATE TABLE IF NOT EXISTS datalake.columns (
     datalake_id    TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
-    name           TEXT NOT NULL,         -- scalar=컬럼명 / group=그룹명(예: "fft_spectrum")
+    name           TEXT NOT NULL,         -- scalar=컬럼명 / group=그룹명(예: "waveform")
     dtype          TEXT,
     column_kind    TEXT NOT NULL DEFAULT 'scalar',  -- 'scalar' | 'group'
     group_desc     JSONB,                 -- group일 때만: {n_cols, header_kind:"numeric", unit, range}
@@ -561,6 +569,7 @@ CREATE INDEX IF NOT EXISTS idx_datalake_source   ON datalake.entries(source);
 CREATE INDEX IF NOT EXISTS idx_datalake_vid      ON datalake.entries(vid);
 CREATE INDEX IF NOT EXISTS idx_datalake_function ON datalake.entries(function);
 CREATE INDEX IF NOT EXISTS idx_datalake_site     ON datalake.entries(site);
+CREATE INDEX IF NOT EXISTS idx_datalake_company  ON datalake.entries(company);
 ```
 
 ### 1-6. Data Lake 정책 (DL 재설계 — 전면 재작성)
@@ -593,9 +602,9 @@ data/lake/
 - `site`
 - `vid` = 라인 (D-162)
 
-KAMP 5.1G = 3 module(**metal / forming_joining / polymer** = module_1/2/3). 대부분 일반 CSV+헤더(ASCII). `order` modality 0건(데모 제외 인지). 멱등 재적재(upsert) + dry-run 먼저.
+KAMP 5.1G = 3 module(**metal / forming_joining / polymer** = module_1/2/3). 적재 메타는 `catalogs/datalake_manifest.yaml`(SSOT) 명시값 권위 — 파일시스템 추론 폐기, 휴리스틱은 manifest 작성용 seed (D-173). 인코딩: cp949 3건(order_planning·L4_ict_checker·L4_ict_inspection) → encoding 컬럼 기록 + utf-8 정규화(R0 "ASCII" 가정 정정, D-177). `order` modality 1건 실재(order_planning, function=reference, 데모 주흐름 비중심 — R0 "0건" 정정, D-177). 이종 묶음 2폴더(기술검증결과서 리포트)는 데모 적재 제외 → 34→32건(#15-B, D-177). 멱등 재적재(upsert) + dry-run 먼저.
 
-> **★ FFT 광폭/숫자헤더 (L3 vibration):** 컬럼=주파수값(숫자헤더, 수천 개) → per-column 부적합. 적재도구·catalog는 **컬럼-그룹 descriptor**로 등록(`column_kind=group`, 예: `fft_spectrum: N개 numeric-header, 단위·범위`). 제약도 per-column이 아닌 집계/대역형 (D-161, R0 사용자 확인 완료).
+> **광폭/숫자헤더 (L3 vibration — raw 시간영역 waveform):** 컬럼=시간오프셋[s](숫자헤더 수천 개, 1열=캡처 timestamp) → per-column 부적합. 적재도구·catalog는 **컬럼-그룹 descriptor**로 등록(`column_kind=group`, 예: `waveform: N개 numeric-header, axis=time_offset_s, fs_hz, window`). 제약도 per-column이 아닌 집계/대역형 (D-161 구조 불변 + 라벨 fft→waveform 정정 D-176). "range Hz"는 진동 물리 난센스 → 헤더 실측으로 시간영역 확정.
 
 #### 결정론 modality 라우터
 

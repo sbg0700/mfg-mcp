@@ -1084,3 +1084,23 @@ task별 모달 UI (Playwright):
 
 ### R1 완료 = DL-1 진입 가능
 다음: DL-1(DB 연결 + catalog 접근 계층). 진입 선결(PROTOCOL §3/§4): ① `.env` DB 접속(127.0.0.1:5432, 자격=시크릿) ② 변경 전 build+smoke green ③ 공유 PG(byeonggab89) 첫 쓰기 전 백업.
+
+## 2026-06-09 — datalake-redesign DL-2 진입: id·메타 권위 + 스키마 확장 (Master 저작 → CC 적용)
+
+명세: DL-2(KAMP 적재) 진입 결정. CC dry-run 실측 근거(파일시스템 추론 신뢰 불가 — id 3건 silent divergence, order 휴리스틱 오분류, vibration 라벨 오류). 브랜치: `feature/datalake-redesign`.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-173 | **메타 권위 = `catalogs/datalake_manifest.yaml`(SSOT, repo 추적).** 적재도구의 파일시스템 추론(파일명 유도 `datalake_id`·폴더 파싱 `vid`) 폐기. `datalake_id`·`vid`(module 기준)·`modality`·`function`·`site` = manifest 명시값 권위. 휴리스틱(L접두사·module_N·포맷)은 manifest 작성용 **seed**일 뿐 — dry-run 검토 대상. ingest는 manifest **읽기만**(파생 0). manifest의 DB-미적재 필드(node·capture)는 ingest가 **명시적 화이트리스트로 처리**(`entry.get()` silent drop 금지 = anti-silent). per-column scalar 이름·dtype은 파일 헤더 실측(사실 읽기), group descriptor는 manifest 권위 + 파일 검산. BLUEPRINT §3 "ingest 자동 도출" refine. | 파일시스템 추론은 폴더명 접미(`_image`/`_quality`)·비ASCII만으로 silent 어긋남(34건 중 3건 실현, function 폴백이 은폐 → 더 위험). IATF·CFR(감사·재현성) 타깃에서 id·modality silent 오도 불가. `hint_dataset`(Page 2 참조)을 권위로 = Page 2↔catalog 바인딩 정의상 일치. 선언적 manifest row 추가 = D-82("파일 넣고 한 번 적재=끝") 정합 |
+| D-174 | **entries 스키마 확장 (+`format` +`company`).** `format TEXT`(원본 파일 포맷, #11 lineage — canonical utf-8 정규화 후 원본 추적), `company TEXT`(멀티테넌트 필터 차원, `site` 형제). D-160 "12 타입드 컬럼" → 14컬럼 확장. 멱등·비파괴: 기존 테이블(DL-1 생성)은 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`(DROP 0, PROTOCOL §3), CREATE문 동기 갱신. `company` index 추가. 구현(catalog.py MIGRATION_SQL/upsert_entry)은 요청 A. | `format` — ingest가 xlsx를 encoding칸에 silent 혼입(dry-run `enc=xlsx` 실측), 정규화 후 원본 format·encoding 둘 다 보존하려면 분리 필수(#11). `company` — 멀티테넌트 SI 제품 전제, 다른 회사=다른 `datalake_id`라 PK 무관 순수 필터. 빈 테이블(0행)이라 ALTER 무비용 = 추가 최적시점 |
+| D-175 | **capture·node = manifest provenance만, DB 컬럼 미추가.** 멀티캡처/재현(같은 라인 다른 캡처 무손실 보존)은 **PK=`(datalake_id, capture)` 복합 + `data_path` 계층(`data/lake/<id>/<capture>/`) + 재적재 dedup 동반 설계 = 별도 트랙(도래 시)**. 현 KAMP=단일 캡처라 의미 0. | 현 D-172(PK `datalake_id` 단일 + full-record-replace upsert)에선 같은 id 다른 캡처 = 덮어씀(재현 0) → capture 단순 컬럼 추가는 반쪽 함정. 진짜 멀티캡처는 D-159/160/172 재설계라 DL-2 범위 밖, reusable_flag(D-162)와 동일 무손실 확장 전략으로 예약. node = D-166 필터축 아님(파이프라인 슬롯 속성)이라 entries 부적합, lines.yaml 실재 |
+| D-176 | **D-161 라벨 정정 (`fft_spectrum`→`waveform`).** L3 vibration(`vibration_fault_sim`/`sim2`)은 FFT가 아니라 **raw 시간영역 waveform** — 헤더 숫자=시간오프셋[s](step→fs 488/800Hz, 1열=캡처 timestamp), 윈도 0~4.195s/2.559s. `column_kind=group` descriptor 실질 불변(1 scalar + N group), 라벨만 정정 + `group_desc`={axis:`time_offset_s`, `fs_hz`, `window`}. D-161 구조 결정(광폭=group, per-column 금지) 전부 유지. | "range 4.195 Hz"는 진동 물리 난센스 → 시간영역 확정(헤더 실측). R0 "FFT 광폭"은 도구 하드코딩 라벨을 옮긴 초안 → 두 트랙 독립 실측으로 waveform 이중확인. 감사·재현성 타깃에서 물리적으로 틀린 메타 라벨 불가 |
+| D-177 | **R0 가정 3건 실측 정정.** (1) "order 0건(데모 제외)" → **order 1건 실재**(order_planning, function=reference, module_3 set). modality=order 명시(휴리스틱 timeseries 오분류 교정), id=module_3 기준 semantic(cp949를 id에 안 박음 — encoding 별도 필드), 데모 주흐름 비중심. (2) "대부분 ASCII, cp949 우려 해소" → **cp949 3건**(order_planning·L4_ict_checker·L4_ict_inspection) → encoding 컬럼 기록 + utf-8 정규화. (3) **#15 이종 묶음 2폴더**(L1_mct_tool_improve·L3_mct_condition_inspect = 기술검증결과서 리포트, 8~9 이종 스키마+무헤더 1) = 데모 적재 제외(보류 플래그) → **34→32건**. | dry-run 실측이 R0 가정 교정(쓰기 전 보험 본전). order 미분류 시 timeseries MCP 오라우팅 위험. 리포트 산출물은 ML 데이터셋 아니라 제외해도 "어떤 데이터든" 메시지 훼손 0(나머지 32건 증명) |
+
+### 정합 확인
+- D-160 확장(D-174, 12→14컬럼) · D-161 라벨 정정·구조 불변(D-176) · D-172 보존(D-175 capture 보류 근거) · D-82 정합(D-173) · D-43/D-167 불변(적재도구 constraints 미기재 유지) · anti-silent 강화(D-173 silent-drop 금지 / D-174 format).
+- spec-1 §1-2/§1-5/§1-6 + blueprint §1.2/§3 + variable_index §8(DataLakeEntry +format/+company, column_kind waveform) 동기 패치 완료.
+- 코드 0 — 본 블록은 문서 산출. catalog.py ALTER/upsert + ingest manifest-driven = 요청 A.
+
+### DL-2 다음 단계
+요청 A(write-0): `catalogs/datalake_manifest.yaml` 32행 작성 + ingest manifest-driven 리팩터(EXECUTE_ENABLED=False 유지, 복사·INSERT 0, dry-run이 manifest↔1_data 정합 검산). → dry-run 통과 → 요청 B(실적재 = replace_columns + 백업 게이트 + Master greenlight).

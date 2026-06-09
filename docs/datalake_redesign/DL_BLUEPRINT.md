@@ -19,9 +19,9 @@
 물리 경로는 `data/lake/<id>/`로 **귀결**(선택 아님). KAMP·신규 대등 = 핵심 메시지 정합.
 
 ### 1.2 정규화 catalog 스키마 (DB / asyncpg)
-- **`datalake_entries`** — 타입드 인덱스 컬럼: `datalake_id, source, name, modality, function, site, vid, size_bytes, encoding, data_path, registered_at, reusable_flag`. (anti-silent-conversion: 런타임 슬롯/폴더 추론 대신 권위 컬럼.)
+- **`datalake_entries`** — 타입드 인덱스 컬럼: `datalake_id, source, name, modality, function, site, vid, size_bytes, encoding, format, data_path, reusable_flag, company, registered_at`. (anti-silent-conversion: 런타임 슬롯/폴더 추론 대신 권위 컬럼. `format`=원본 포맷·#11, `company`=멀티테넌트 필터 — D-174.)
 - **`datalake_columns`** — per-column `(name, dtype)`. → Page 3가 실 컬럼명으로 폼 렌더 = **D-90 구조적 충족**.
-  - ★ **광폭/숫자헤더 데이터(예: FFT vibration — R0 확인)는 per-column 부적합**(주파수 컬럼 수천). → **컬럼-그룹/행렬 descriptor**(예: `fft_spectrum: N개 numeric-header, 단위·범위`)로 저장. `column_kind = scalar | group` 구분.
+  - **광폭/숫자헤더 데이터(L3 vibration = raw 시간영역 waveform)는 per-column 부적합**(시간오프셋 컬럼 수천). → **컬럼-그룹/행렬 descriptor**(예: `waveform: N개 numeric-header, axis=time_offset_s/fs_hz/window`)로 저장. `column_kind = scalar | group` 구분. (R0 "FFT" 라벨은 헤더 실측으로 waveform 정정 — D-176.)
 - **`datalake_constraints`** — per `(datalake_id, column)`. **유저 승인으로만 채움**(시스템/modules.yaml/프로파일 절대 안 채움 = D-43).
 - 비대칭 수용: **catalog=DB / session·lineage=인메모리**(명세상 Sprint 2 postgres).
 
@@ -69,9 +69,9 @@
 
 ## 3. 적재 (ingest)
 - **`tools/datalake_ingest.py`**(외부 도구): `~/FINAL/1_data` 스캔 → 메타 생성 → `data/lake/<id>/` 복사 + catalog INSERT.
-- 메타 출처(결정론, 사람 교정 가능): `modality`=파일포맷/폴더, `function`=L1~L4 접두사 시드 + lines.yaml, `site`, `vid`=라인.
-- KAMP 5.1G — 3 module: **metal / forming_joining / polymer**(=module_1/2/3). `order` modality 0건(데모서 제외 인지). `data/lake/`는 외부폴더 → gitignore 무관.
-- R0 확인: 대부분 일반 CSV+헤더(ASCII — cp949 우려 해소). **★ L3 vibration = FFT 광폭(컬럼=주파수값, 숫자헤더)** → 적재도구가 **wide/numeric-header 처리 필수**(컬럼-그룹 descriptor로 catalog 등록, §1.2). 
+- 메타 출처: `catalogs/datalake_manifest.yaml`(SSOT) 명시값 권위 — `datalake_id`·`vid`(module 기준)·`modality`·`function`·`site`. 휴리스틱(L접두사·module_N·포맷)은 manifest 작성용 seed일 뿐, ingest는 manifest 읽기만(파일시스템 추론 폐기, D-173). per-column 이름·dtype은 파일 헤더 실측.
+- KAMP 5.1G — 3 module: **metal / forming_joining / polymer**(=module_1/2/3). `order` modality 1건 실재(function=reference, D-177). cp949 3건 → encoding 기록·utf-8 정규화(D-177). 이종 묶음 2폴더 제외 → 32건(#15-B). `data/lake/`는 외부폴더 → gitignore 무관.
+- L3 vibration = raw 시간영역 waveform(컬럼=시간오프셋, 숫자헤더) → 적재도구가 wide/numeric-header 처리(컬럼-그룹 descriptor, §1.2, D-176).
 - 멱등 재적재(upsert) + dry-run 먼저.
 
 ---
