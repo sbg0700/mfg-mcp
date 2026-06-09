@@ -1,8 +1,9 @@
 """
 backend/catalog.py — DL-1 datalake catalog 접근 계층.
 
-- 마이그레이션: spec-1 §1-5 정규화 3테이블(entries/columns/constraints) + 5 인덱스.
-  멱등(CREATE ... IF NOT EXISTS), DROP 0, datalake 스키마만 (PROTOCOL §3).
+- 마이그레이션: spec-1 §1-5 정규화 3테이블(entries 14컬럼/columns/constraints) + 6 인덱스.
+  멱등(CREATE ... IF NOT EXISTS · ADD COLUMN IF NOT EXISTS), DROP 0, datalake 스키마만 (PROTOCOL §3).
+  DL-2 확장: entries +format +company (D-174). 기존 DL-1 테이블엔 ALTER 로 멱등 추가.
 - datalake.get(id) → {data_path, modality}: 데이터→엔진 경계의 단일 해석점.
   단일 SELECT, LLM 0 (D-163).
 - CRUD: entries(upsert/get/list) · columns(insert/get) · constraints(insert/get) · delete.
@@ -29,11 +30,20 @@ CREATE TABLE IF NOT EXISTS datalake.entries (
     vid            TEXT,
     size_bytes     BIGINT,
     encoding       TEXT,
+    format         TEXT,                  -- DL-2: 원본 파일 포맷 (canonical 정규화 후 원본 추적, D-174/#11)
     data_path      TEXT NOT NULL,
     reusable_flag  BOOLEAN DEFAULT FALSE,
+    company        TEXT,                  -- DL-2: 멀티테넌트 필터 (현 kamp degenerate, site 형제, D-174)
     registered_at  TIMESTAMPTZ DEFAULT now()
 );
 
+-- DL-2: 기존 테이블(DL-1 생성)은 CREATE IF NOT EXISTS 가 스킵되므로 ALTER 로 멱등 추가
+-- (ADD COLUMN IF NOT EXISTS = DROP 0, 비파괴, PROTOCOL §3 / D-174). 라이브 실행은 B단계(백업 후).
+ALTER TABLE datalake.entries ADD COLUMN IF NOT EXISTS format  TEXT;
+ALTER TABLE datalake.entries ADD COLUMN IF NOT EXISTS company TEXT;
+
+-- per-column 메타. column_kind = scalar | group (광폭/숫자헤더 = group descriptor, D-161;
+-- L3 vibration = raw 시간영역 waveform, group_desc.kind='waveform' D-176)
 CREATE TABLE IF NOT EXISTS datalake.columns (
     datalake_id    TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
     name           TEXT NOT NULL,
@@ -56,6 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_datalake_source   ON datalake.entries(source);
 CREATE INDEX IF NOT EXISTS idx_datalake_vid      ON datalake.entries(vid);
 CREATE INDEX IF NOT EXISTS idx_datalake_function ON datalake.entries(function);
 CREATE INDEX IF NOT EXISTS idx_datalake_site     ON datalake.entries(site);
+CREATE INDEX IF NOT EXISTS idx_datalake_company  ON datalake.entries(company);
 """
 
 
@@ -84,18 +95,20 @@ async def upsert_entry(entry: dict[str, Any]) -> None:
         """
         INSERT INTO datalake.entries
             (datalake_id, source, name, modality, function, site, vid,
-             size_bytes, encoding, data_path, reusable_flag)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             size_bytes, encoding, format, data_path, reusable_flag, company)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         ON CONFLICT (datalake_id) DO UPDATE SET
             source=EXCLUDED.source, name=EXCLUDED.name, modality=EXCLUDED.modality,
             function=EXCLUDED.function, site=EXCLUDED.site, vid=EXCLUDED.vid,
             size_bytes=EXCLUDED.size_bytes, encoding=EXCLUDED.encoding,
-            data_path=EXCLUDED.data_path, reusable_flag=EXCLUDED.reusable_flag
+            format=EXCLUDED.format, data_path=EXCLUDED.data_path,
+            reusable_flag=EXCLUDED.reusable_flag, company=EXCLUDED.company
         """,
         entry["datalake_id"], entry.get("source"), entry.get("name"),
         entry.get("modality"), entry.get("function"), entry.get("site"),
         entry.get("vid"), entry.get("size_bytes"), entry.get("encoding"),
-        entry["data_path"], entry.get("reusable_flag", False),
+        entry.get("format"), entry["data_path"], entry.get("reusable_flag", False),
+        entry.get("company"),
     )
 
 
@@ -107,11 +120,12 @@ async def get_entry(datalake_id: str) -> dict[str, Any] | None:
 
 
 # 필터 화이트리스트 (인젝션 차단 — 고정 컬럼명만 동적 WHERE에 허용)
-_FILTERABLE = ("modality", "function", "site", "source", "vid")
+# company 포함 — idx_datalake_company 활용(멀티테넌트 필터, D-174)
+_FILTERABLE = ("modality", "function", "site", "source", "vid", "company")
 
 
 async def list_entries(**filters: Any) -> list[dict[str, Any]]:
-    """필터(modality/function/site/source/vid) AND 조합. 미지정 필터는 무시."""
+    """필터(modality/function/site/source/vid/company) AND 조합. 미지정 필터는 무시."""
     clauses: list[str] = []
     args: list[Any] = []
     for col in _FILTERABLE:

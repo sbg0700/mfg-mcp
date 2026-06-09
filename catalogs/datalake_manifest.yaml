@@ -1,0 +1,562 @@
+# catalogs/datalake_manifest.yaml
+# ──────────────────────────────────────────────────────────────────────────
+# 메타 권위 = SSOT (Single Source of Truth). 적재도구의 파일시스템 추론(파일명 유도
+# datalake_id·폴더 파싱 vid) 폐기 — manifest 명시값이 권위. 휴리스틱은 작성용 seed (D-173).
+#
+# ingest(tools/datalake_ingest.py)는 이 파일을 "읽기만" 한다(파생 0):
+#   datalake_id · vid · modality · function · site · company · format · encoding = manifest 권위
+#   scalar 컬럼 이름·dtype = 파일 헤더 실측(사실 읽기)
+#   group descriptor(waveform/image_set) = manifest 권위 + 파일 검산
+#   node · capture = provenance만 (DB 미적재 — entries 14컬럼에 없음, D-175)
+#
+# DL-2 정합: spec-1 §1-2(사)/§1-5/§1-6, decisions D-159~D-177.
+# 건수: lines.yaml hint_dataset 34건 − #15 이종묶음 2건(아래 excluded) = 32건 (D-177).
+# path = ~/FINAL/1_data 기준 상대경로 (ingest 가 --root 와 결합 → 복사 소스).
+# ──────────────────────────────────────────────────────────────────────────
+#
+# [작성 메모 — Master/병갑 큐레이션 결정 지점]
+#  (1) order_planning: datalake_id = node 기준 'order_planning' (cp949 를 id 에 안 박음, D-177).
+#      ↔ lines.yaml hint_dataset 은 'order_cp949'. Page2↔catalog 바인딩 정합(D-173)을 위해
+#      lines.yaml hint 도 'order_planning' 으로 정정 필요 가능 → Master 확정.  [추론]
+#  (2) modality = 데이터 "형태" 기준 (D-163 MCP 라우팅 키): 연속 센서 신호=timeseries / 이산 사건 레코드=event-log.
+#      ★ 판정/라벨 컬럼(PASS_YN·NGmark·Label·result·검사결과)은 function·학습 타겟이지 modality 아님 — 라벨로 분류 금지.
+#      event-log 2건 (형태 실측 확정, Master 검증 2026-06-09):
+#        L4_ict_checker    — 동일 검사일시에 부품별 다중 행(1검사=N행), 측정+검사결과 = 이산 검사 레코드
+#        L4_ict_inspection — TIMEVALUE 사건 단위 검사 항목 레코드 = 이산 검사 레코드
+#      timeseries 유지(라벨 보유하나 연속 시계열): press_forming(449K행 공정센서+PASS_YN) · injection_optimize(TimeStamp 1분규칙
+#        +NGmark) · injection_production(사출 shot 측정+Label) · precision_machine(regDate 139초 폴링, 1시각=1행, broken=라벨).
+#      ※ "archive event-log 9건"(docs/archive)은 구버전(CLAUDE.md §7 폐기결정 혼재)이라 권위 아님 — 라이브 spec/decisions 엔
+#         event-log 건수 명시 없음(order 1건만, D-177). 형태 실측이 분류 근거. A단계 [추론] 2건→오분류 6건→형태확정 2건.
+#  (3) xlsx/xltx/이미지 = 바이너리 컨테이너 → encoding: binary (텍스트 코덱 N/A).
+#      format 으로 원본(xlsx/xltx/jpg/bmp/png) 구분 = D-174 "format/encoding 분리".  [추론]
+#  (4) company: 현 KAMP = 단일 테넌트 'kamp' degenerate (site 형제, D-174). 멀티테넌트 도래 시 권위값.
+#  (5) cp949 3건(order_planning·L4_ict_checker·L4_ict_inspection): encoding=cp949 +
+#      normalize_to=utf-8 (적재 시 canonical 정규화, 원본 format/encoding 은 lineage 보존, D-177).
+
+version: 1
+source: kamp
+site: kamp                       # KAMP 단일 데모 site (경로서 미도출 seed)
+company: kamp                    # 단일 테넌트 degenerate (D-174)
+
+datasets:
+
+# ═══ vid = module_1_metal_processing (금속 가공·검사) ═══════════════════════
+- datalake_id: L3_mold_condition
+  source: kamp
+  name: 금형 상태 모니터링
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/1_primary_forming/L3_mold_condition_kamp.csv
+  node: primary_forming          # provenance (DB 미적재)
+  capture: null                  # 단일 캡처 (D-175)
+
+- datalake_id: L3_mold_anomaly
+  source: kamp
+  name: 금형 이상 탐지
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8-sig            # BOM
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/1_primary_forming/L3_mold_anomaly_kamp.csv
+  node: primary_forming
+  capture: null
+
+- datalake_id: L1_cnc_lathe_quality
+  source: kamp
+  name: CNC 선반 가공 품질
+  modality: timeseries
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/2_cnc_cutting/L1_cnc_lathe_quality_kamp.csv
+  node: cnc_cutting
+  capture: null
+
+- datalake_id: L3_cnc_roughing
+  source: kamp
+  name: CNC 황삭 설비 상태
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/2_cnc_cutting/L3_cnc_roughing_kamp.csv
+  node: cnc_cutting
+  capture: null
+
+- datalake_id: L1_mct_tool_manage
+  source: kamp
+  name: MCT 공구 관리
+  modality: timeseries
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8-sig            # BOM
+  vid: module_1_metal_processing
+  path: "module_1_metal_processing/3_mct_machining/L1_mct_tool_manage_kamp_제조AI데이터셋_(주)미래하이테크.csv"
+  node: mct_machining
+  capture: null
+
+- datalake_id: L2_cnc_load_dimension
+  source: kamp
+  name: CNC 부하·치수 검사
+  modality: timeseries
+  function: quality
+  site: kamp
+  company: kamp
+  format: xlsx
+  encoding: binary              # [추론] xlsx 바이너리 컨테이너 (텍스트 코덱 N/A)
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/4_precision_inspection/L2_cnc_load_dimension_kamp.xlsx
+  node: precision_inspect
+  capture: null
+
+- datalake_id: L3_precision_machine
+  source: kamp
+  name: 정밀 가공 설비 상태
+  modality: timeseries          # 형태 실측: regDate ~139초 규칙 폴링(1시각=1행), inspection_value 연속측정. broken/damageDetection은 라벨(타겟)≠modality
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: xlsx
+  encoding: binary              # [추론]
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/4_precision_inspection/L3_precision_machine_kamp.xlsx
+  node: precision_inspect
+  capture: null
+
+- datalake_id: L2_inspection_image
+  source: kamp
+  name: 표면 검사 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: bmp
+  encoding: binary
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/5_surface_inspection/L2_inspection_image_kamp
+  node: surface_inspect
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      group_desc: { kind: image_set, n_images: 200, formats: { bmp: 200 }, label_files: 200 }
+
+- datalake_id: L3_rotary_drill
+  source: kamp
+  name: 회전 드릴 설비 상태
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: xlsx
+  encoding: binary              # [추론]
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/6_pdm/L3_rotary_drill_kamp.xlsx
+  node: pdm
+  capture: null
+
+- datalake_id: L3_solenoid_roughing
+  source: kamp
+  name: 솔레노이드 황삭 설비
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: xltx                  # Excel 템플릿 포맷 (원본 그대로 보존, D-174)
+  encoding: binary              # [추론]
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/6_pdm/L3_solenoid_roughing_kamp.xltx
+  node: pdm
+  capture: null
+
+- datalake_id: L3_guideloader_drill
+  source: kamp
+  name: 가이드로더 드릴 설비
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_1_metal_processing
+  path: module_1_metal_processing/6_pdm/L3_guideloader_drill_kamp.csv
+  node: pdm
+  capture: null
+
+# ═══ vid = module_2_forming_joining (성형·접합·표면처리·회전기) ═══════════════
+# 주의: vid = lines.yaml line_id 'module_2_forming_joining' (권위) / 물리 폴더는
+#       'module_2_forming_joining_surface' — path 만 물리 폴더, vid 는 manifest 권위.
+- datalake_id: L1_press_forming
+  source: kamp
+  name: 프레스 성형 공정
+  modality: timeseries          # 형태 실측: 449,862행 공정 센서(VALUE_*) 사이클 시계열. PASS_YN은 학습 라벨(타겟)≠modality
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/1_press/L1_press_forming_kamp.csv
+  node: press_forming
+  capture: null
+
+- datalake_id: L2_press_aluminum         # hint=L2_press_aluminum 권위 (물리폴더 _image 접미 무시)
+  source: kamp
+  name: 알루미늄 프레스 검사 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: jpg
+  encoding: binary
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/2_press_inspection/L2_press_aluminum_image_kamp
+  node: press_forming
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      group_desc: { kind: image_set, n_images: 50, formats: { jpg: 50 }, label_files: 40 }
+
+- datalake_id: L1_welding_auto
+  source: kamp
+  name: 자동 용접 공정
+  modality: timeseries
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8-sig            # BOM
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/3_welding/L1_welding_auto_kamp.csv
+  node: welding
+  capture: null
+
+- datalake_id: L1_welding_condition
+  source: kamp
+  name: 용접 조건 모니터링
+  modality: timeseries
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/3_welding/L1_welding_condition_kamp.csv
+  node: welding
+  capture: null
+
+- datalake_id: L2_welding_bead           # hint=L2_welding_bead 권위 (물리폴더 _quality 접미 무시)
+  source: kamp
+  name: 용접 비드 검사 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: jpg
+  encoding: binary
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/4_welding_inspection/L2_welding_bead_quality_kamp
+  node: welding_inspect
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      group_desc: { kind: image_set, n_images: 554, formats: { jpg: 554 }, label_files: 554 }
+
+- datalake_id: L2_welding_electrode
+  source: kamp
+  name: 용접 전극 검사 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: bmp
+  encoding: binary
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/4_welding_inspection/L2_welding_electrode_kamp
+  node: welding_inspect
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      # 동반 tabular 1건 = 라벨/사이드카 (이미지셋 부속, scalar 미등록)
+      group_desc: { kind: image_set, n_images: 100, formats: { bmp: 100 }, label_files: 1 }
+
+- datalake_id: L2_vision_taping
+  source: kamp
+  name: 테이핑 비전 검사 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: jpg
+  encoding: binary
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/5_surface_treatment_taping/L2_vision_taping_kamp
+  node: surface_treatment
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      group_desc: { kind: image_set, n_images: 774, formats: { jpg: 774 }, label_files: 0 }
+
+- datalake_id: L3_blower_vibration
+  source: kamp
+  name: 송풍기 진동 (회전기 PdM)
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/6_rotary_pdm/L3_blower_vibration_kamp.csv
+  node: rotary_pdm
+  capture: null                  # scalar x/y/z (3축 가속도) — group 아님(협폭)
+
+- datalake_id: L3_elevator_vibration
+  source: kamp
+  name: 엘리베이터 진동 (회전기 PdM)
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_2_forming_joining
+  path: module_2_forming_joining_surface/6_rotary_pdm/L3_elevator_vibration_kamp.csv
+  node: rotary_pdm
+  capture: null                  # scalar motor1_x/y/z/time — group 아님(협폭)
+
+# ═══ vid = module_3_polymer_electronic (폴리머·전자검사·진동신호) ═════════════
+- datalake_id: order_planning             # [추론] node 기준 semantic (hint=order_cp949, cp949 미반영 D-177)
+  source: kamp
+  name: 고객사 모델별 주문량
+  modality: order                # D-177: order 1건 실재 (R0 '0건' 정정)
+  function: reference
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: cp949                # D-177 cp949 3건 중 1
+  normalize_to: utf-8            # 적재 시 canonical 정규화 (원본 cp949 는 lineage 보존)
+  vid: module_3_polymer_electronic
+  path: "module_3_polymer_electronic/1_order_planning/고객사_모델별_주문량.csv"
+  node: order_planning
+  capture: null
+
+- datalake_id: L1_injection_optimize
+  source: kamp
+  name: 사출 성형 최적화
+  modality: timeseries          # 형태 실측: 117,783행 TimeStamp ~1분 규칙, 68 사출 공정 파라미터 시계열. NGmark/result는 라벨(타겟)≠modality
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/2_injection/L1_injection_optimize_kamp.csv
+  node: injection_molding
+  capture: null
+
+- datalake_id: L1_injection_production
+  source: kamp
+  name: 사출 성형 생산
+  modality: timeseries          # 형태 실측: 사출 공정 측정(Cycle/Filling/Cooling Time) shot 시계열(184행). Label은 학습 라벨(타겟)≠modality
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/2_injection/L1_injection_production_kamp.csv
+  node: injection_molding
+  capture: null
+
+- datalake_id: L1_cnc_machine_optimize
+  source: kamp
+  name: CNC 머신 최적화 (사출)
+  modality: timeseries
+  function: process
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/2_injection/L1_cnc_machine_optimize_kamp.csv
+  node: injection_molding
+  capture: null
+
+- datalake_id: L3_extrusion_pdm
+  source: kamp
+  name: 압출 설비 PdM
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv                    # 다중 csv 폴더 (3 파일) — ingest 동질성 검산
+  encoding: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/3_extrusion/L3_extrusion_pdm_kamp
+  node: extrusion
+  capture: null
+
+- datalake_id: L3_vacuum_pump
+  source: kamp
+  name: 진공 펌프 설비 상태
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8-sig            # BOM
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/4_precision_parts/L3_vacuum_pump_kamp.csv
+  node: precision_parts
+  capture: null
+
+- datalake_id: L2_auto_console_detect
+  source: kamp
+  name: 자동 콘솔 결함 검출 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: jpg
+  encoding: binary
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/5_semiconductor_interior_inspection/L2_auto_console_detect_kamp
+  node: semiconductor_inspect
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      group_desc: { kind: image_set, n_images: 20, formats: { jpg: 20 }, label_files: 0 }
+
+- datalake_id: L2_wafer_defect
+  source: kamp
+  name: 웨이퍼 결함 검사 이미지
+  modality: inspection-image
+  function: quality
+  site: kamp
+  company: kamp
+  format: png
+  encoding: binary
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/5_semiconductor_interior_inspection/L2_wafer_defect_kamp
+  node: semiconductor_inspect
+  capture: null
+  columns:
+    - name: image_set
+      column_kind: group
+      group_desc: { kind: image_set, n_images: 300, formats: { png: 300 }, label_files: 0 }
+
+- datalake_id: L4_ict_checker
+  source: kamp
+  name: ICT 체커 검사 결과
+  modality: event-log            # 형태 실측: 검사 사건 레코드(동일 검사일시에 부품별 다중 행 1검사=N행, 측정+검사결과). 이산 사건 로그
+  function: reference
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: cp949                # D-177 cp949 3건 중 2
+  normalize_to: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/6_ict_electric_inspection/L4_ict_checker_kamp.csv
+  node: ict_inspection
+  capture: null
+
+- datalake_id: L4_ict_inspection
+  source: kamp
+  name: ICT 회로 검사 결과
+  modality: event-log            # 형태 실측: 검사 항목별 레코드(TIMEVALUE 사건 단위, 측정+검사결과). 이산 사건 로그
+  function: reference
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: cp949                # D-177 cp949 3건 중 3
+  normalize_to: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/6_ict_electric_inspection/L4_ict_inspection_kamp.csv
+  node: ict_inspection
+  capture: null
+
+- datalake_id: L3_vibration_fault_sim
+  source: kamp
+  name: 진동 고장 시뮬 (488Hz)
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/7_vibration_simulation/L3_vibration_fault_sim_kamp.csv
+  node: vibration_simulation
+  capture: null
+  columns:
+    # D-176: FFT 아님 — raw 시간영역 waveform. 헤더 숫자 = 시간오프셋[s], 1열 = 캡처 timestamp.
+    - name: waveform
+      column_kind: group
+      group_desc:
+        kind: waveform
+        axis: time_offset_s
+        fs_hz: 488                          # 2048 samples / 4.1947s window (실측 산출)
+        window: [0.0, 4.1946721311475414]
+        n_cols: 2048
+        timestamp_col: "Time[s]"            # 1열 scalar (캡처 시각)
+
+- datalake_id: L3_vibration_fault_sim2
+  source: kamp
+  name: 진동 고장 시뮬2 (800Hz)
+  modality: timeseries
+  function: maintenance
+  site: kamp
+  company: kamp
+  format: csv
+  encoding: utf-8
+  vid: module_3_polymer_electronic
+  path: module_3_polymer_electronic/7_vibration_simulation/L3_vibration_fault_sim2_kamp.csv
+  node: vibration_simulation
+  capture: null
+  columns:
+    - name: waveform
+      column_kind: group
+      group_desc:
+        kind: waveform
+        axis: time_offset_s
+        fs_hz: 800                          # 2048 samples / 2.55875s window (실측 산출)
+        window: [0.0, 2.55875]
+        n_cols: 2048
+        timestamp_col: "Time[s]"
+
+# ═══ 적재 제외 (DB 미등록) — 문서화용, anti-silent (D-177 #15) ═══════════════
+# 기술검증결과서 리포트 = 8~9 이종 스키마 다중 xlsx (무헤더 1 포함). ML 데이터셋 아님 →
+# 데모 적재 보류. 34→32. 나머지 32건이 "어떤 데이터든" 메시지 증명.
+excluded:
+  - datalake_id: L1_mct_tool_improve
+    reason: "기술검증결과서 리포트 (8 이종 스키마 xlsx) — ML 데이터셋 아님, 데모 적재 보류 (D-177 #15)"
+    path: module_1_metal_processing/3_mct_machining/L1_mct_tool_improve_kamp
+    node: mct_machining
+    vid: module_1_metal_processing
+  - datalake_id: L3_mct_condition_inspect
+    reason: "기술검증결과서 리포트 (9 이종 스키마 xlsx, 무헤더 1) — ML 데이터셋 아님, 데모 적재 보류 (D-177 #15)"
+    path: module_1_metal_processing/3_mct_machining/L3_mct_condition_inspect_kamp
+    node: mct_machining
+    vid: module_1_metal_processing
