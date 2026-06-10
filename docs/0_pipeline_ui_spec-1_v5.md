@@ -561,6 +561,7 @@ CREATE TABLE IF NOT EXISTS datalake.constraints (
     column_name     TEXT NOT NULL,          -- 키 스코프 = datalake_id + column_name (D-167/D-171)
     constraint_spec JSONB NOT NULL,         -- 유저 과거 승인값 (prefill 제안 소스, 잠금 아님)
     approved_at     TIMESTAMPTZ DEFAULT now(),
+    approved_by     TEXT,                   -- DL-2.5: 승인 주체 (감사 추적, D-179)
     PRIMARY KEY (datalake_id, column_name)
 );
 
@@ -570,6 +571,19 @@ CREATE INDEX IF NOT EXISTS idx_datalake_vid      ON datalake.entries(vid);
 CREATE INDEX IF NOT EXISTS idx_datalake_function ON datalake.entries(function);
 CREATE INDEX IF NOT EXISTS idx_datalake_site     ON datalake.entries(site);
 CREATE INDEX IF NOT EXISTS idx_datalake_company  ON datalake.entries(company);
+
+-- DL-2.5: constraints 감사 추적 — append-only history (FK 없음=entry 삭제 후 보존, D-179)
+CREATE TABLE IF NOT EXISTS datalake.constraints_history (
+    history_id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    datalake_id     TEXT NOT NULL,
+    column_name     TEXT NOT NULL,
+    constraint_spec JSONB NOT NULL,
+    approved_by     TEXT,
+    approved_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    action          TEXT NOT NULL CHECK (action IN ('create','update','delete'))
+);
+CREATE INDEX IF NOT EXISTS idx_dl_constraints_hist_key
+    ON datalake.constraints_history(datalake_id, column_name);
 ```
 
 ### 1-6. Data Lake 정책 (DL 재설계 — 전면 재작성)
