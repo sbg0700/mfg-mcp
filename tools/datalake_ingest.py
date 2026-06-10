@@ -112,6 +112,32 @@ def read_header(path: Path, encoding: str) -> list[str]:
     return [str(c) if c is not None else f"__unnamed_{i}" for i, c in enumerate(first)]
 
 
+def _uniquify_headers(names: list[str]) -> tuple[list[str], list[str]]:
+    """비어있지 않은 중복 헤더를 결정론적 접미(__dup2,__dup3,…)로 유니크화. 드롭 0.
+    returns (유니크 이름들, ['원본→신규', …]). 빈 헤더는 read_header가 이미 __unnamed_i 로 처리.
+    datalake.columns PK=(datalake_id,name) 위반(replace_columns 크래시) 방지 + anti-silent
+    (중복을 조용히 버리지 않고 보존·재명명 후 경고)."""
+    used: set[str] = set()
+    counts: dict[str, int] = {}
+    out: list[str] = []
+    renamed: list[str] = []
+    for n in names:
+        if n not in used:
+            used.add(n)
+            counts[n] = 1
+            out.append(n)
+            continue
+        counts[n] += 1
+        new = f"{n}__dup{counts[n]}"
+        while new in used:                       # 생성 이름이 기존과 충돌 시 카운터 증가
+            counts[n] += 1
+            new = f"{n}__dup{counts[n]}"
+        used.add(new)
+        out.append(new)
+        renamed.append(f"{n}→{new}")
+    return out, renamed
+
+
 def infer_scalar_dtypes(path: Path, encoding: str, scalar_cols: list[str]) -> dict[str, str]:
     """scalar 컬럼만 소표본(100행)으로 dtype 시드 추정. group 컬럼은 읽지 않음.
     dry-run 시드일 뿐. 실패해도 'unknown' 으로 진행."""
@@ -282,6 +308,16 @@ def build_record(ds: dict, data_root: Path) -> dict:
         dtypes = infer_scalar_dtypes(target, ds["encoding"], header)
         rec["columns"] = [{"name": c, "dtype": dtypes.get(c, "unknown"),
                            "column_kind": "scalar", "group_desc": None} for c in header]
+
+    # 중복 컬럼명 가드 (전 브랜치 공통) — datalake.columns PK=(datalake_id,name) 위반 차단
+    # (replace_columns 2번째 INSERT 크래시 방지). 비어있지 않은 중복을 결정론적 접미(__dupN)로
+    # 유니크화(드롭 0, anti-silent). 빈 헤더는 read_header가 이미 __unnamed_i 로 처리.
+    _uniq, _dups = _uniquify_headers([c["name"] for c in rec["columns"]])
+    if _dups:
+        for _c, _nm in zip(rec["columns"], _uniq):
+            _c["name"] = _nm
+        _shown = ", ".join(_dups[:5]) + (" …" if len(_dups) > 5 else "")
+        warnings_out.append(f"중복 컬럼 {len(_dups)}건 비명명({_shown}) — 사람 교정 검토")
     return rec
 
 
