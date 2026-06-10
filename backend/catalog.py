@@ -8,6 +8,8 @@ backend/catalog.py — DL-1 datalake catalog 접근 계층.
   단일 SELECT, LLM 0 (D-163).
 - CRUD: entries(upsert/get/list) · columns(insert/get) · constraints(insert/get) · delete.
 - 컬럼명은 D-171 반영: column_name / constraint_spec.
+- 감사(D-179): constraints +approved_by, 모든 쓰기/삭제 경로는 동일 트랜잭션에서
+  constraints_history(append-only, FK 없음)에 action(create/update/delete) 기록.
 """
 from __future__ import annotations
 
@@ -67,6 +69,24 @@ CREATE INDEX IF NOT EXISTS idx_datalake_vid      ON datalake.entries(vid);
 CREATE INDEX IF NOT EXISTS idx_datalake_function ON datalake.entries(function);
 CREATE INDEX IF NOT EXISTS idx_datalake_site     ON datalake.entries(site);
 CREATE INDEX IF NOT EXISTS idx_datalake_company  ON datalake.entries(company);
+
+-- ── DL-2.5: constraints 감사 추적 (approved_by + append-only history, D-179) ──
+-- additive only (ADD COLUMN/CREATE ... IF NOT EXISTS), DROP 0. 라이브 적용 = C-2(백업·복원드릴 후).
+ALTER TABLE datalake.constraints
+    ADD COLUMN IF NOT EXISTS approved_by TEXT;
+
+CREATE TABLE IF NOT EXISTS datalake.constraints_history (
+    history_id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    datalake_id     TEXT NOT NULL,
+    column_name     TEXT NOT NULL,
+    constraint_spec JSONB NOT NULL,
+    approved_by     TEXT,
+    approved_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    action          TEXT NOT NULL CHECK (action IN ('create','update','delete'))
+);
+-- 감사 레코드는 entry 삭제 후에도 보존 → FK 없음(의도, D-179).
+CREATE INDEX IF NOT EXISTS idx_dl_constraints_hist_key
+    ON datalake.constraints_history(datalake_id, column_name);
 """
 
 
@@ -194,18 +214,37 @@ async def get_columns(datalake_id: str) -> list[dict[str, Any]]:
 
 # ── constraints (D-171: column_name / constraint_spec) ──────────────────
 async def insert_constraint(datalake_id: str, column_name: str,
-                            constraint_spec: dict) -> None:
-    """제약 = 유저 승인값(D-167). prefill 제안 소스이지 잠금 아님."""
+                            constraint_spec: dict,
+                            approved_by: str | None = None) -> None:
+    """제약 = 유저 승인값(D-167). prefill 제안 소스이지 잠금 아님.
+    감사(D-179): 동일 트랜잭션에서 기존 행 유무로 action(create/update) 선판별 →
+    upsert + constraints_history append. 이력은 앱 레벨(트리거 금지).
+    불변식: constraints 의 모든 쓰기 경로는 동일 트랜잭션 history append 의무."""
     pool = await get_pool()
-    await pool.execute(
-        """
-        INSERT INTO datalake.constraints (datalake_id, column_name, constraint_spec)
-        VALUES ($1,$2,$3::jsonb)
-        ON CONFLICT (datalake_id, column_name) DO UPDATE SET
-            constraint_spec=EXCLUDED.constraint_spec, approved_at=now()
-        """,
-        datalake_id, column_name, json.dumps(constraint_spec),
-    )
+    spec_json = json.dumps(constraint_spec)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            exists = await conn.fetchval(
+                "SELECT 1 FROM datalake.constraints "
+                "WHERE datalake_id=$1 AND column_name=$2", datalake_id, column_name)
+            action = "update" if exists else "create"
+            await conn.execute(
+                """
+                INSERT INTO datalake.constraints
+                    (datalake_id, column_name, constraint_spec, approved_by)
+                VALUES ($1,$2,$3::jsonb,$4)
+                ON CONFLICT (datalake_id, column_name) DO UPDATE SET
+                    constraint_spec=EXCLUDED.constraint_spec,
+                    approved_by=EXCLUDED.approved_by, approved_at=now()
+                """,
+                datalake_id, column_name, spec_json, approved_by)
+            await conn.execute(
+                """
+                INSERT INTO datalake.constraints_history
+                    (datalake_id, column_name, constraint_spec, approved_by, action)
+                VALUES ($1,$2,$3::jsonb,$4,$5)
+                """,
+                datalake_id, column_name, spec_json, approved_by, action)
 
 
 async def get_constraints(datalake_id: str) -> list[dict[str, Any]]:
@@ -226,10 +265,23 @@ async def get_constraints(datalake_id: str) -> list[dict[str, Any]]:
 async def delete_entry(datalake_id: str) -> None:
     """자식(constraints→columns) 명시 삭제 후 부모 삭제(단일 트랜잭션).
     CASCADE 미채택: §1-5 FK를 verbatim 유지하고 연쇄삭제를 코드에서 명시적으로
-    드러낸다(anti-silent-conversion)."""
+    드러낸다(anti-silent-conversion).
+    감사(D-179): 삭제되는 각 constraints 행을 constraints_history에 action='delete'로
+    append(행 0개면 append 0). 동일 트랜잭션."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
+            doomed = await conn.fetch(
+                "SELECT column_name, constraint_spec, approved_by "
+                "FROM datalake.constraints WHERE datalake_id = $1", datalake_id)
+            for r in doomed:
+                await conn.execute(
+                    """
+                    INSERT INTO datalake.constraints_history
+                        (datalake_id, column_name, constraint_spec, approved_by, action)
+                    VALUES ($1,$2,$3::jsonb,$4,'delete')
+                    """,
+                    datalake_id, r["column_name"], r["constraint_spec"], r["approved_by"])
             await conn.execute(
                 "DELETE FROM datalake.constraints WHERE datalake_id = $1", datalake_id)
             await conn.execute(

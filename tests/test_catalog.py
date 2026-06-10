@@ -96,3 +96,49 @@ async def test_constraints_crud(cat):
     await cat.delete_entry("c1")
     assert await cat.get_constraints("c1") == []
     assert await cat.get("c1") is None
+
+
+# ── DL-2.5 / D-179: constraints 감사 (approved_by + append-only history) ──────
+async def test_constraints_history_migration_idempotent(cat):
+    """ALTER/CREATE 2회 무해 — approved_by 컬럼 + constraints_history 테이블 멱등."""
+    import db
+    pool = await db.get_pool()
+    await cat.run_migration()
+    await cat.run_migration()
+    constr_cols = {r["column_name"] for r in await pool.fetch(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema='datalake' AND table_name='constraints'")}
+    assert "approved_by" in constr_cols
+    hist = await pool.fetchval(
+        "SELECT count(*) FROM information_schema.tables "
+        "WHERE table_schema='datalake' AND table_name='constraints_history'")
+    assert hist == 1
+
+
+async def test_constraint_history_create_update_delete(cat):
+    """create→update→delete 시 history 3행·action 정확·approved_by 보존."""
+    import db
+    pool = await db.get_pool()
+    await cat.upsert_entry(_entry("h1"))
+    await cat.insert_constraint("h1", "temp", {"type": "range", "min": 0, "max": 100}, approved_by="alice")
+    await cat.insert_constraint("h1", "temp", {"type": "range", "min": 10, "max": 90}, approved_by="bob")
+    await cat.delete_entry("h1")
+    rows = await pool.fetch(
+        "SELECT action, approved_by FROM datalake.constraints_history "
+        "WHERE datalake_id='h1' AND column_name='temp' ORDER BY history_id")
+    assert [r["action"] for r in rows] == ["create", "update", "delete"]
+    assert [r["approved_by"] for r in rows] == ["alice", "bob", "bob"]   # delete=직전행(bob) 보존
+
+
+async def test_history_survives_entry_delete(cat):
+    """entry 삭제 후에도 history 잔존(FK 없음, D-179)."""
+    import db
+    pool = await db.get_pool()
+    await cat.upsert_entry(_entry("h2"))
+    await cat.insert_constraint("h2", "x", {"type": "range", "min": 1, "max": 2}, approved_by="z")
+    await cat.delete_entry("h2")
+    n = await pool.fetchval(
+        "SELECT count(*) FROM datalake.constraints_history WHERE datalake_id='h2'")
+    assert n == 2                                # create + delete
+    assert await cat.get("h2") is None
+    assert await cat.get_constraints("h2") == []
