@@ -1110,3 +1110,23 @@ task별 모달 UI (Playwright):
 | # | 결정 | 사유 |
 |---|---|---|
 | D-178 | DL-2 B 백업 게이트 재정의 — **빈 테이블 additive ALTER는 논리 baseline으로 갈음, 정식 백업은 Phase 2 直前으로 이월.** ③ 라이브 ALTER(entries +format/+company +idx_datalake_company) 시점 datalake 3테이블 0행 → 보호 대상 0 + ALTER가 additive·멱등·가역(`DROP COLUMN/INDEX IF EXISTS`) → pg_dump 없이 진행. 정식 백업 게이트(PROTOCOL §3 "대량 ingest 전 스냅샷")는 데이터가 들어가는 Phase 2(实ingest) 直前으로 이동. 백업 메커니즘 = **python/asyncpg 논리 덤프**(datalake 스코프·TCP·owner=myeongsun 전건) — host pg_dump 미설치 + mfg-postgres가 byeonggab89 rootless 네임스페이스라 `docker exec` 영구 불가(STEP A0/C 실측). | 0행 additive ALTER에 정식 덤프는 보호가치 0(실제 보호점=데이터 적재 시점). docker-exec·host pg_dump 둘 다 환경상 불가 실측 → 논리 덤프가 유일 CC 경로이며 owner 권한으로 누락 0 전건 가능. PROTOCOL §3 취지(데이터 손실 차단) 유지, 게이트 시점만 의미점으로 이동(스킵 아님) |
+
+## 2026-06-11 — datalake-redesign DL-2.5 hardening: 복원드릴·constraints 감사·자동화테스트·설계잠금 (Master 저작 → CC 적용)
+
+명세: DL-2 GATE PASS 직후 pre-DL-3 경화 4건 — ① 복원 드릴(백업 실효성 입증) ② constraints 감사 스키마(approved_by + history) ③ throwaway PG 자동화 pytest ④ 설계 잠금. 라이브 쓰기 = constraints 감사 ALTER 1회(additive·DROP 0, 백업·복원드릴 선행). 브랜치: feature/datalake-redesign.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-179 | constraints에 approved_by 추가, 모든 쓰기/삭제는 동일 트랜잭션에서 datalake.constraints_history(append-only, FK 없음, 앱 레벨 기록)에 action과 함께 적재. 현재 테이블은 last-write-wins 유지(prefill 소스 단순성), 이력은 history가 보존. 불변식: datalake.constraints에 대한 모든 현재·미래 쓰기 경로(DL-3에서 추가될 함수 포함)는 동일 트랜잭션 내 constraints_history append를 의무로 한다. 전용 delete_constraint는 DL-3 구현 시 이 불변식 준수 하에 추가(이월 트래킹). | D-167의 본질=유저 승인 — 주체·시점·이전값 추적 없는 승인은 반쪽. IATF/CFR 맥락(D-173) 정합. 0행 시점 additive ALTER가 최저비용. |
+| D-180 | 판별자 type 필수. scalar: {"type":"range","min":num\|null,"max":num\|null,"unit":str\|null} (min/max 중 1개 이상 non-null). group(column_kind=group): {"type":"aggregate","metric":"rms"\|"peak"\|"mean"\|"std","op":"<="\|">=","value":num,"unit":str\|null}. group 제약의 column_name = datalake.columns의 group 행 name (키 정합). 등록 시 type 화이트리스트 검증, 확장은 type 추가로. Page 3 폼은 column_kind로 렌더 분기(scalar=range 폼 / group=aggregate 폼). __dupN 컬럼은 폼에서 원본 헤더명 + 중복 배지로 표기(드롭·은닉 금지). | DL-3 진입 전 shape 미잠금 시 구현 중 즉흥 결정 = 설계잠금 원칙 첫 위반이 됨. |
+| D-181 | 백엔드 = 신규 엔드포인트를 /api/dl/* 네임스페이스로 additive 추가, 구 핸들러 무변경·무분기. 프론트 = 신규 Page 2/3을 env 플래그(DL_UI_V2, 기본 off) 뒤 별도 라우트에 마운트, 구 페이지 무변경. DL-5 green 후 구 경로·플래그 제거. | 프론트만 게이트하고 백엔드 핸들러를 공유 분기하는 반쪽 게이트가 회귀의 고전적 원인 — additive 네임스페이스가 PROTOCOL §3 '구 경로 생존'과 구조적으로 정합. |
+| D-182 | 게이트 증거 = repo 내 pytest (일회성 터미널 출력 박제). DB 테스트는 throwaway PG(127.0.0.1:55432/dl_test) 전용, ambient PG* env 미사용, 55432 하드 가드(E3 구조화). 개발 반복 쓰기 = throwaway, 라이브 접촉 = 게이트 검증 시점만. DL-3부터 검증 핵심부는 자동화 테스트 동반 필수(제약 머지 3케이스·재승인 게이트). | 정책 선언(근거 본문 내재). |
+| D-183 | 복원 드릴(fresh dump → throwaway 복원 → 동등성 검증) 1회 성공 = DL-3 진입 게이트. 이후 모든 재적재·스키마 변경 전 fresh dump 필수, 복원 드릴은 데이터 형상 변경 시(신규 테이블 등) 재실시. | 복원 미검증 백업은 백업이 아님 — constraints는 재생성 불가 데이터의 시작점. |
+
+### 정합 확인
+- D-167 강화(D-179 감사 추적) · D-161/D-176 group descriptor 정합(D-180 aggregate shape·키잉) · PROTOCOL §3 '구 경로 생존' 정합(D-181 additive 네임스페이스) · D-178 백업 게이트 보강(D-183 복원 드릴).
+- 구현 매핑: 자동화 테스트(D-182) = 커밋 ①. catalog MIGRATION_SQL additive + insert_constraint/delete_entry history(D-179) = 커밋 ②. spec-1 §1-5 동기(D-179) = 커밋 ③.
+- 라이브 적용: constraints 감사 ALTER 1회(C-2) — count 32/569/0 불변, 타 스키마(agent_logs/lineage/metadata) 미접촉, 멱등 확인.
+
+### DL-2.5 완료 = DL-3 진입 가능
+다음: DL-3(constraint_spec shape v1 = D-180 구현 + Page 3 폼 column_kind 렌더 분기 + 제약 머지/재승인 게이트). 진입 게이트(D-183): 복원 드릴 1회 성공 = 충족(2026-06-11). 자동화 테스트 동반 필수(D-182).
