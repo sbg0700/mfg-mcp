@@ -16,11 +16,12 @@ tools/datalake_ingest.py — DL-2 KAMP 적재 도구 (외부 CLI, manifest-drive
     → 적재계획(D-172 완전 레코드) 출력. **복사 0 · DB write 0 · 네트워크/LLM 0.**
 
 [--execute] (DL-2 실적재 greenlight 뒤에만):
-    data/lake/<id>/ 복사 + catalog upsert + columns full-replace.
-    ★ 현재 하드 게이트 차단 (EXECUTE_ENABLED=False):
-      - DB 백업 게이트(PROTOCOL §3) 미완
-      - catalog.replace_columns(멱등 columns full-replace) 미구현
-    → --execute 호출해도 즉시 abort. 2-STOP 강제.
+    레코드별 src→data/lake/<id>/ 복사(인코딩·형태별 분기) + catalog.upsert_entry(완전레코드)
+    + catalog.replace_columns(columns full-replace). constraints 미접촉(D-167).
+    ★ 하드 게이트 (EXECUTE_ENABLED=False) — 2-STOP:
+      본체·replace_columns 구현 완료. 운영 선행(① DB 백업 ③ 라이브 ALTER format/company)
+      + ④ Master greenlight 후 EXECUTE_ENABLED=True 커밋(Phase 2)으로만 활성.
+    → 그 전까지 --execute 호출해도 즉시 abort.
 
 불변식:
     D-161/D-176 광폭/숫자헤더 = column_kind=group descriptor (per-column 금지).
@@ -389,23 +390,67 @@ def to_db_entry(rec: dict) -> dict:
 
 
 def execute_load(records: list[dict], data_root: Path) -> None:
-    """실적재 경로 — catalog 재사용. ★ 현재 하드 게이트로 차단(2-STOP)."""
+    """실적재 경로 — catalog 재사용. greenlight(EXECUTE_ENABLED=True) 후에만 본체 도달.
+    레코드별 순서(D-172/D-167): ① src→data/lake/<id>/ 복사(인코딩·형태별 분기)
+      → ② catalog.upsert_entry(to_db_entry(rec)) [완전레코드, FK 부모 선존]
+      → ③ catalog.replace_columns(id, rec['columns']) [DELETE→re-INSERT 멱등].
+    constraints 절대 미접촉(D-167). 부분 적재 금지(소스 전수 존재 사전점검, anti-silent)."""
     if not EXECUTE_ENABLED:
         sys.exit(
-            "ABORT: 실적재 비활성(EXECUTE_ENABLED=False).\n"
-            "  필요 선행: ① DB 백업 게이트(PROTOCOL §3) ② catalog.replace_columns "
-            "(columns 멱등 full-replace) 추가 ③ 라이브 ALTER(format/company) 실행 ④ Master greenlight.\n"
-            "  현재 단계 = dry-run 까지만. 실적재 0."
+            "ABORT: 실적재 비활성(EXECUTE_ENABLED=False) — 2-STOP 하드게이트.\n"
+            "  본체·replace_columns 구현 완료. 운영 선행(① DB 백업 ③ 라이브 ALTER format/company)\n"
+            "  + ④ Master greenlight 후 EXECUTE_ENABLED=True 커밋(Phase 2)으로만 활성. 현재 실적재 0."
         )
-    # --- greenlight 후 활성화 (참고 구현; replace_columns 추가 전엔 도달 불가) ---
-    import asyncio, shutil  # noqa: F401
+    # --- greenlight + EXECUTE_ENABLED=True 후 활성 ---
+    import asyncio
+    import shutil
     sys.path.insert(0, str(REPO_ROOT / "backend"))
-    import catalog  # noqa: F401  (재사용: upsert_entry=full-record-replace D-172 / replace_columns 필요)
-    raise NotImplementedError(
-        "실적재 본체는 greenlight 시 활성: per-record (data_root/path)→data/lake/<id>/ 복사 → "
-        "catalog.upsert_entry(to_db_entry(rec), D-172) → catalog.replace_columns(id, rec['columns']) "
-        "[columns DELETE→re-INSERT, 멱등] · constraints 미접촉(D-167). cp949 는 normalize_to=utf-8 정규화."
-    )
+    import catalog
+    import db
+
+    lake_root = REPO_ROOT / "data" / "lake"
+
+    # 사전점검: 소스 경로 전수 존재 (부분 적재 차단, anti-silent-drop)
+    missing = [r["datalake_id"] for r in records
+               if not Path(r["_source_path"]).exists()]
+    if missing:
+        sys.exit(f"ABORT: 소스 경로 없음 {missing} — 적재 중단(부분 적재 금지).")
+
+    def _copy_one(rec: dict) -> str:
+        """src → data/lake/<id>/. 반환=복사모드(로그용). 멱등(덮어쓰기/트리병합)."""
+        src = Path(rec["_source_path"])
+        dst_dir = lake_root / rec["datalake_id"]
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            # 폴더형(image_set 7 · 다중 csv L3_extrusion_pdm) — 트리 통째(멱등)
+            shutil.copytree(src, dst_dir, dirs_exist_ok=True)
+            return "dir"
+        if rec["encoding"] == "cp949":
+            # cp949 3건 — 바이트복사 금지: cp949 read → utf-8 write(canonical, D-177).
+            # 원본은 source(cp949) 보존 → 재실행 = source 재독으로 멱등.
+            (dst_dir / src.name).write_text(
+                src.read_text(encoding="cp949"), encoding="utf-8")
+            return "cp949→utf-8"
+        # utf-8 / utf-8-sig / binary(xlsx·xltx·이미지) — 바이트복사(BOM·바이너리 보존)
+        shutil.copy2(src, dst_dir / src.name)
+        return f"bytes:{rec['encoding']}"
+
+    async def _run() -> None:
+        try:
+            total = len(records)
+            for i, rec in enumerate(records, 1):
+                cid = rec["datalake_id"]
+                mode = _copy_one(rec)                               # ① 복사
+                await catalog.upsert_entry(to_db_entry(rec))        # ② entries (D-172, FK 부모)
+                await catalog.replace_columns(cid, rec["columns"])  # ③ columns full-replace (D-167)
+                print(f"  ✓ [{i:>2}/{total}] {cid}: copy={mode} "
+                      f"→ upsert_entry → replace_columns({len(rec['columns'])} cols)")
+            print(f"\n실적재 완료: {total} datasets → data/lake/ + datalake.entries/columns "
+                  f"(constraints 미접촉, D-167). 멱등 재적재 안전.")
+        finally:
+            await db.close_pool()
+
+    asyncio.run(_run())
 
 
 def main(argv: list[str] | None = None) -> int:
