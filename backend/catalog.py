@@ -158,6 +158,27 @@ async def insert_column(datalake_id: str, name: str, dtype: str | None = None,
     )
 
 
+async def replace_columns(datalake_id: str, columns: list[dict[str, Any]]) -> None:
+    """columns 멱등 full-sync — DELETE(id) → re-INSERT. 재적재 시 stale 컬럼 제거 포함
+    (columns판 full-record-replace, D-172 정합). constraints 미접촉(D-167; FK가
+    entries 참조라 columns 삭제 무영향). 단일 트랜잭션. 호출 순서: upsert_entry 뒤."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM datalake.columns WHERE datalake_id = $1", datalake_id)
+            for c in columns:
+                gd = c.get("group_desc")
+                await conn.execute(
+                    "INSERT INTO datalake.columns "
+                    "(datalake_id, name, dtype, column_kind, group_desc) "
+                    "VALUES ($1,$2,$3,$4,$5::jsonb)",
+                    datalake_id, c["name"], c.get("dtype"),
+                    c.get("column_kind", "scalar"),
+                    json.dumps(gd) if gd is not None else None,
+                )
+
+
 async def get_columns(datalake_id: str) -> list[dict[str, Any]]:
     pool = await get_pool()
     rows = await pool.fetch(
