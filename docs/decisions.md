@@ -1104,3 +1104,9 @@ task별 모달 UI (Playwright):
 
 ### DL-2 다음 단계
 요청 A(write-0): `catalogs/datalake_manifest.yaml` 32행 작성 + ingest manifest-driven 리팩터(EXECUTE_ENABLED=False 유지, 복사·INSERT 0, dry-run이 manifest↔1_data 정합 검산). → dry-run 통과 → 요청 B(실적재 = replace_columns + 백업 게이트 + Master greenlight).
+
+## 2026-06-10 — DL-2 B Phase 1 (진입게이트 ①③ 실행 + 백업게이트 재정의)
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-178 | DL-2 B 백업 게이트 재정의 — **빈 테이블 additive ALTER는 논리 baseline으로 갈음, 정식 백업은 Phase 2 直前으로 이월.** ③ 라이브 ALTER(entries +format/+company +idx_datalake_company) 시점 datalake 3테이블 0행 → 보호 대상 0 + ALTER가 additive·멱등·가역(`DROP COLUMN/INDEX IF EXISTS`) → pg_dump 없이 진행. 정식 백업 게이트(PROTOCOL §3 "대량 ingest 전 스냅샷")는 데이터가 들어가는 Phase 2(实ingest) 直前으로 이동. 백업 메커니즘 = **python/asyncpg 논리 덤프**(datalake 스코프·TCP·owner=myeongsun 전건) — host pg_dump 미설치 + mfg-postgres가 byeonggab89 rootless 네임스페이스라 `docker exec` 영구 불가(STEP A0/C 실측). | 0행 additive ALTER에 정식 덤프는 보호가치 0(실제 보호점=데이터 적재 시점). docker-exec·host pg_dump 둘 다 환경상 불가 실측 → 논리 덤프가 유일 CC 경로이며 owner 권한으로 누락 0 전건 가능. PROTOCOL §3 취지(데이터 손실 차단) 유지, 게이트 시점만 의미점으로 이동(스킵 아님) |
