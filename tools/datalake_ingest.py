@@ -55,9 +55,9 @@ TABULAR_EXTS = {".csv", ".xlsx", ".xls", ".xltx", ".xlsm"}
 LABEL_EXTS = {".txt", ".json", ".xml", ".csv"}              # 이미지셋 동반 라벨/주석
 
 # ★ 실적재 하드 게이트. 백업 게이트 + replace_columns 추가 후 Master greenlight 로만 True.
-# DL-2 B Phase 2 활성(2026-06-10): 중복헤더 가드(3d9671f)+dry-run 32 green + pre-ingest 논리백업
-# (datalake_manufacturing_20260610T110921.json) + Master ④ 조건부 greenlight 충족 → True.
-EXECUTE_ENABLED = True
+# DL-2 B Phase 2 적재 완료(2026-06-10, 32건 GATE PASS) 후 게이트 재무장 → False.
+# 향후 재적재 = 의도적 True 플립 + D-178 fresh 백업(datalake_backup.py --dump) 선행.
+EXECUTE_ENABLED = False
 
 
 # ── manifest 로딩 (권위 메타) ─────────────────────────────────────────────
