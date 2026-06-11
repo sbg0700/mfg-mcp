@@ -22,7 +22,7 @@
 - **`datalake_entries`** — 타입드 인덱스 컬럼: `datalake_id, source, name, modality, function, site, vid, size_bytes, encoding, format, data_path, reusable_flag, company, registered_at`. (anti-silent-conversion: 런타임 슬롯/폴더 추론 대신 권위 컬럼. `format`=원본 포맷·#11, `company`=멀티테넌트 필터 — D-174.)
 - **`datalake_columns`** — per-column `(name, dtype)`. → Page 3가 실 컬럼명으로 폼 렌더 = **D-90 구조적 충족**.
   - **광폭/숫자헤더 데이터(L3 vibration = raw 시간영역 waveform)는 per-column 부적합**(시간오프셋 컬럼 수천). → **컬럼-그룹/행렬 descriptor**(예: `waveform: N개 numeric-header, axis=time_offset_s/fs_hz/window`)로 저장. `column_kind = scalar | group` 구분. (R0 "FFT" 라벨은 헤더 실측으로 waveform 정정 — D-176.)
-- **`datalake_constraints`** — per `(datalake_id, column)`. **유저 승인으로만 채움**(시스템/modules.yaml/프로파일 절대 안 채움 = D-43).
+- **`datalake_constraints`** — per `(datalake_id, column)`. **유저 승인으로만 채움**(시스템/modules.yaml/프로파일 절대 안 채움 = D-43). +approved_by, constraints_history append-only — 모든 쓰기 경로는 동일 트랜잭션 history append 의무 (D-179).
 - 비대칭 수용: **catalog=DB / session·lineage=인메모리**(명세상 Sprint 2 postgres).
 
 ### 1.3 vid (가상 그룹 ID)
@@ -56,7 +56,7 @@
   - 키 스코프 = `datalake_id + column`.
   - 머지 = **세션 오버라이드 > 카탈로그 prefill(재승인) > 빈칸(유저 입력)**.
   - 변경 시 = **"이번만" vs "메모리 업데이트(영속)"** 질문.
-  - **불변식:** catalog 제약 = *기억 보조(제안)*이지 *권위(디폴트)*가 아니다. (캐시값이 자동으로 굳으면 = 사실상 시스템 디폴트 = D-43 위반.)
+  - **불변식:** catalog 제약 = *기억 보조(제안)*이지 *권위(디폴트)*가 아니다. (캐시값이 자동으로 굳으면 = 사실상 시스템 디폴트 = D-43 위반.) constraint_spec 캐노니컬 shape = D-180/D-185(type 화이트리스트 = §4-4 5종 ∪ aggregate, group 키잉 = columns group 행 name, __dupN = 원본 헤더명+중복 배지).
 - **검증·알람:** 제약 검증 = `validator`가 **원본 backup parquet 직접 대조**(정규화 출력 아님 — 옳음). MCP `/check_constraints`는 죽은 코드(미호출). 알람 = validator 단계의 **"제약 공백/상태 알람"**(데이터-미업로드 알람과 대칭) 신설. 승인 게이트 = Page 3 입력 시점 / 상태 알람 = validator 시점.
 
 ### 2.3 EDA flow-context

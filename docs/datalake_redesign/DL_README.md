@@ -20,7 +20,7 @@
 - **프로토콜 수립 완료** (PROTOCOL 참조)
 - **R0 완료 = GATE PASS** (baseline 태그·이음매·KAMP·환경 확인 — R0_HANDOFF 참조)
 - **오픈 3건 전부 해소**: git author=myeongsun97(현 config) / FFT=컬럼-그룹 descriptor / step2=252·step3=322줄
-- **다음 단계: R1**(명세 patch) 착수 가능
+- **DL-2 완료 → DL-2.5(hardening) 완료(태그 DL-2.5) → 다음 단계: DL-3**
 
 ## 새 챗 재개 — 읽기 순서
 1. **README** (이 문서 — 현재 단계·좌표·역할)

@@ -38,12 +38,14 @@
 - **granular 커밋** — 되감기 지점 촘촘히.
 - **feature-gate(Page 2/3)** — 신규 경로를 구 경로와 공존, DL-5 green 전까지 구 경로 안 뜯음.
 - **baseline 태그(R0)** + **R-final 롤백 드릴**(사고 전 1회 되감아 복구 절차 검증).
+- 개발 반복 쓰기 = throwaway PG 전용, 라이브 = 게이트 검증 시점만 (D-182).
+- 복원 드릴(fresh dump → throwaway 복원 → 동등성 검증) = DL-3 진입 게이트. 이후 재적재·스키마 변경 전 fresh dump 필수 (D-183).
 
 ## 4. 검증 핵심부 (Master 코드리뷰 필수 항목)
 - **R1** — 문서 교차검증(blueprint↔spec↔variable_index↔decisions 모순 0). 순수 문서, 코드 0.
 - **DL-1** — **진입 게이트: ① `.env` DB 접속 추가(5432 열림 확인, 자격=사용자 시크릿) ② 변경 전 build+smoke green ③ 공유 PG(byeonggab89)면 첫 쓰기 전 백업**; 마이그레이션 멱등(2회=동일), `datalake.get` round-trip, additive(기존 스키마 불변).
 - **DL-2** — **진입 게이트: DB 백업 완료**; 건수 일치(스캔=INSERT), 인코딩 깨짐 0, `datalake.get` 샘플 읽힘, 멱등 재적재.
-- **DL-3** — 제약 머지 3케이스(세션/카탈로그prefill/빈칸), **재승인 게이트(prefill 자동적용 0)**, 기존 흐름 회귀 0.
+- **DL-3** — 제약 머지 3케이스(세션/카탈로그prefill/빈칸), **재승인 게이트(prefill 자동적용 0)**, 기존 흐름 회귀 0. + 자동화 테스트 동반(제약 머지 3케이스·재승인 게이트, D-182) + feature-gate = /api/datalake/* additive + VITE_DL_UI_V2 (D-181/D-184).
 - **DL-4** — vid 끝까지 전파, EDA payload에 slim 들어감, 결정론 `compute_chart_data` 불변(D-59).
 - **DL-5** — 핵심 compute 엔진(Inspector·Planner·Executor·Validator·학습) **기존 로직 불변**(aggregator·EDA·데이터 seam은 additive diff 허용, 로직 0 확인), e2e 실데이터 완주, 기존 8 챌린지 회귀 통과.
 
