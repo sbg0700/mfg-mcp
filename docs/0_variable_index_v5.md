@@ -33,7 +33,7 @@
 | `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/kamp/L1_press_forming/`, `L1_cnc_lathe_quality/` 등 (시나리오 A 가정, spec-1 Part 1-9-1 결정 대기) | spec-1.md Part 1-3 |
 | `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/kamp/L2_wafer_defect/`, `L2_welding_bead/` 등 (시나리오 A 가정) | 〃 |
 | `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/kamp/<event-log 더미>/` (시나리오 A 가정) | 〃 |
-| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/kamp/order_cp949/` (시나리오 A 가정) | 〃 |
+| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/kamp/order_planning/` (시나리오 A 가정) | 〃 |
 
 각 MCP 서버 = FastAPI HTTP, 같은 7도구 계약 (CLAUDE.md §4).
 
@@ -92,7 +92,7 @@
 ### Line 3 — 폴리머 성형·전자 검사·진동 신호 (7 Node)
 | Node ID | Display | Max Modules | hint_datasets |
 |---|---|---|---|
-| `order_planning` | 주문 계획 | 1 | order_cp949 |
+| `order_planning` | 주문 계획 | 1 | order_planning |
 | `injection_molding` | 사출 성형 | 3 | L1_injection_optimize, L1_injection_production, L1_cnc_machine_optimize |
 | `extrusion` | 압출 | 1 | L3_extrusion_pdm |
 | `precision_parts` | 정밀 부품 | 1 | L3_vacuum_pump |

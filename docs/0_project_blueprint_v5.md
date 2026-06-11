@@ -1250,7 +1250,7 @@ CLAUDE.md > 본 핸드오버 > decisions.md > specs/*.md > 코드 주석 > 코�
       display_name: "주문 계획"
       max_modules: 1
       available_modules:
-        - { function: reference, hint_dataset: "order_cp949" }
+        - { function: reference, hint_dataset: "order_planning" }
     - node_id: injection_molding
       display_name: "사출 성형"
       max_modules: 3

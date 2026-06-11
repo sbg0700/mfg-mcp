@@ -16,8 +16,8 @@
 #
 # [작성 메모 — Master/병갑 큐레이션 결정 지점]
 #  (1) order_planning: datalake_id = node 기준 'order_planning' (cp949 를 id 에 안 박음, D-177).
-#      ↔ lines.yaml hint_dataset 은 'order_cp949'. Page2↔catalog 바인딩 정합(D-173)을 위해
-#      lines.yaml hint 도 'order_planning' 으로 정정 필요 가능 → Master 확정.  [추론]
+#      lines.yaml hint_dataset 도 'order_planning' 정정 완료(3473c06) + Master 룰링 확정(2026-06-11)
+#      — 메모 클로즈. ※ 합성 더미 order_cp949.csv(data/synthetic, 챌린지 1)는 별개 네임스페이스.
 #  (2) modality = 데이터 "형태" 기준 (D-163 MCP 라우팅 키): 연속 센서 신호=timeseries / 이산 사건 레코드=event-log.
 #      ★ 판정/라벨 컬럼(PASS_YN·NGmark·Label·result·검사결과)은 function·학습 타겟이지 modality 아님 — 라벨로 분류 금지.
 #      event-log 2건 (형태 실측 확정, Master 검증 2026-06-09):
@@ -346,7 +346,7 @@ datasets:
   capture: null                  # scalar motor1_x/y/z/time — group 아님(협폭)
 
 # ═══ vid = module_3_polymer_electronic (폴리머·전자검사·진동신호) ═════════════
-- datalake_id: order_planning             # [추론] node 기준 semantic (hint=order_cp949, cp949 미반영 D-177)
+- datalake_id: order_planning             # node 기준 semantic 확정 (구 hint order_cp949 → 3473c06 정정, cp949 미반영 D-177)
   source: kamp
   name: 고객사 모델별 주문량
   modality: order                # D-177: order 1건 실재 (R0 '0건' 정정)
