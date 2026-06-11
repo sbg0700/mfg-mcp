@@ -33,6 +33,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+import datalake_api                          # DL-3a — /api/datalake/* (D-184/D-187)
+app.include_router(datalake_api.router)      # additive only, 구 핸들러 무접촉 (D-181)
 
 FRONTEND = ROOT / "frontend" / "_legacy_dashboard.html"   # STEP 1B-3a: 새 React 앱은 Vite(5173)에서, 백엔드 / 는 레거시 보존
 
