@@ -432,6 +432,9 @@ class StepResult:
 | **7** | **`/api/datalake/list`** | GET | 3 | **Data Lake 데이터셋 목록 (필터 지원)** |
 | **8** | **`/api/datalake/register`** | POST | 3 | **신규 데이터셋 등록 (업로드 또는 경로)** |
 | **9** | **`/api/datalake/{id}/metadata`** | GET | 3 | **데이터셋 메타 조회** |
+| **9b** | **`/api/datalake/{id}/columns`** | GET | 3 | **실컬럼 목록 — Page 3 폼 소스 (D-90/D-161, `__dupN` 그대로 노출) (DL-3, D-187)** |
+| **9c** | **`/api/datalake/{id}/constraints`** | GET | 3 | **제약 prefill 소스 (D-167 — 제안일 뿐 잠금 아님) (DL-3, D-187)** |
+| **9d** | **`/api/datalake/{id}/constraints`** | POST | 3 | **제약 "영속 업데이트" 쓰기 경로 (insert_constraint 경유 = D-179, type 화이트리스트 = D-185) (DL-3, D-187)** |
 | **10** | **`/api/datalake/{id}`** | DELETE | 3 | **데이터셋 삭제 (등록자 권한)** |
 | 11 | `/api/execute_pipeline` | POST | 4 | 전체 파이프라인 실행 (resumable orchestrator) |
 | 12 | `/api/pipeline/{session_id}/status` | GET | 4 | 진행률 폴링 (SSE 폴백) |
@@ -1044,6 +1047,8 @@ GET /api/datalake/list?vid=<vid>&function=<module.function>&site=<optional>
 
 등록 API 표면 변경 없음(Mode A 업로드 / Mode B 서버경로, Part 1-6). 등록 후 catalog 갱신 + 자동 선택.
 
+> **DL-3 = Mode B 한정 (D-186):** Mode A(파일 업로드)는 이월 — 데모는 사전 적재 파일 사용. Mode A(multipart) 수신 시 명시적 400 + "Mode B(server_path)만 지원" 안내.
+
 #### 제약 — 핵심 가드 (D-167)
 
 - **입력 = 무조건 유저.** 시스템은 범용 범위조차 제안 0 (D-43 강화). 근거: SI는 고객사 머신별 스펙·limit을 정확히 모름 → 선택권을 유저에게.
@@ -1203,7 +1208,7 @@ required_columns:
 | `required_for` 제약 미입력 | "다음" 클릭 시 LLM judge | 알람 모달 |
 | 제약 값 타입 검증 | 폼 입력 시 | 필드별 에러 |
 | YAML 파싱 실패 | YAML 저장 시 | 모달 안 에러 |
-| 신규 등록 시 100MB 초과 (Mode A) | 업로드 시 | 토스트 + Mode B 권유 |
+| 신규 등록 시 100MB 초과 (Mode A) | 업로드 시 | 토스트 + Mode B 권유 **[이월 — D-186]** |
 
 ### 4-8. API 호출
 
@@ -1273,7 +1278,7 @@ async function handleNext() {
 - [ ] Data Lake 드롭다운 로드 (`GET /api/datalake/list`)
 - [ ] 데이터셋 선택 → 메타 표시 (모달리티/인코딩)
 - [ ] 신규 등록 모달 동작
-- [ ] Mode A (파일 업로드) 동작
+- [ ] Mode A (파일 업로드) 동작 **[이월 — D-186]**
 - [ ] Mode B (서버 경로) 동작
 - [ ] 등록 후 카탈로그 자동 갱신
 - [ ] `constraint_keys` 기반 폼 자동 생성

@@ -30,10 +30,10 @@
 
 | 모달리티 | 정의 위치 (서버) | 도구 위치 | 데이터 위치 | 명세 |
 |---|---|---|---|---|
-| `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/kamp/L1_press_forming/`, `L1_cnc_lathe_quality/` 등 (시나리오 A 가정, spec-1 Part 1-9-1 결정 대기) | spec-1.md Part 1-3 |
-| `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/kamp/L2_wafer_defect/`, `L2_welding_bead/` 등 (시나리오 A 가정) | 〃 |
-| `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/kamp/<event-log 더미>/` (시나리오 A 가정) | 〃 |
-| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/kamp/order_planning/` (시나리오 A 가정) | 〃 |
+| `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/L1_press_forming/`, `data/lake/L1_cnc_lathe_quality/` 등 (`data/lake/<id>/` flat 실 레이아웃, D-159) | spec-1.md Part 1-3 |
+| `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/L2_wafer_defect/`, `data/lake/L2_welding_bead/` 등 (〃) | 〃 |
+| `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/L4_ict_checker/`, `data/lake/L4_ict_inspection/` (〃) | 〃 |
+| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/order_planning/` (〃) | 〃 |
 
 각 MCP 서버 = FastAPI HTTP, 같은 7도구 계약 (CLAUDE.md §4).
 
@@ -596,7 +596,7 @@ styles.css 신규 클래스 (D-140 패턴 일관 — 추가만): `.train-modal`/
 
 | 단계 | 데이터 | 사용자 | 검증 우선 |
 |---|---|---|---|
-| 알파 | KAMP 더미 (`data/lake/kamp/` — 시나리오 A 가정, 알파 시 1-9-1 결정 확정) | 개발자 본인 | Phase 3 의 8 검증 항목 모두 (컴포넌트/API/에러/테스트/데모/부록 A·B·C) + LLM 모니터링 7 지표 + 데이터 경로 시나리오 A/B 최종 결정 |
+| 알파 | KAMP 32건 (`data/lake/<id>/` flat 실 레이아웃 — D-159, 시나리오 A/B 물리경로 선택지 폐기) | 개발자 본인 | Phase 3 의 8 검증 항목 모두 (컴포넌트/API/에러/테스트/데모/부록 A·B·C) + LLM 모니터링 7 지표 + 데이터 경로 시나리오 A/B 최종 결정 |
 | 베타 | 4 시나리오 (B/D/A/C) | 팀원 시연 | UX + 시연 흐름 + 차별점 5가지 전달 |
 | 운영 | 고객 자기 데이터 (`data/lake/registered/`) | 공장 관리자 | 실용성 + 가치 + KAMP 등록 시나리오 A/B 결정 |
 

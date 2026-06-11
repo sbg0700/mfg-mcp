@@ -1132,3 +1132,12 @@ task별 모달 UI (Playwright):
 
 ### DL-2.5 완료 = DL-3 진입 가능
 다음: DL-3(constraint_spec shape v1 = D-180 구현 + Page 3 폼 column_kind 렌더 분기 + 제약 머지/재승인 게이트). 진입 게이트(D-183): 복원 드릴 1회 성공 = 충족(2026-06-11). 자동화 테스트 동반 필수(D-182).
+
+## 2026-06-11 — datalake-redesign DL-3a: /api/datalake/* 백엔드 표면 (Master 저작 → CC 적용)
+
+명세: catalog 계층(entries/columns/constraints)을 `/api/datalake/*`로 노출 — additive only(D-181/D-184), 구 핸들러 무변경. register = Mode B 한정. 개발·테스트 전부 throwaway 55432(D-182), 라이브 접촉 0.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-186 | register = Mode B(서버 경로 메타 등록) 한정 — Mode A(파일 업로드)는 이월(데모는 사전 적재 파일 사용, 실시연 여부는 데모 영상 후 속도·성능 보고 재결정). datalake_id = slug(name)([a-z0-9_]), 충돌 시 409(자동 변형 금지 — anti-silent). function_hint는 유저 힌트 입력으로 받아 권위 컬럼 function에 해석·저장(rename 아님, R1 이월 소화). 등록 데이터도 data/lake/<id>/ 귀결 + 동일 catalog 경로(§1-6 불변). spec §4-11의 Mode A 체크 2항목은 이월 표기. | 병갑 확정(2026-06-11). 업로드 전송은 ingest 단건 API화라 DL-3 스코프 초과 — spec 표면과의 차이는 본 결정+체크리스트 이월 표기로 기록해 교차검증 모순 잔재 차단(R1 A/B-잔재 교훈). |
+| D-187 | DL-3 API 표면 확장 — GET /api/datalake/{id}/columns · GET·POST /api/datalake/{id}/constraints 3종을 spec §1-3/spec-3 §9-1 표에 additive 행으로 추가. columns = Page 3 폼의 실컬럼 소스(D-90/D-161), constraints GET = prefill 소스, POST = "영속 업데이트" 전용 쓰기 경로(insert_constraint 경유 = D-179 불변식 충족, "이번만"은 세션 저장이라 catalog 미접촉). POST 검증 = D-185 type 화이트리스트 + column_name 실존. | spec 25개 표에 없는 3종이 D-167 prefill/영속 흐름과 D-90 폼 렌더의 필수 전제 — 표면 추가를 결정·표 동기 없이 구현하면 명세↔구현 silent 괴리. |

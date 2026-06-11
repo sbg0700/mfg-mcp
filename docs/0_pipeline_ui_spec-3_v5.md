@@ -249,6 +249,9 @@ const [selectedModule, setSelectedModule] = useState<{
 | 7 | `/api/datalake/list` | GET | 3 | `?vid=&function=&site=` | `{entries: [DataLakeEntry]}` | 카탈로그 (D-166) |
 | 8 | `/api/datalake/register` | POST | 3 | multipart (Mode A) 또는 JSON (Mode B) | `DataLakeEntry` | 신규 등록 |
 | 9 | `/api/datalake/{id}/metadata` | GET | 3 | — | `DataLakeEntry` | 메타 조회 |
+| 9b | `/api/datalake/{id}/columns` | GET | 3 | — | `{datalake_id, columns: [...]}` (`column_kind`/`group_desc`/`__dupN` 포함) | Page 3 폼 실컬럼 소스 (D-90/D-161) — DL-3, D-187 |
+| 9c | `/api/datalake/{id}/constraints` | GET | 3 | — | `{datalake_id, constraints: [...]}` | prefill 소스 (D-167 제안) — DL-3, D-187 |
+| 9d | `/api/datalake/{id}/constraints` | POST | 3 | `{column_name, constraint_spec, approved_by?}` | 저장 결과 | "영속 업데이트" 쓰기 경로 (insert_constraint 경유 = D-179, type 화이트리스트 = D-185) — DL-3, D-187 |
 | 10 | `/api/datalake/{id}` | DELETE | 3 | — | `{deleted: true}` | 삭제 |
 | 11 | `/api/execute_pipeline` | POST | 4 | `{session_id, model}` | `{status, estimated_seconds}` | 실행 트리거 |
 | 12 | `/api/pipeline/{id}/status` | GET | 4 | — | `PipelineStatus` | 폴링 |
