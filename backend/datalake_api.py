@@ -120,10 +120,16 @@ async def dl_register(request: Request) -> dict:
     if await catalog.get_entry(datalake_id) is not None:
         raise HTTPException(
             409, f"datalake_id 충돌: '{datalake_id}' 이미 존재 — 자동 변형 금지(D-186), name 변경 필요")
+    # orphan-dir 가드 (3a 룰링 ④ 후속): DELETE 가 DB-only 라 data/lake/<id>/ 잔존 가능 —
+    # DB 부재여도 디렉터리 실존이면 silent 복사(이종 데이터 혼입) 차단, orphan 명시 409.
+    dst_dir = LAKE_ROOT / datalake_id
+    if dst_dir.exists():
+        raise HTTPException(
+            409, f"data/lake/{datalake_id}/ 디렉터리 잔존(orphan) — DB entry 부재여도 "
+                 f"silent 복사 금지. 디렉터리 정리(또는 name 변경) 후 재시도")
 
     # 복사 → data/lake/<id>/ (등록 데이터도 동일 귀결, D-159/§1-6). 바이트 보존 복사 —
     # 인코딩 정규화(cp949→utf-8)는 manifest 권위 ingest 전용이라 여기선 비적용.
-    dst_dir = LAKE_ROOT / datalake_id
     dst_dir.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
         shutil.copytree(src, dst_dir, dirs_exist_ok=True)

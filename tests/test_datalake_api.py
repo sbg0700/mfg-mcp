@@ -222,6 +222,20 @@ async def test_register_rejections(api, tmp_path):
     assert r.status_code == 422
 
 
+async def test_register_orphan_dir_guard(api, tmp_path):
+    """3a 룰링 ④ 후속(3b ⓞ): DELETE=DB-only 라 잔존한 data/lake/<id>/ 가 있으면
+    DB entry 부재여도 409(orphan 명시) — 동일 id silent 복사(이종 혼입) 차단."""
+    import datalake_api
+    orphan = datalake_api.LAKE_ROOT / "ghost_data"
+    orphan.mkdir(parents=True)                       # DB entry 없이 디렉터리만 잔존
+    src = tmp_path / "g.csv"
+    src.write_text("a\n1\n", encoding="utf-8")
+    r = await api.post(f"{BASE}/register", json={
+        "name": "Ghost Data", "server_path": str(src), "modality": "timeseries"})
+    assert r.status_code == 409 and "orphan" in r.json()["detail"]
+    assert list(orphan.iterdir()) == []              # silent 복사 0 (디렉터리 불변)
+
+
 async def test_register_non_tabular_columns_zero(api, tmp_path):
     src = tmp_path / "blob.bin"
     src.write_bytes(b"\x00\x01\x02")
