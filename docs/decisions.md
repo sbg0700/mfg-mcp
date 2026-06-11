@@ -1122,6 +1122,8 @@ task별 모달 UI (Playwright):
 | D-181 | 백엔드 = 신규 엔드포인트를 /api/dl/* 네임스페이스로 additive 추가, 구 핸들러 무변경·무분기. 프론트 = 신규 Page 2/3을 env 플래그(DL_UI_V2, 기본 off) 뒤 별도 라우트에 마운트, 구 페이지 무변경. DL-5 green 후 구 경로·플래그 제거. | 프론트만 게이트하고 백엔드 핸들러를 공유 분기하는 반쪽 게이트가 회귀의 고전적 원인 — additive 네임스페이스가 PROTOCOL §3 '구 경로 생존'과 구조적으로 정합. |
 | D-182 | 게이트 증거 = repo 내 pytest (일회성 터미널 출력 박제). DB 테스트는 throwaway PG(127.0.0.1:55432/dl_test) 전용, ambient PG* env 미사용, 55432 하드 가드(E3 구조화). 개발 반복 쓰기 = throwaway, 라이브 접촉 = 게이트 검증 시점만. DL-3부터 검증 핵심부는 자동화 테스트 동반 필수(제약 머지 3케이스·재승인 게이트). | 정책 선언(근거 본문 내재). |
 | D-183 | 복원 드릴(fresh dump → throwaway 복원 → 동등성 검증) 1회 성공 = DL-3 진입 게이트. 이후 모든 재적재·스키마 변경 전 fresh dump 필수, 복원 드릴은 데이터 형상 변경 시(신규 테이블 등) 재실시. | 복원 미검증 백업은 백업이 아님 — constraints는 재생성 불가 데이터의 시작점. |
+| D-184 | API 네임스페이스 확정 (D-181 보강) | DL-3 신규 백엔드 엔드포인트 = /api/datalake/* (variable_index·spec-1 §1-3 기정합 — D-181의 /api/dl/* 표기 폐기). D-181 본질 불변: additive, 구 핸들러 무변경·무분기. 프론트 플래그 = import.meta.env.VITE_DL_UI_V2(기본 off), 신규 Page 2/3 별도 라우트 마운트, DL-5 green 후 구 경로·플래그 제거. |
+| D-185 | constraint_spec type 화이트리스트 보강 (D-180 보강) | 화이트리스트 = spec §4-4 폼 타입 5종(range/single_value/ratio/list/text) ∪ aggregate(column_kind=group 전용). 근거: D-180 v1(range/aggregate 2종)이 §4-4 constraint_keys 폼 렌더와 충돌 — 폼이 생성하는 값을 저장 계층 화이트리스트가 차단하는 모순 해소. 각 type의 캐노니컬 필드 세부 = DL-3 3c 설계 시 Part 1-2(가)·§4-4 본문과 byte 대조로 확정(즉흥 정의 금지). |
 
 ### 정합 확인
 - D-167 강화(D-179 감사 추적) · D-161/D-176 group descriptor 정합(D-180 aggregate shape·키잉) · PROTOCOL §3 '구 경로 생존' 정합(D-181 additive 네임스페이스) · D-178 백업 게이트 보강(D-183 복원 드릴).
