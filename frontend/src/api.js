@@ -32,3 +32,15 @@ export const dlList = (filters = {}) => {
   return get(`/datalake/list${q ? `?${q}` : ''}`)
 }
 export const dlColumns = (id) => get(`/datalake/${encodeURIComponent(id)}/columns`)
+
+// ── DL-3c — 제약 폼 (additive, D-167/D-189/D-190/D-191) ──
+// POST = "메모리 업데이트(영속)" 전용 — insert_constraint 경유(D-179). 빈 spec(null) = delete(D-191).
+export const dlConstraintPost = (id, body) =>
+  post(`/datalake/${encodeURIComponent(id)}/constraints`, body)
+// merge view = 머지 3케이스(세션>prefill>빈칸) — prefill 은 제안만(재승인 게이트, D-167)
+export const dlConstraintMerge = (sid, moduleKey, datalakeId) =>
+  get(`/datalake/sessions/${encodeURIComponent(sid)}/constraint_merge` +
+      `?module_key=${encodeURIComponent(moduleKey)}&datalake_id=${encodeURIComponent(datalakeId)}`)
+// v2 PUT full — constraints_v2(canonical) 동반, 백엔드가 엔진용 구 shape 로 다운컨버트(D-189)
+export const dlSessionPutFull = (sid, pipelineFull) =>
+  put(`/datalake/sessions/${encodeURIComponent(sid)}/full`, { pipeline_full: pipelineFull })
