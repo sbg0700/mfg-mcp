@@ -9,6 +9,9 @@ backend/datalake_api.py — DL-3a: catalog 계층의 API 노출 (/api/datalake/*
   canonical 필드(range·single_value·aggregate 엄격, ratio·list·text 미확정 422) /
   column_name 실존 422 / aggregate ↔ column_kind=group 정합 422.
   빈 값(None|{}) = delete_constraint 경로(D-191) — 동일 트랜잭션 history append(action=delete).
+- 3c 세션 v2 경로(D-167/D-189): PUT /sessions/{sid}/full(다운컨버트 — 엔진 diff 0) +
+  GET /sessions/{sid}/constraint_merge(머지 3케이스, prefill = 제안만·재승인 게이트).
+  구 /api/sessions/* 핸들러 무수정.
 - 헤더 파싱 = tools/datalake_ingest.py 단일 구현 import 재사용(read_header/_uniquify_headers/
   infer_scalar_dtypes/measure_size) — 중복 구현 0. ingest 동작 변경 0.
 - LAKE_ROOT = <repo>/data/lake 모듈 상수 — 프로덕션 env 분기 금지(D-159 정신).
@@ -287,6 +290,140 @@ async def dl_post_constraint(datalake_id: str, req: ConstraintReq) -> dict:
     return {"datalake_id": datalake_id, "column_name": req.column_name,
             "constraint_spec": req.constraint_spec,
             "approved_by": req.approved_by, "saved": True}
+
+
+# ── 3c. 세션 v2 경로 (D-167/D-189) — 구 /api/sessions/* 핸들러 무수정(additive) ──
+def downconvert_constraints(cmap: dict | None) -> tuple[dict, list[dict]]:
+    """D-189 — session→엔진 전달용 다운컨버트.
+    range type 만 구 shape {column_name: [min, max]} (한쪽 null 은 null 그대로 —
+    validator _bounds 의 (None,None) skip 거동 활용, 둘 다 null 은 D-180에서 저장 불가).
+    비-range 전 type(aggregate 포함) = 엔진 전달 제외 — silent drop 금지:
+    engine_excluded [{column_name, type}] 로 명시 반환 (D-168 알람 접점은 DL-5 전
+    Master 룰링 예약 — 3c 는 메타 기록까지)."""
+    engine: dict[str, list] = {}
+    excluded: list[dict] = []
+    for col, spec in (cmap or {}).items():
+        if isinstance(spec, dict) and spec.get("type") == "range":
+            engine[col] = [spec.get("min"), spec.get("max")]
+        else:
+            excluded.append({"column_name": col,
+                             "type": spec.get("type") if isinstance(spec, dict) else None})
+    return engine, excluded
+
+
+def merge_constraint_view(columns: list[dict], session_specs: dict | None,
+                          prefill_rows: list[dict]) -> list[dict]:
+    """D-167 머지 3케이스 — 우선순위: ① 세션 오버라이드 > ② catalog prefill > ③ 빈칸.
+    재승인 게이트: prefill 은 절대 applied=True/spec 주입으로 반환되지 않는다 —
+    제안(prefill 필드)일 뿐, 적용은 유저 명시 승인(프론트) → 세션 저장 경유만."""
+    session_specs = session_specs or {}
+    prefill = {r["column_name"]: r for r in prefill_rows}
+
+    def _prefill_view(name: str) -> dict | None:
+        p = prefill.get(name)
+        if p is None:
+            return None
+        return {"constraint_spec": p.get("constraint_spec"),
+                "approved_by": p.get("approved_by"),
+                "approved_at": (p["approved_at"].isoformat()
+                                if isinstance(p.get("approved_at"), datetime)
+                                else p.get("approved_at"))}
+
+    out: list[dict] = []
+    for c in columns:
+        name = c["name"]
+        if name in session_specs:                       # ① 세션 오버라이드
+            out.append({"column_name": name, "source": "session",
+                        "spec": session_specs[name], "applied": True,
+                        "prefill": _prefill_view(name)})
+        elif name in prefill:                           # ② prefill = 제안만(자동 적용 0)
+            out.append({"column_name": name, "source": "prefill",
+                        "spec": None, "applied": False,
+                        "prefill": _prefill_view(name)})
+        else:                                           # ③ 빈칸
+            out.append({"column_name": name, "source": "blank",
+                        "spec": None, "applied": False, "prefill": None})
+    # 세션에만 있고 dataset columns 에 없는 키 — 은닉 금지(stale 명시)
+    known = {c["name"] for c in columns}
+    for name, spec in session_specs.items():
+        if name not in known:
+            out.append({"column_name": name, "source": "session", "spec": spec,
+                        "applied": True, "prefill": _prefill_view(name), "stale": True})
+    return out
+
+
+class FullV2Req(BaseModel):
+    pipeline_full: dict   # stages[].modules[] 에 constraints_v2({col: canonical_spec}) 동반
+
+
+@router.put("/sessions/{session_id}/full")
+async def dl_session_put_full(session_id: str, req: FullV2Req) -> dict:
+    """v2 전용 PUT full (D-189) — 구 PUT /api/sessions/{id}/full 무수정(D-184 additive).
+    모듈별 constraints_v2 를 검증(D-185 화이트리스트 + D-190 canonical — 세션도
+    폼 생성 가능값만, anti-silent) 후 다운컨버트하여 m['constraints'] 에 구 shape 를
+    기록 — 엔진(execute_pipeline → planner/validator) 호출부 diff 0."""
+    from session_store import get_session, save_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    pf = req.pipeline_full or {}
+    n_modules = n_with_data = n_with_constraints = 0
+    excluded_total: list[dict] = []
+    for stage in pf.get("stages", []):
+        for m in stage.get("modules", []):
+            n_modules += 1
+            if m.get("datalake_id"):
+                n_with_data += 1
+            if "constraints_v2" not in m:               # v2 미동반 모듈 = 무변환(호환)
+                continue
+            cmap = m.get("constraints_v2") or {}
+            for col, spec in cmap.items():
+                if not isinstance(spec, dict) or spec.get("type") not in CONSTRAINT_TYPES:
+                    raise HTTPException(
+                        422, f"constraints_v2[{col}].type ∉ {sorted(CONSTRAINT_TYPES)} (D-185)")
+                err = canonical_error(spec)
+                if err:
+                    raise HTTPException(422, f"constraints_v2[{col}]: {err}")
+            engine, excluded = downconvert_constraints(cmap)
+            m["constraints"] = engine                   # 엔진이 읽는 구 shape (D-189)
+            m["engine_excluded"] = excluded             # silent drop 금지 — 메타 명시
+            if cmap:
+                n_with_constraints += 1
+            mk = f"{stage.get('stage_order')}.{m.get('index')}"
+            excluded_total.extend({**e, "module_key": mk} for e in excluded)
+    session["pipeline_full"] = pf
+    if pf.get("line_id"):
+        session["line_id"] = pf["line_id"]
+    session["status"] = "ready"
+    save_session(session_id, session)
+    return {"session_id": session_id, "status": "ready",
+            "modules_total": n_modules, "modules_with_data": n_with_data,
+            "modules_with_constraints": n_with_constraints,
+            "engine_excluded": excluded_total}
+
+
+@router.get("/sessions/{session_id}/constraint_merge")
+async def dl_constraint_merge(session_id: str, datalake_id: str,
+                              module_key: str) -> dict:
+    """Page 3 v2 폼 초기 상태 소스 — 머지 3케이스 결과(D-167).
+    세션값 = 해당 module_key 모듈의 constraints_v2 (datalake_id 일치 시에만 —
+    데이터셋 변경 시 구 세션값 무효). prefill = catalog(제안만, 재승인 게이트)."""
+    from session_store import get_session
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    await _entry_or_404(datalake_id)
+    session_specs: dict = {}
+    for stage in (session.get("pipeline_full") or {}).get("stages", []):
+        for m in stage.get("modules", []):
+            mk = f"{stage.get('stage_order')}.{m.get('index')}"
+            if mk == module_key and m.get("datalake_id") == datalake_id:
+                session_specs = m.get("constraints_v2") or {}
+    merged = merge_constraint_view(await catalog.get_columns(datalake_id),
+                                   session_specs,
+                                   await catalog.get_constraints(datalake_id))
+    return {"session_id": session_id, "datalake_id": datalake_id,
+            "module_key": module_key, "merged": merged}
 
 
 # ── 10. DELETE /{id} ─────────────────────────────────────────────────────
