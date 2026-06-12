@@ -133,6 +133,11 @@ export default function DataSelectPageV2() {
   if (loadErr) return <div className="error-text">⚠ {loadErr}</div>
   if (!structure || !lineDef) return <div className="muted">로딩 중…</div>
 
+  // 카드 셀렉(dlList fetch)은 모듈 단위 마운트로 발화 — 모듈 0개면 발화 자체가 없으므로
+  // 침묵 렌더 대신 명시 안내 (Page 2 "다음"을 눌러야 PUT /structure 로 stages 저장됨)
+  const nModules = (structure.stages || [])
+    .reduce((n, s) => n + ((s.modules || []).length), 0)
+
   return (
     <div>
       <h1>{lineDef.display_name} — 데이터·제약 입력 <span style={{ fontSize: 13, color: '#2563eb' }}>(DL v2)</span></h1>
@@ -140,6 +145,17 @@ export default function DataSelectPageV2() {
         Data Lake catalog(vid={structure.line_id})에서 카드로 선택합니다.
         제약은 선택 데이터셋의 <strong>catalog 실컬럼</strong>에 매핑됩니다 (D-90/D-161).
       </p>
+
+      {nModules === 0 && (
+        <div className="error-text" style={{ padding: 12, border: '1px solid #f59e0b',
+                                             borderRadius: 6, background: '#fffbeb' }}>
+          ⚠ 이 세션에는 Page 2 구조가 저장돼 있지 않습니다
+          (stages={`${(structure.stages || []).length}`}, modules=0).
+          카드 셀렉은 모듈 단위로 표시됩니다 —{' '}
+          <a href={`/pipeline/build?session=${sid}`}>Page 2(파이프라인 구성)</a>에서
+          모듈을 추가하고 <strong>"다음"</strong>으로 저장한 뒤 다시 진입하세요.
+        </div>
+      )}
 
       <div className="page3-stage-list">
         {structure.stages.map((stage) => {
@@ -202,7 +218,8 @@ export default function DataSelectPageV2() {
       </div>
 
       <div style={{ marginTop: 24, textAlign: 'right' }}>
-        <button className="btn btn-primary" onClick={onNext} disabled={saving}>
+        <button className="btn btn-primary" onClick={onNext}
+                disabled={saving || nModules === 0}>
           {saving ? '저장 중…' : '다음 → (Page 4 실행)'}
         </button>
       </div>
