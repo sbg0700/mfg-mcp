@@ -161,16 +161,19 @@ async def test_constraints_post_validation_three_steps(api):
     r = await api.post(f"{BASE}/k2/constraints",
                        json={"column_name": "rpm", "constraint_spec": {"min": 1}})
     assert r.status_code == 422
-    # ③ column_name ∉ datalake.columns → 422
+    # ③ column_name ∉ datalake.columns → 422 (min 명시 — canonical 검증과 독립 도달, D-190)
     r = await api.post(f"{BASE}/k2/constraints",
-                       json={"column_name": "ghost_col", "constraint_spec": {"type": "range"}})
+                       json={"column_name": "ghost_col",
+                             "constraint_spec": {"type": "range", "min": 1, "max": None,
+                                                 "unit": None}})
     assert r.status_code == 422
-    # aggregate 는 화이트리스트 포함 (D-185)
+    # aggregate 는 화이트리스트 포함 (D-185) — 단 3c부터 column_kind=group 전용 정합
+    # 검증이 추가돼(D-190) scalar 컬럼(rpm) 대상은 422 (3a 시점 200 placeholder 갱신).
     r = await api.post(f"{BASE}/k2/constraints",
                        json={"column_name": "rpm",
                              "constraint_spec": {"type": "aggregate", "metric": "rms",
                                                  "op": "<=", "value": 1.5}})
-    assert r.status_code == 200
+    assert r.status_code == 422 and "group" in r.json()["detail"]
 
 
 # ── 8. /register — Mode B 한정 (D-186) ──────────────────────────────────

@@ -261,6 +261,33 @@ async def get_constraints(datalake_id: str) -> list[dict[str, Any]]:
     return out
 
 
+async def delete_constraint(datalake_id: str, column_name: str,
+                            approved_by: str | None = None) -> bool:
+    """단건 제약 삭제 — "빈칸으로 영속 업데이트" 경로 (D-191).
+    감사(D-179 불변식): 동일 트랜잭션에서 삭제 전 spec 을 constraints_history 에
+    action='delete' 로 append (delete_entry 와 동일 패턴 — 이전값 보존).
+    approved_by = 삭제 수행 주체. 행 부재 시 False (삭제 0, history 0)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT constraint_spec FROM datalake.constraints "
+                "WHERE datalake_id=$1 AND column_name=$2", datalake_id, column_name)
+            if row is None:
+                return False
+            await conn.execute(
+                """
+                INSERT INTO datalake.constraints_history
+                    (datalake_id, column_name, constraint_spec, approved_by, action)
+                VALUES ($1,$2,$3::jsonb,$4,'delete')
+                """,
+                datalake_id, column_name, row["constraint_spec"], approved_by)
+            await conn.execute(
+                "DELETE FROM datalake.constraints "
+                "WHERE datalake_id=$1 AND column_name=$2", datalake_id, column_name)
+    return True
+
+
 # ── delete (명시 삭제 — CASCADE 미채택, §1-5 FK verbatim 유지) ──────────
 async def delete_entry(datalake_id: str) -> None:
     """자식(constraints→columns) 명시 삭제 후 부모 삭제(단일 트랜잭션).
