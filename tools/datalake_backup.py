@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
-tools/datalake_backup.py — DL-2 datalake 스코프 논리 백업/복원 (python·asyncpg, D-178).
+tools/datalake_backup.py — datalake 스코프 논리 백업/복원 (python·asyncpg, D-178).
 
 배경(D-178): host에 pg_dump/psql 미설치 + mfg-postgres가 byeonggab89 rootless docker
-네임스페이스라 `docker exec` 영구 불가(STEP A0/C 실측) → datalake 3테이블(entries/
-columns/constraints) 전건을 owner=myeongsun 권한으로 TCP 논리 덤프한다. PROTOCOL §3
-"대량 ingest 전 스냅샷"의 실제 보호점 = 데이터가 들어가는 Phase 2 实ingest 直前.
+네임스페이스라 `docker exec` 영구 불가(STEP A0/C 실측) → datalake 4테이블(entries/
+columns/constraints/constraints_history) 전건을 owner=myeongsun 권한으로 TCP 논리
+덤프한다. PROTOCOL §3 "대량 ingest/변경 전 스냅샷"의 보호점에서 실행(DL-2 Phase 2,
+DL-3c 선결 등). constraints_history(D-179)는 DL-2.5에서 추가 — DL-3c부터 덤프 포함.
 
 접속: backend/db.py 와 동일 libpq PG* env(인자 없는 asyncpg.connect). 시크릿 값 출력/Read 0.
 
 모드:
-  --dump (기본)   : 3테이블 전건 SELECT → 타임스탬프 JSON 파일. 읽기 전용(DB write 0).
+  --dump (기본)   : 4테이블 전건 SELECT → 타임스탬프 JSON 파일. 읽기 전용(DB write 0).
                     JSONB(group_desc/constraint_spec)=dict 무손실 보존, TIMESTAMPTZ=ISO8601.
                     덤프행수 == 라이브행수 self-check(불일치 시 abort).
   --verify FILE   : 덤프 파일 행수 ↔ 현재 라이브 행수 대조 출력. 읽기 전용.
   --restore FILE  : JSON → datalake.* 복원(FK 순서, 단일 트랜잭션 전건 교체). datalake 스코프만 write.
 
-불변식: datalake.* 밖 미접촉(권한 경계). 덤프=읽기전용. 복원=전건 교체(멱등). constraints 포함 전테이블.
+불변식: datalake.* 밖 미접촉(권한 경계). 덤프=읽기전용. 복원=전건 교체(멱등) +
+constraints_history는 IDENTITY 보존(OVERRIDING SYSTEM VALUE + 시퀀스 재설정). 전테이블 포함.
 """
 from __future__ import annotations
 
@@ -31,12 +33,16 @@ import asyncpg
 
 DEFAULT_BACKUP_DIR = Path("~/FINAL/0_BGS/backups").expanduser()
 
-TABLES = ("entries", "columns", "constraints")            # FK 부모→자식 순 (삽입 순서)
+# FK 부모→자식 순 (삽입 순서). constraints_history는 FK 없음(D-179 의도) — 맨 뒤.
+TABLES = ("entries", "columns", "constraints", "constraints_history")
 ORDER_BY = {                                              # 결정론적 덤프(재현 가능 정렬)
-    "entries":     "registered_at, datalake_id",
-    "columns":     "datalake_id, name",
-    "constraints": "datalake_id, column_name",
+    "entries":             "registered_at, datalake_id",
+    "columns":             "datalake_id, name",
+    "constraints":         "datalake_id, column_name",
+    "constraints_history": "history_id",
 }
+# history_id = GENERATED ALWAYS AS IDENTITY → 복원 시 명시값 삽입에 OVERRIDING 필요
+IDENTITY_TABLES = {"constraints_history": "history_id"}
 TS_COLS = {"registered_at", "approved_at"}                # TIMESTAMPTZ — 복원 시 ISO→datetime
 
 
@@ -78,7 +84,7 @@ async def dump(path: Path | None) -> None:
                 "database":  await conn.fetchval("SELECT current_database()"),
                 "schema":    "datalake",
                 "dumped_at": (await conn.fetchval("SELECT now()")).isoformat(),
-                "purpose":   "DL-2 Phase 2 pre-ingest snapshot (D-178)",
+                "purpose":   "datalake logical snapshot (D-178)",
             },
             "tables": {},
         }
@@ -119,6 +125,9 @@ async def verify(path: Path) -> None:
         print(f"검증 대상: {path}")
         print(f"  dumped_at={doc['meta'].get('dumped_at')}  db={doc['meta'].get('database')}")
         for t in TABLES:
+            if t not in doc["tables"]:                     # DL-2 시기 3테이블 덤프 호환
+                print(f"  datalake.{t}: 덤프에 없음(구버전 3테이블 덤프) — 대조 생략")
+                continue
             dn = len(doc["tables"][t]["rows"])
             ln = await conn.fetchval(f"SELECT count(*) FROM datalake.{t}")
             diff = "동일" if dn == ln else f"차이 {ln - dn:+d}"
@@ -133,15 +142,20 @@ async def restore(path: Path) -> None:
     doc = json.loads(path.read_text(encoding="utf-8"))
     conn = await _connect()
     try:
+        present = [t for t in TABLES if t in doc["tables"]]   # DL-2 시기 3테이블 덤프 호환
+        for t in TABLES:
+            if t not in doc["tables"]:
+                print(f"  datalake.{t}: 덤프에 없음(구버전 3테이블 덤프) — 복원 생략(현재값 유지)")
         async with conn.transaction():
-            for t in reversed(TABLES):                     # constraints, columns, entries
+            for t in reversed(present):                    # 자식→부모 DELETE
                 await conn.execute(f"DELETE FROM datalake.{t}")
-            for t in TABLES:                               # entries, columns, constraints
+            for t in present:                              # 부모→자식 INSERT
                 tbl = doc["tables"][t]
                 order, rows = tbl["order"], tbl["rows"]
                 cols = ", ".join(order)
                 ph = ", ".join(f"${i + 1}" for i in range(len(order)))
-                sql = f"INSERT INTO datalake.{t} ({cols}) VALUES ({ph})"
+                over = " OVERRIDING SYSTEM VALUE" if t in IDENTITY_TABLES else ""
+                sql = f"INSERT INTO datalake.{t} ({cols}){over} VALUES ({ph})"
                 for r in rows:
                     vals = [
                         datetime.fromisoformat(r[c])
@@ -149,7 +163,13 @@ async def restore(path: Path) -> None:
                         for c in order
                     ]
                     await conn.execute(sql, *vals)
-        for t in TABLES:
+            for t in present:                              # IDENTITY 시퀀스 재설정(다음 append 충돌 방지)
+                if t in IDENTITY_TABLES:
+                    c = IDENTITY_TABLES[t]
+                    await conn.execute(
+                        f"SELECT setval(pg_get_serial_sequence('datalake.{t}', '{c}'), "
+                        f"COALESCE(MAX({c}), 0) + 1, false) FROM datalake.{t}")
+        for t in present:
             n = await conn.fetchval(f"SELECT count(*) FROM datalake.{t}")
             print(f"  복원 datalake.{t}: {n} rows")
         print("복원 완료 — 단일 트랜잭션, datalake.* 전건 교체(멱등).")
