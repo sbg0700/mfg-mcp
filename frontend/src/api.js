@@ -22,3 +22,13 @@ export const post = (path, body) =>
   api(path, { method: 'POST', body: JSON.stringify(body ?? {}) })
 export const put = (path, body) =>
   api(path, { method: 'PUT', body: JSON.stringify(body ?? {}) })
+
+// ── DL-3b — /api/datalake/* 클라이언트 (additive — 위 기존부 무수정, D-181/D-184) ──
+// vid×function×site 3축 AND 필터는 백엔드 list_entries가 수행 (D-166).
+export const dlList = (filters = {}) => {
+  const q = new URLSearchParams(
+    Object.entries(filters).filter(([, v]) => v != null && v !== ''),
+  ).toString()
+  return get(`/datalake/list${q ? `?${q}` : ''}`)
+}
+export const dlColumns = (id) => get(`/datalake/${encodeURIComponent(id)}/columns`)
