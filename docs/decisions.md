@@ -1141,3 +1141,11 @@ task별 모달 UI (Playwright):
 |---|---|---|
 | D-186 | register = Mode B(서버 경로 메타 등록) 한정 — Mode A(파일 업로드)는 이월(데모는 사전 적재 파일 사용, 실시연 여부는 데모 영상 후 속도·성능 보고 재결정). datalake_id = slug(name)([a-z0-9_]), 충돌 시 409(자동 변형 금지 — anti-silent). function_hint는 유저 힌트 입력으로 받아 권위 컬럼 function에 해석·저장(rename 아님, R1 이월 소화). 등록 데이터도 data/lake/<id>/ 귀결 + 동일 catalog 경로(§1-6 불변). spec §4-11의 Mode A 체크 2항목은 이월 표기. | 병갑 확정(2026-06-11). 업로드 전송은 ingest 단건 API화라 DL-3 스코프 초과 — spec 표면과의 차이는 본 결정+체크리스트 이월 표기로 기록해 교차검증 모순 잔재 차단(R1 A/B-잔재 교훈). |
 | D-187 | DL-3 API 표면 확장 — GET /api/datalake/{id}/columns · GET·POST /api/datalake/{id}/constraints 3종을 spec §1-3/spec-3 §9-1 표에 additive 행으로 추가. columns = Page 3 폼의 실컬럼 소스(D-90/D-161), constraints GET = prefill 소스, POST = "영속 업데이트" 전용 쓰기 경로(insert_constraint 경유 = D-179 불변식 충족, "이번만"은 세션 저장이라 catalog 미접촉). POST 검증 = D-185 type 화이트리스트 + column_name 실존. | spec 25개 표에 없는 3종이 D-167 prefill/영속 흐름과 D-90 폼 렌더의 필수 전제 — 표면 추가를 결정·표 동기 없이 구현하면 명세↔구현 silent 괴리. |
+
+## 2026-06-12 — datalake-redesign DL-3b: Page 3 v2 셀렉 (Master 발행 → CC 실행)
+
+명세: VITE_DL_UI_V2 플래그 뒤 신규 Page 3 셀렉(카드 UI, catalog 소스), 구 경로 무접촉(D-181/D-184). orphan 가드(3a 룰링 ④ 후속) + SSOT 교차 테스트 동반.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-188 | vid 값 체계 = lines.yaml line_id와 동일 체계 — 실측 확정: line_id 집합 = manifest vid DISTINCT 집합, 부분집합 넘어 **동일 집합(3/3)** {module_1_metal_processing, module_2_forming_joining, module_3_polymer_electronic}. 수치: manifest 전 행 34 = 13+9+12 (excluded 2건 모두 module_1, D-177) → 적재 32 = 11+9+12. 신 Page 3 필터는 session line_id를 vid로 직사용. 교차 정합은 tests/test_ssot_cross.py 상시 박제(D-182) — hint_dataset 34종 dangling 0(excluded 참조 = 알려진 2건 고정), vid 분포 양 기준 모두 assert. | Page 1→3 바인딩 키가 문서상 미보증 — 이중 SSOT 교차 참조의 order_cp949형 사고 재발 차단. |
