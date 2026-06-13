@@ -98,8 +98,11 @@ function ColumnName({ name, kind, groupDesc }) {
  *  - cmap: {column_name: canonical_spec} — 세션 적용분 (페이지 상태)
  *  - onChange(nextCmap): 세션 적용분 변경 (이번만/승인/빈칸 이번만)
  *  - onToast(msg)
+ *  - onPersisted(): 영속 저장/삭제(catalog 쓰기) 성공 후 호출 — 부모가 constraint_merge
+ *    재조회로 prefill 제안을 서버 SSOT 와 재동기(stale 제안 잔존 차단, DL-3c fix).
  */
-export default function ConstraintFormV2({ datalakeId, columns, merged, cmap, onChange, onToast }) {
+export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
+                                           onChange, onToast, onPersisted }) {
   const [drafts, setDrafts] = useState({})
   const [modal, setModal] = useState(null)   // {col, spec, step: 'branch'|'confirm-delete'}
   const [busy, setBusy] = useState(false)
@@ -148,6 +151,9 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap, on
         column_name: col, constraint_spec: spec, approved_by: 'user',
       })
       applySession(col, spec)                            // 영속 후 세션도 동일 값 사용
+      // catalog 변경 → prefill 제안을 서버 SSOT 와 재동기(삭제값 제안 잔존 차단, DL-3c fix).
+      // 부모 fetchMerge 는 내부 catch — 실패해도 영속 성공을 되돌리지 않음.
+      await onPersisted?.()
       onToast(spec ? `영속 저장: ${col} — ${specSummary(spec)}` : `영속 삭제: ${col}`)
     } catch (e) {
       onToast(`영속 ${spec ? '저장' : '삭제'} 실패 (${col}): ${e.message}`)

@@ -259,6 +259,46 @@ async def test_merge_endpoint_and_reapproval_gate(api):
     assert view["temp"]["source"] == "blank"
 
 
+async def test_merge_view_refresh_reflects_catalog_writes(api):
+    """프론트 onPersisted 재조회 계약 (DL-3c fix): 영속 쓰기/삭제 후 constraint_merge
+    재조회가 서버 SSOT 를 반영 — 삭제된 prefill 제안이 잔존하지 않음.
+    세션 미적용(constraints_v2 빈) 상태로 catalog 변화만 격리 검증."""
+    await _seed_k("r1")
+    sid = await _session(api, _pf("r1", None))
+
+    def _temp(view_rows):
+        return {v["column_name"]: v for v in view_rows}["temp"]
+
+    async def _merge():
+        r = await api.get(f"{BASE}/sessions/{sid}/constraint_merge",
+                          params={"datalake_id": "r1", "module_key": "0.0"})
+        return _temp(r.json()["merged"])
+
+    # 초기 = 빈칸 (catalog 0, 세션 0)
+    assert (await _merge())["source"] == "blank"
+
+    # 영속 저장 → 재조회 시 prefill 제안으로 출현 (값 반영)
+    spec = {"type": "range", "min": 5, "max": 50, "unit": None}
+    assert (await api.post(f"{BASE}/r1/constraints", json={
+        "column_name": "temp", "constraint_spec": spec,
+        "approved_by": "qa"})).status_code == 200
+    mv = await _merge()
+    assert mv["source"] == "prefill" and mv["applied"] is False
+    assert mv["prefill"]["constraint_spec"] == spec
+
+    # 영속 업데이트 → 재조회 prefill = 새 값 (구 값 잔존 0)
+    spec2 = {"type": "range", "min": 9, "max": 99, "unit": "bar"}
+    assert (await api.post(f"{BASE}/r1/constraints", json={
+        "column_name": "temp", "constraint_spec": spec2})).status_code == 200
+    assert (await _merge())["prefill"]["constraint_spec"] == spec2
+
+    # 영속 삭제(빈 spec) → 재조회 시 제안 소멸 (삭제값 잔존 = 결함, 여기서 차단)
+    assert (await api.post(f"{BASE}/r1/constraints", json={
+        "column_name": "temp", "constraint_spec": {}})).status_code == 200
+    mv = await _merge()
+    assert mv["source"] == "blank" and mv["prefill"] is None
+
+
 # ── ⑤ 다운컨버트 (D-189) ──────────────────────────────────────────────────
 async def test_downconvert_unit():
     import datalake_api

@@ -215,6 +215,7 @@ export default function DataSelectPageV2() {
                         cmap={st.cmap || {}}
                         onChange={(cmap) => setForModule(mk, { cmap })}
                         onToast={setToast}
+                        onPersisted={() => fetchMerge(mk, st.datalake_id)}
                       />
                       <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>
                         신규 등록(register)은 추후 지원 — 현재는 사전 적재 catalog 선택 (D-186/D-191)
