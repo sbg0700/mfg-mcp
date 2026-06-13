@@ -326,6 +326,13 @@ def build_record(ds: dict, data_root: Path) -> dict:
         cols.append({"name": group_decl.get("name", "waveform"), "dtype": "float",
                      "column_kind": "group", "group_desc": gd})
         rec["columns"] = cols
+        # DL-3.5 A (D-194): group(numeric) 블록이 후행 연속인지 — ordinal 물리순서 가정 검증용
+        # 진단(_필드, DB 미적재). 비연속(scalar↔numeric 교차)이면 backfill 이 fail-loud
+        # (현 32셋은 후행 연속 = True; 비연속은 사례 부재·범위 밖 안전망).
+        _wav_hdr = read_header(target, ds["encoding"])
+        _kinds = ["num" if _is_float(h) else "scalar" for h in _wav_hdr]
+        _first_num = _kinds.index("num") if "num" in _kinds else len(_kinds)
+        rec["_group_trailing"] = "scalar" not in _kinds[_first_num:]
     else:
         # scalar tabular — 헤더 이름·dtype 실측 (사실 읽기). 다중파일 폴더는 대표 1개.
         target = src
