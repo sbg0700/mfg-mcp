@@ -52,8 +52,14 @@ CREATE TABLE IF NOT EXISTS datalake.columns (
     dtype          TEXT,
     column_kind    TEXT NOT NULL DEFAULT 'scalar',
     group_desc     JSONB,
+    ordinal        INT,                   -- DL-3.5 A: 소스 헤더 물리 순서 (D-193/194; group=first-member rank, scalar=index)
     PRIMARY KEY (datalake_id, name)
 );
+
+-- DL-3.5 A (D-193): ordinal 기존 DB 진화 = ALTER 멱등 추가(additive, DROP 0, PROTOCOL §3).
+-- NOT NULL + UNIQUE(datalake_id, ordinal) 는 backfill 이후 finalize(tools/datalake_ordinal_backfill.py)
+-- — run_migration(항상 실행)에 두면 backfill 전 NULL / replace_columns(ordinal 미주입)로 실패 → 분리.
+ALTER TABLE datalake.columns ADD COLUMN IF NOT EXISTS ordinal INT;
 
 CREATE TABLE IF NOT EXISTS datalake.constraints (
     datalake_id     TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
@@ -200,9 +206,11 @@ async def replace_columns(datalake_id: str, columns: list[dict[str, Any]]) -> No
 
 
 async def get_columns(datalake_id: str) -> list[dict[str, Any]]:
+    # DL-3.5 A (D-193/194): ORDER BY ordinal — 소스 헤더 물리 순서 보존
+    # (구 ORDER BY name 의 ASCII 사전정렬 결함 해소: L1_cnc 1ST<2ND<…<10TH).
     pool = await get_pool()
     rows = await pool.fetch(
-        "SELECT * FROM datalake.columns WHERE datalake_id = $1 ORDER BY name", datalake_id)
+        "SELECT * FROM datalake.columns WHERE datalake_id = $1 ORDER BY ordinal", datalake_id)
     out: list[dict[str, Any]] = []
     for r in rows:
         d = dict(r)
