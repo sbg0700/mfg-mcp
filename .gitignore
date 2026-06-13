@@ -16,17 +16,8 @@ data/models/
 data/lake/
 
 # DL 로컬 지시용 핸드오프 (원격 미보존 — 로컬 전용, 2026-06-08 사용자 지시)
-docs/datalake_redesign/DL_R1_FINAL_DL1_ENTRY.md
+# WORKLOG·ENTRY 핸드오프는 와일드카드 일괄 무시 (2026-06-14 개별→패턴 전환).
+# DL_3A_FINAL_3B_ENTRY는 origin 추적분을 rm --cached로 로컬전용화해 형제 ENTRY와 통일.
+docs/datalake_redesign/*_WORKLOG.md
+docs/datalake_redesign/*_ENTRY.md
 docs/datalake_redesign/R1_HANDOFF_spec_patch.md
-docs/datalake_redesign/DL_DL1_WORKLOG.md
-docs/datalake_redesign/R1_WORKLOG.md
-docs/datalake_redesign/DL_DL2_WORKLOG.md
-docs/datalake_redesign/DL_DL25_WORKLOG.md
-docs/datalake_redesign/DL_DL3_WORKLOG.md
-# DL-3.5~DL-5 누락분 추가 (2026-06-14) — WORKLOG·ENTRY 핸드오프 로컬 전용
-docs/datalake_redesign/DL_DL35_WORKLOG.md
-docs/datalake_redesign/DL_DL4_WORKLOG.md
-docs/datalake_redesign/DL_35_FINAL_DL4_ENTRY.md
-docs/datalake_redesign/DL_3B_FINAL_3C_ENTRY.md
-docs/datalake_redesign/DL_3C_FINAL_35_ENTRY.md
-docs/datalake_redesign/DL_4_FINAL_DL5_ENTRY.md
