@@ -187,21 +187,28 @@ async def insert_column(datalake_id: str, name: str, dtype: str | None = None,
 async def replace_columns(datalake_id: str, columns: list[dict[str, Any]]) -> None:
     """columns 멱등 full-sync — DELETE(id) → re-INSERT. 재적재 시 stale 컬럼 제거 포함
     (columns판 full-record-replace, D-172 정합). constraints 미접촉(D-167; FK가
-    entries 참조라 columns 삭제 무영향). 단일 트랜잭션. 호출 순서: upsert_entry 뒤."""
+    entries 참조라 columns 삭제 무영향). 단일 트랜잭션. 호출 순서: upsert_entry 뒤.
+
+    DL-3.5 A (D-193, forward 캡처): ordinal = 입력 리스트 index(=헤더 물리 순서). 호출자(build_record·
+    register 헤더 실측)가 이미 소스 순서로 준 리스트를 그대로 enumerate — **재정렬·재계산 0**(group
+    행 위치도 빌드 산출 순서 그대로). backfill 과 동일 순서 → finalize(NOT NULL+UNIQUE) 후에도
+    register/재적재가 ordinal 공급 → fail-loud 아님. DELETE→re-INSERT(단일 트랜잭션)라 ordinal 재부여
+    시 UNIQUE(datalake_id, ordinal) 전이 위반 0."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
                 "DELETE FROM datalake.columns WHERE datalake_id = $1", datalake_id)
-            for c in columns:
+            for ordinal, c in enumerate(columns):
                 gd = c.get("group_desc")
                 await conn.execute(
                     "INSERT INTO datalake.columns "
-                    "(datalake_id, name, dtype, column_kind, group_desc) "
-                    "VALUES ($1,$2,$3,$4,$5::jsonb)",
+                    "(datalake_id, name, dtype, column_kind, group_desc, ordinal) "
+                    "VALUES ($1,$2,$3,$4,$5::jsonb,$6)",
                     datalake_id, c["name"], c.get("dtype"),
                     c.get("column_kind", "scalar"),
                     json.dumps(gd) if gd is not None else None,
+                    ordinal,
                 )
 
 

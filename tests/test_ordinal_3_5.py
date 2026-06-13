@@ -75,8 +75,8 @@ async def test_get_columns_orders_by_ordinal_ascii_defect_resolved(cat):
     await _reset_ordinal_state(pool)
     await cat.upsert_entry(_entry("cnc"))
     src = [f"{n}TH INJECTION VELOCITY" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)]   # 소스 물리 순서
-    await cat.replace_columns("cnc", _scalars(src))               # ordinal NULL (입력순서 무관)
-    await apply_ordinals(pool, {"cnc": src})
+    await cat.replace_columns("cnc", _scalars(src))               # replace_columns 가 입력순서로 ordinal 공급(b)
+    await apply_ordinals(pool, {"cnc": src})                      # backfill 도 동일 순서 재부여(라이브 32셋 경로)
 
     got = [c["name"] for c in await cat.get_columns("cnc")]
     assert got == src                                             # ORDER BY ordinal = 물리 순서
@@ -143,7 +143,9 @@ async def test_finalize_fail_loud_on_null(cat):
     pool = await db.get_pool()
     await _reset_ordinal_state(pool)
     await cat.upsert_entry(_entry("nn"))
-    await cat.replace_columns("nn", _scalars(["a"]))             # ordinal NULL (backfill 미적용)
+    await cat.replace_columns("nn", _scalars(["a"]))
+    await pool.execute(                                          # 라이브 32셋 pre-backfill(ordinal NULL) 모사
+        "UPDATE datalake.columns SET ordinal=NULL WHERE datalake_id='nn'")
     with pytest.raises(RuntimeError, match="NULL"):
         await finalize_ordinal_constraints(pool)                # SET NOT NULL 도달 전 차단
 
@@ -165,3 +167,28 @@ async def test_finalize_not_null_and_unique_then_reset(cat):
                 "INSERT INTO datalake.columns (datalake_id,name,ordinal) VALUES ('fz','d',0)")
     finally:
         await _reset_ordinal_state(pool)                        # 공유 세션 오염 해제
+
+
+# ── (b) forward 캡처: replace_columns 가 ordinal 공급 → finalize 후 register/재적재 안전 ──
+async def test_replace_columns_supplies_ordinal_survives_finalize(cat):
+    """replace_columns 가 입력 순서로 ordinal 0..k-1 공급(forward 캡처) → finalize(NOT NULL+UNIQUE)
+    후에도 register(신규)·재적재(replace 재호출) 통과(fail-loud 아님 · UNIQUE 전이 위반 0).
+    호출처 2곳(ingest execute_load · API register)이 replace_columns 경유라 자동 커버."""
+    import db
+    pool = await db.get_pool()
+    await _reset_ordinal_state(pool)
+    await cat.upsert_entry(_entry("reg"))
+    await cat.replace_columns("reg", _scalars(["x", "y", "z"]))   # 입력 순서 = ordinal index
+    assert {c["name"]: c["ordinal"] for c in await cat.get_columns("reg")} == {"x": 0, "y": 1, "z": 2}
+    try:
+        await finalize_ordinal_constraints(pool)                 # NULL 0 → NOT NULL + UNIQUE
+        # finalize 후 신규 register — replace_columns 가 ordinal 공급 → NOT NULL 위반 0
+        await cat.upsert_entry(_entry("reg2"))
+        await cat.replace_columns("reg2", _scalars(["a", "b"]))
+        assert {c["name"]: c["ordinal"] for c in await cat.get_columns("reg2")} == {"a": 0, "b": 1}
+        # 재적재 경로: 기존 entry replace 재호출(컬럼 추가) → ordinal 재부여, UNIQUE 전이 위반 0
+        await cat.replace_columns("reg", _scalars(["x", "y", "z", "w"]))
+        assert {c["name"]: c["ordinal"]
+                for c in await cat.get_columns("reg")} == {"x": 0, "y": 1, "z": 2, "w": 3}
+    finally:
+        await _reset_ordinal_state(pool)
