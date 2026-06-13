@@ -1,4 +1,4 @@
-"""tests/test_vid_source_dl41.py — DL-4.1 게이트 (D-197/D-188).
+"""tests/test_vid_source_dl411.py — 4.1.1 게이트 (D-197/D-188).
 
 DL-4 가 배선한 vid 전파 파이프의 '입구(소스)'를 켰는지 검증한다.
 DL-4(test_vid_eda_dl4) 는 pipeline_full.vid 를 테스트에서 '수동 주입'했지만,
@@ -21,7 +21,7 @@ import pathlib
 import subprocess
 import sys
 
-# baseline = DL-4.1 작업 직전 HEAD (Master 좌표 정정: DL-4 tag d8500d7 후 .gitignore 핸드오프 2커밋).
+# baseline = 4.1.1 작업 직전 HEAD (Master 좌표 정정: DL-4 tag d8500d7 후 .gitignore 핸드오프 2커밋).
 _BASELINE = "3343f3a1139d7a3d547f2d74589054bee455e915"
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -136,7 +136,7 @@ def test_d_boundary_only_mainpy():
     out = _git("diff", _BASELINE, "--name-only", "--",
                "*.py", "*.ts", "*.tsx", "*.jsx")
     changed = [ln for ln in out.splitlines() if ln.strip()]
-    allowed = {"backend/main.py", "tests/test_vid_source_dl41.py"}
+    allowed = {"backend/main.py", "tests/test_vid_source_dl411.py"}
     extra = set(changed) - allowed
     assert not extra, f"경계 위반: 허용밖 코드 변경 {extra}"
     assert "backend/main.py" in changed, f"main.py 변경 미검출: {changed}"
