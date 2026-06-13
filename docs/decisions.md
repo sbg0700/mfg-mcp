@@ -1149,3 +1149,14 @@ task별 모달 UI (Playwright):
 | # | 결정 | 사유 |
 |---|---|---|
 | D-188 | vid 값 체계 = lines.yaml line_id와 동일 체계 — 실측 확정: line_id 집합 = manifest vid DISTINCT 집합, 부분집합 넘어 **동일 집합(3/3)** {module_1_metal_processing, module_2_forming_joining, module_3_polymer_electronic}. 수치: manifest 전 행 34 = 13+9+12 (excluded 2건 모두 module_1, D-177) → 적재 32 = 11+9+12. 신 Page 3 필터는 session line_id를 vid로 직사용. 교차 정합은 tests/test_ssot_cross.py 상시 박제(D-182) — hint_dataset 34종 dangling 0(excluded 참조 = 알려진 2건 고정), vid 분포 양 기준 모두 assert. | Page 1→3 바인딩 키가 문서상 미보증 — 이중 SSOT 교차 참조의 order_cp949형 사고 재발 차단. |
+
+## 2026-06-13 — datalake-redesign DL-3c: 제약 폼 (Master 발행 → CC 실행, GATE PASS)
+
+명세: 신 Page 3 v2 제약 입력 폼 — 머지 3케이스(세션>prefill>빈칸) + 재승인 게이트(prefill 자동적용 0) + 이번만/메모리 업데이트(영속) 분기 + column_kind 렌더 분기(scalar=range / group=aggregate) + delete + 자동화 테스트 동반(D-182). 라이브 constraints 첫 실쓰기 단계 — fresh dump(D-183) 선행. additive only(엔진·구 jsx 7종·구 핸들러 0접촉).
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-189 | constraints shape 신구 호환 = **저장·전달 분리**. catalog 저장 = D-180/D-185 shape(type 판별자). session→엔진 전달 = **range type만** 구 shape `{column_name:[min,max]}`로 다운컨버트(min/max 한쪽 null은 null 그대로 전달 — validator `_bounds` (None,None) skip 거동 활용). 비-range 전 type(aggregate 포함) = 엔진 전달 제외 + 세션 메타 `engine_excluded:[{column_name,type}]` 명시 기록(silent drop 금지). 엔진 파일(planner/validator/main 호출부) diff 0. D-168 알람 접점은 DL-5 전 Master 룰링 예약 — 3c는 메타 기록까지. | planner.py:105·validator.py:113(`_bounds`) 실측 — 구 엔진은 `{col:[min,max]}`만 해석. 임의 변환은 의미 추측 = 즉흥 정의 금지(D-173 계열). D-164 seam 보존. |
+| D-190 | canonical 필드 **byte 대조 확정**. 수용 3종: `range`(D-180 — min/max 중 1개 이상 non-null·unit str\|null) / `aggregate`(D-180 — metric∈{rms,peak,mean,std}·op∈{<=,>=}·value num·unit str\|null, column_name=group 컬럼) / `single_value`(`{"type":"single_value","value":num,"unit":str\|null}` — §4-4 NumberInput 실측). `ratio`·`list`·`text` = spec §4-4 placeholder 미정의 → POST 422("canonical 미확정 type") + 폼 구현 시 확정 이월. 허용 외 필드 = 422(anti-silent). | 즉흥 정의 금지(D-185)의 byte 대조가 spec 자체의 미정의를 드러냄 — 무검증 저장 = silent 위험. API 게이트가 화이트리스트(D-185 6종)보다 좁은 건 additive 무모순. **이탈 반영:** PUT v2도 D-185∩D-190 검증 적용(세션도 폼 생성 가능값만). 3a placeholder 테스트(aggregate-on-scalar 200→422) D-190 정합 갱신. |
+| D-191 | `delete_constraint` 3c 포함 — "빈칸 영속 업데이트" = delete 경로. `catalog.delete_constraint(datalake_id, column_name, approved_by)` 동일 트랜잭션 history append(action=delete, D-179 불변식), 부재 행 404(silent no-op 금지). POST 빈-spec(None\|{}) = 이 경로 재사용. register 모달 UI(프론트)는 3c 제외 → GATE PASS 후 별도 미니 단계 이월(백엔드 D-186/187 표면 기존 유지). | 빈칸 영속 = 의미상 delete, 누락 시 의미 구멍. 404는 anti-silent 정합. register UI는 분리 가능. |
+| D-192 | CC 검증/진단 셸 규율 격상: 모든 파이프라인 셸 `set -o pipefail` 의무 + 도달성·성공 판정은 파이프 종료코드가 아니라 **명시 상태 출력**(HTTP 코드 / row count / grep 매칭)으로. | 3b [STOP]②(테스트 혼입 — 파이프 종료코드 함정)·3c Phase2 진단(`wget\|head`가 항상 0 → 가짜 5173 REACHABLE 오판)에서 동일 함정 2회 재발. 가짜 서버 위장으로 반나절 소모 — 규율 박제 필수. |
