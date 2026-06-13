@@ -555,8 +555,14 @@ CREATE TABLE IF NOT EXISTS datalake.columns (
     dtype          TEXT,
     column_kind    TEXT NOT NULL DEFAULT 'scalar',  -- 'scalar' | 'group'
     group_desc     JSONB,                 -- group일 때만: {n_cols, header_kind:"numeric", unit, range}
+    ordinal        INT,                   -- 소스 헤더 물리 순서 (D-193/194; group=first-member rank, scalar=index)
     PRIMARY KEY (datalake_id, name)
 );
+-- DL-3.5 A: ordinal 기존 DB 진화 (additive·멱등, DROP 0)
+ALTER TABLE datalake.columns ADD COLUMN IF NOT EXISTS ordinal INT;
+-- backfill 이후 finalize (멱등 가드·fail-loud, tools/datalake_ordinal_backfill.py — run_migration 아님):
+--   ALTER TABLE datalake.columns ALTER COLUMN ordinal SET NOT NULL;   -- NULL 잔존 시 실패 = 미채움 검출
+--   ADD CONSTRAINT datalake_columns_id_ordinal_uniq UNIQUE (datalake_id, ordinal)  -- pg_constraint IF NOT EXISTS 가드
 
 -- 제약. 유저 승인으로만 채움 (시스템/modules.yaml/프로파일 절대 안 채움, D-43/D-167)
 CREATE TABLE IF NOT EXISTS datalake.constraints (
