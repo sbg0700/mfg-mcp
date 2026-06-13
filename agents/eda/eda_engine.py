@@ -146,6 +146,22 @@ def build_eda_profile(dataset_id: str, modality: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────
 # 4) LLM 차트 추천 (제안) — 환각 방어는 호출부에서 CHART_TYPE_IDS 필터
 # ─────────────────────────────────────────────────────────────────────────
+def _slim_stage_chain(stage_chain: list[dict] | None) -> list[dict]:
+    """ctx.stage_chain → EDA LLM payload용 slim 투영 (결정론, BLUEPRINT §2.3 / D-170).
+
+    main_findings 생략(key_findings와 중복). stage_order 포함(흐름 순서 — DL-3.5 ordinal
+    교훈 일관, 신규 계산 0·원본 필드 전파일 뿐). LLM 0 — 원본 필드 추리기만.
+    """
+    return [
+        {
+            "stage_order": s.get("stage_order"),
+            "node_id": s.get("node_id"),
+            "downstream_implication": s.get("downstream_implication"),
+        }
+        for s in (stage_chain or [])
+    ]
+
+
 async def llm_recommend_charts(profile: dict, ctx: dict, function_axis: str,
                                modality: str, model: str | None) -> dict:
     """LLM이 데이터 특성 보고 필요한 차트 추천 (제안). 1B-3c /questions 패턴.
@@ -162,7 +178,8 @@ async def llm_recommend_charts(profile: dict, ctx: dict, function_axis: str,
         f"Allowed chart_type values (HARD WHITELIST — do NOT invent): {sorted(CHART_TYPE_IDS)}. "
         "Each item: {chart_type, target_column (if applicable), label_column (if boxplot_by_label), reason_ko}. "
         "Return ONLY JSON: {\"recommendations\":[{...}, ...]}. "
-        "Max 4 items. Pick those that match the data (numeric/categorical/signal) and the purpose."
+        "Max 4 items. Pick those that match the data (numeric/categorical/signal) and the purpose. "
+        "slim_stage_chain encodes this dataset's position in its process flow (stage_order) and its downstream impact (downstream_implication). Use it as flow context when interpreting EDA, but it must not affect any chart or statistical computation."
     )
     # 키 컬럼 필요 시 LLM이 골라낼 수 있도록 컬럼 종류·카디널리티 제공
     user = json.dumps({
@@ -172,6 +189,7 @@ async def llm_recommend_charts(profile: dict, ctx: dict, function_axis: str,
         "modality": modality,
         "key_findings_sample": (ctx.get("key_findings") or [])[:10],
         "user_intent": ctx.get("user_intent"),
+        "slim_stage_chain": _slim_stage_chain(ctx.get("stage_chain")),  # D-170/BLUEPRINT §2.3 — 흐름 컨텍스트(해석용). compute_chart_data 미참조(D-59).
     }, ensure_ascii=False, default=str)
 
     return await generate_json(user, system=system, model=model)
