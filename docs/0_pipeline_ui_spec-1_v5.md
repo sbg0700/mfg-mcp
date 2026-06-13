@@ -329,7 +329,7 @@ class StepResult:
 
   # DL 신규 — 흐름·계보 관계 컨텍스트 (이종 매핑 부재 + lineage 상보, D-170)
   # vid 흐름 내 위치 + column-group descriptor(column_kind=group)를 EDA로 표면화.
-  # 상세 필드 shape는 DL-4(EDA/aggregator 스레딩)에서 확정 — 본 키는 additive, 결정론(LLM 0).
+  # 상세 필드 shape는 DL-4.5에서 확정(DL-4는 vid 전파·EDA slim까지; analysis_groups는 키만 None 유지 = D-197 분리) — 본 키는 additive, 결정론(LLM 0).
   "analysis_groups": list[dict] | None,
 
   # 각 에이전트 판단 기록 (사용자 비전 핵심 — Page 4 의 표준화 과정 전체)

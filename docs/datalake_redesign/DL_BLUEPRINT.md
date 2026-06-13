@@ -61,7 +61,7 @@
 
 ### 2.3 EDA flow-context
 - 현재 EDA 엔진은 `stage_chain`을 **미소비**(빌드만; 소비처는 Page 5 분석목적뿐).
-- → `slim stage_chain`(`node_id + downstream_implication`만; `main_findings`는 `key_findings`와 중복이라 생략)을 `eda_engine.py` payload에 **1키 + system prompt 1줄** 추가. 상류(aggregator/main) 0.
+- → `slim stage_chain`(`stage_order + node_id + downstream_implication`; 순서 보존 = DL-3.5 ordinal 교훈·D-196; `main_findings`는 `key_findings`와 중복이라 생략)을 `eda_engine.py` payload에 **1키 + system prompt 1줄** 추가. 상류(aggregator/main) 0.
 - "작은 엔진 손"(키핑 세트 경미 변경) — 근거: `main.py`가 이미 `ctx`(stage_chain 포함)를 통째 넘기는데 EDA가 안 꺼내 씀.
 - 결정론 `compute_chart_data` 무관(D-59 생명선 0). e4b/26b JSON 안정성·8GB 토큰 위해 slim.
 
