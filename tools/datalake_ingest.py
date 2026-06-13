@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 import warnings
 from collections import Counter
@@ -138,6 +139,41 @@ def _uniquify_headers(names: list[str]) -> tuple[list[str], list[str]]:
         out.append(new)
         renamed.append(f"{n}→{new}")
     return out, renamed
+
+
+# ── 헤더 anti-silent 분류 (DL-3.5 B · D-195) — 출처 라벨용 (읽기 전용 리포트 한정) ──
+_DUP_SUFFIX_RE = re.compile(r"__dup\d+$")     # 우리 ingest 마킹(_uniquify_headers 산물)
+_DOTN_SPLIT_RE = re.compile(r"^(.+)\.(\d+)$")   # 'base.정수' 분리 — 상류 .N mangling 후보
+
+
+def audit_header_names(names: list[str]) -> dict[str, Any]:
+    """헤더 컬럼명 출처 분류 (읽기 전용, DL-3.5 B / D-195). 제거·병합·차단 0 — 카운트·출처 라벨만.
+
+    입력 names = 기존 ingest 헤더 경로 산물(read_header → _uniquify_headers)의 최종 컬럼명.
+    출처 구분(텍스트 리포트 한정 — UI 배지는 범위 밖):
+      __dupN     = 우리 ingest 마킹(정확중복 PK 충돌 회피 재명명, _uniquify_headers)
+      __unnamed  = 우리 ingest 마킹(빈헤더 채움, read_header)
+      .N         = 상류 pandas mangling 보존(informational — 결함 단정/경고/플래그 아님)
+    최종 컬럼명 기준 분류 → 한 컬럼은 정확히 한 버킷(상호배타).
+    .N 휴리스틱: 'X.정수' 이고 bare 'X' 가 같은 헤더에 동반(상류 pandas 가족 패턴: 첫 occurrence
+    는 bare 유지)일 때만 분류. → 단순 소수/날짜 컬럼명(0.025·…07.380958 등)은 base 형제가
+    없어 배제 → informational 정확도 ↑(상류 산물 존중, 결함 단정 아님)."""
+    nameset = set(names)
+    dup = [n for n in names if _DUP_SUFFIX_RE.search(n)]
+    unnamed = [n for n in names if n.startswith("__unnamed_")]
+    dotn = []
+    for n in names:
+        m = _DOTN_SPLIT_RE.match(n)
+        if m and m.group(1) in nameset:          # bare base 동반 시에만 상류 .N 으로 분류
+            dotn.append(n)
+    return {
+        "dup_marked":     {"count": len(dup), "names": dup, "source": "ingest",
+                           "label": "__dupN (우리 마킹: 정확중복 재명명)"},
+        "unnamed_marked": {"count": len(unnamed), "names": unnamed, "source": "ingest",
+                           "label": "__unnamed (우리 마킹: 빈헤더 채움)"},
+        "dotn_upstream":  {"count": len(dotn), "names": dotn, "source": "upstream",
+                           "label": ".N (상류 pandas mangling 보존 · informational)"},
+    }
 
 
 def infer_scalar_dtypes(path: Path, encoding: str, scalar_cols: list[str]) -> dict[str, str]:
@@ -320,6 +356,9 @@ def build_record(ds: dict, data_root: Path) -> dict:
             _c["name"] = _nm
         _shown = ", ".join(_dups[:5]) + (" …" if len(_dups) > 5 else "")
         warnings_out.append(f"중복 컬럼 {len(_dups)}건 비명명({_shown}) — 사람 교정 검토")
+    # DL-3.5 B (D-195): 헤더 anti-silent 출처 분류(읽기 전용 진단 _필드 — DB 미적재).
+    # _uniq = 최종 컬럼명(정확중복 __dupN 반영). dry-run 리포트가 소비.
+    rec["_header_audit"] = audit_header_names(_uniq)
     return rec
 
 
@@ -416,6 +455,44 @@ def print_plan(records: list[dict], excluded: list[dict]) -> None:
         for w in ws:
             print(f"  - {cid}: {w}")
     print("\n복사 0 · DB INSERT 0 · ALTER 실행 0 — dry-run 종료.")
+
+
+def print_header_audit_report(records: list[dict]) -> None:
+    """DL-3.5 B (D-195) — 헤더 anti-silent 리포트(읽기 전용). 소스 헤더 스캔 결과를
+    출처별 분류·카운트만 한다(제거·병합·차단 0). 출처 라벨:
+      __dupN·__unnamed = 우리 ingest 마킹 / .N = 상류 pandas mangling 보존(informational)."""
+    print("\n" + "=" * 78)
+    print("헤더 anti-silent 리포트 (DL-3.5 B · D-195) — 읽기 전용 · 출처 라벨 · 제거 0")
+    print("=" * 78)
+    g_dup = g_unnamed = g_dotn = 0
+    per_entry: list[tuple[str, dict]] = []
+    for r in records:
+        a = r.get("_header_audit")
+        if not a:
+            continue
+        d, u, n = (a["dup_marked"]["count"], a["unnamed_marked"]["count"],
+                   a["dotn_upstream"]["count"])
+        g_dup += d
+        g_unnamed += u
+        g_dotn += n
+        if d or u or n:
+            per_entry.append((r["datalake_id"], a))
+    print(f"[global] __dupN(우리 마킹)={g_dup}  ·  __unnamed(우리 마킹)={g_unnamed}  ·  "
+          f".N(상류 보존·informational)={g_dotn}   (스캔 {len(records)} datasets)")
+    if not per_entry:
+        print("  per-entry: 해당 헤더 없음 — 전 데이터셋 클린.")
+    else:
+        print("\n  per-entry (해당 항목 있는 데이터셋만):")
+        for cid, a in per_entry:
+            print(f"  • {cid}")
+            for key in ("dup_marked", "unnamed_marked", "dotn_upstream"):
+                sec = a[key]
+                if sec["count"]:
+                    shown = ", ".join(sec["names"][:8]) + (" …" if len(sec["names"]) > 8 else "")
+                    print(f"      [{sec['source']:>8}] {sec['label']}: {sec['count']}  ({shown})")
+    print("\n  출처 구분: __dupN·__unnamed = 우리 ingest 마킹 / .N = 상류 pandas mangling 보존.")
+    print("  .N 은 informational(결함 단정·경고·플래그 아님 — 상류 산물 존중). 휴리스틱: 'X.정수' + bare 'X' 동반.")
+    print("  읽기 전용 — 소스 헤더 스캔 결과 분류만(DB·data/lake·소스 파일 무변경).")
 
 
 # ── 실적재 (게이트 차단) ─────────────────────────────────────────────────
@@ -515,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(records, ensure_ascii=False, indent=2, default=str))
     else:
         print_plan(records, excluded)
+        print_header_audit_report(records)   # DL-3.5 B (D-195) — additive 리포트 섹션
     return 0
 
 
