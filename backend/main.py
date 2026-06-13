@@ -331,7 +331,8 @@ async def sessions_create(req: CreateSessionReq) -> dict:
     from session_store import create_session, get_session, save_session
     if not req.line_id and not req.pipeline_full:
         raise HTTPException(400, "either line_id or pipeline_full is required")
-    skeleton = req.pipeline_full or {"line_id": req.line_id, "stages": []}
+    # DL-4.1(D-197/D-188): vid=line_id — PipelineFull 최상위에 흐름(라인) 단위 단일 ID 적재(전파 소스). line_id 복사만, 계산/분기/LLM 0.
+    skeleton = req.pipeline_full or {"line_id": req.line_id, "vid": req.line_id, "stages": []}
     sid = create_session(skeleton)
     # line_id를 세션 최상위에도 저장 (Page 2의 GET /sessions/{id}가 쉽게 읽도록)
     session = get_session(sid)
@@ -391,7 +392,8 @@ async def session_put_structure(session_id: str, req: StructureReq) -> dict:
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
-    session["pipeline_full"] = {"line_id": req.line_id, "stages": req.stages}
+    # DL-4.1(D-197/D-188): vid=line_id 전파 소스 적재 (line_id 복사만, additive·계산/분기/LLM 0).
+    session["pipeline_full"] = {"line_id": req.line_id, "vid": req.line_id, "stages": req.stages}
     session["line_id"] = req.line_id
     session["status"] = "structured"
     save_session(session_id, session)
