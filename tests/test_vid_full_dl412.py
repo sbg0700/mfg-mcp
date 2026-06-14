@@ -27,8 +27,11 @@ import sys
 import pytest
 from fastapi import HTTPException
 
-# baseline = 4.1.2 작업 직전 HEAD = tag DL-4.1.1
+# baseline = 4.1.2 작업 직전 HEAD = tag DL-4.1.1 (test_d_compute blob 출처)
 _BASELINE = "acc1f4cf8bce63dfa9466d098e5616a296e00c1c"
+# D-199 closed-range 핀 — 경계 가드/내구성 시뮬 공유(양끝 커밋 고정 = 후행·작업트리 변경 면역)
+_RANGE_D = "3343f3a1139d7a3d547f2d74589054bee455e915..acc1f4cf8bce63dfa9466d098e5616a296e00c1c"  # 4.1.1
+_RANGE_E = "17f51df790307ec1c984c140e71272361d700d55..96f264c447dfee01cc20003c5b9b8be68487c99a"  # 4.1.2
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 for _p in (_REPO / "backend", _REPO / "agents" / "aggregator"):
@@ -169,10 +172,10 @@ def test_d_compute_chart_data_unchanged():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# T-E — 경계: 변경 = backend/main.py + backend/datalake_api.py(+신규테스트)뿐
+# T-E — 경계(D-199 closed-range): 4.1.2 닫힌 범위 17f51df..96f264c 변경 = 양 핸들러 + dl412 테스트뿐
 # ─────────────────────────────────────────────────────────────────────────
 def test_e_boundary():
-    out = _git("diff", _BASELINE, "--name-only", "--",
+    out = _git("diff", _RANGE_E, "--name-only", "--",
                "*.py", "*.ts", "*.tsx", "*.jsx")
     changed = [ln for ln in out.splitlines() if ln.strip()]
     allowed = {"backend/main.py", "backend/datalake_api.py", "tests/test_vid_full_dl412.py"}
@@ -184,3 +187,35 @@ def test_e_boundary():
                  "backend/session_store.py", "mcp-servers/", "frontend/", "harness/")
     for f in changed:
         assert not any(f.startswith(p) for p in forbidden), f"금지영역 접촉: {f}"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# T-내구성(D-199 gap①) — closed-range 가드가 워킹트리(=미래 단계) 변경에 면역임을 증명.
+#   대조: 구 단일-끝 diff는 probe 변경을 '잡음'(시뮬 실재) ↔ 본: closed-range는 '안 잡음'(영속).
+# ─────────────────────────────────────────────────────────────────────────
+def test_durability_closed_ranges_immune_to_worktree():
+    # 1) probe = forbidden-zone tracked 파일(Python 미임포트 우선 = frontend ts/tsx/jsx)
+    cands = [p for p in _git("ls-files", "frontend/").splitlines()
+             if p.endswith((".tsx", ".jsx", ".ts"))]
+    if not cands:
+        pytest.skip("frontend ts/tsx/jsx tracked 파일 없음 — probe 불가")
+    probe = cands[0]
+    assert _git("status", "--porcelain", "--", probe).strip() == "", f"probe 사전 dirty: {probe}"
+    probe_path = _REPO / probe
+    orig = probe_path.read_text(encoding="utf-8")
+    try:
+        # 2) transient 변경(주석 1줄 append)
+        probe_path.write_text(orig + "\n// D-199 durability probe (transient)\n", encoding="utf-8")
+        # 3) ★대조: 구 단일-끝(워킹트리 vs index) diff = probe 잡힘 → 시뮬이 실제임 증명(trivial 아님)
+        single = _git("diff", "--name-only", "--",
+                      "*.py", "*.ts", "*.tsx", "*.jsx").splitlines()
+        assert probe in single, f"대조 실패(시뮬 무효): 단일끝 diff가 probe 미포착 {single}"
+        # 4) ★본 단정: 두 closed-range diff 모두 probe 미포착 = 워킹트리/미래 변경 흡수 0(영속)
+        for rng in (_RANGE_D, _RANGE_E):
+            names = _git("diff", rng, "--name-only", "--",
+                         "*.py", "*.ts", "*.tsx", "*.jsx").splitlines()
+            assert probe not in names, f"내구성 실패: {rng} 가 워킹트리 변경 {probe} 흡수 {names}"
+    finally:
+        # 5) 복원 + clean 재단정
+        probe_path.write_text(orig, encoding="utf-8")
+        assert _git("status", "--porcelain", "--", probe).strip() == "", f"복원 후 dirty: {probe}"

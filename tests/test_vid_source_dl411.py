@@ -129,14 +129,15 @@ def test_c_compute_chart_data_unchanged_d59():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# T-D — 경계: 코드 변경 = backend/main.py 한 파일(+tests 신규)뿐, 금지영역 0접촉
+# T-D — 경계(D-199 closed-range): 4.1.1 닫힌 범위 3343f3a..acc1f4c 변경 = main.py + (historical) dl41 테스트뿐
 # ─────────────────────────────────────────────────────────────────────────
 def test_d_boundary_only_mainpy():
-    """작업트리 기준 baseline 대비 변경 코드파일 검사(commit 전/후 무관)."""
-    out = _git("diff", _BASELINE, "--name-only", "--",
+    """closed-range 핀(D-199): 4.1.1 닫힌 커밋범위 diff → 후행 작업·작업트리 편집 면역(영속)."""
+    _RANGE_D = "3343f3a1139d7a3d547f2d74589054bee455e915..acc1f4cf8bce63dfa9466d098e5616a296e00c1c"
+    out = _git("diff", _RANGE_D, "--name-only", "--",
                "*.py", "*.ts", "*.tsx", "*.jsx")
     changed = [ln for ln in out.splitlines() if ln.strip()]
-    allowed = {"backend/main.py", "tests/test_vid_source_dl411.py"}
+    allowed = {"backend/main.py", "tests/test_vid_source_dl41.py"}   # ★범위 내 historical name(리네임 b66291f 前)
     extra = set(changed) - allowed
     assert not extra, f"경계 위반: 허용밖 코드 변경 {extra}"
     assert "backend/main.py" in changed, f"main.py 변경 미검출: {changed}"
