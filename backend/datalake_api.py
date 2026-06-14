@@ -391,6 +391,14 @@ async def dl_session_put_full(session_id: str, req: FullV2Req) -> dict:
                 n_with_constraints += 1
             mk = f"{stage.get('stage_order')}.{m.get('index')}"
             excluded_total.extend({**e, "module_key": mk} for e in excluded)
+    # 4.1.2(D-198 보존 + D-200 fail-loud): vid 부재→line_id 재유도(① pf.line_id → ② 교체 전 세션 line_id, 둘 다 없으면 None graceful). vid 실값이 derived(권위)와 불일치면 422 거부(anti-silent, D-190 선례). 일치/권위없음→존중 no-op. 복사뿐, 계산/LLM 0.
+    derived = pf.get("line_id") or session.get("line_id")
+    client_vid = pf.get("vid")
+    if not client_vid:
+        pf["vid"] = derived
+    elif derived is not None and client_vid != derived:
+        raise HTTPException(422, f"vid mismatch: client '{client_vid}' != line '{derived}'")
+    # else: present & 일치(또는 권위 없음) → 존중 no-op
     session["pipeline_full"] = pf
     if pf.get("line_id"):
         session["line_id"] = pf["line_id"]

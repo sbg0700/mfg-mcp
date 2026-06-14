@@ -331,7 +331,7 @@ async def sessions_create(req: CreateSessionReq) -> dict:
     from session_store import create_session, get_session, save_session
     if not req.line_id and not req.pipeline_full:
         raise HTTPException(400, "either line_id or pipeline_full is required")
-    # DL-4.1(D-197/D-188): vid=line_id — PipelineFull 최상위에 흐름(라인) 단위 단일 ID 적재(전파 소스). line_id 복사만, 계산/분기/LLM 0.
+    # 4.1.1(D-197/D-188): vid=line_id — PipelineFull 최상위에 흐름(라인) 단위 단일 ID 적재(전파 소스). line_id 복사만, 계산/분기/LLM 0.
     skeleton = req.pipeline_full or {"line_id": req.line_id, "vid": req.line_id, "stages": []}
     sid = create_session(skeleton)
     # line_id를 세션 최상위에도 저장 (Page 2의 GET /sessions/{id}가 쉽게 읽도록)
@@ -392,7 +392,7 @@ async def session_put_structure(session_id: str, req: StructureReq) -> dict:
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
-    # DL-4.1(D-197/D-188): vid=line_id 전파 소스 적재 (line_id 복사만, additive·계산/분기/LLM 0).
+    # 4.1.1(D-197/D-188): vid=line_id 전파 소스 적재 (line_id 복사만, additive·계산/분기/LLM 0).
     session["pipeline_full"] = {"line_id": req.line_id, "vid": req.line_id, "stages": req.stages}
     session["line_id"] = req.line_id
     session["status"] = "structured"
@@ -415,6 +415,14 @@ async def session_put_full(session_id: str, req: FullReq) -> dict:
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
     pf = req.pipeline_full or {}
+    # 4.1.2(D-198 보존 + D-200 fail-loud): vid 부재→line_id 재유도(① pf.line_id → ② 교체 전 세션 line_id, 둘 다 없으면 None graceful·silent default 0). vid 실값이 derived(권위)와 불일치면 422 거부(anti-silent, D-190 선례). 일치/권위없음→존중 no-op. 복사뿐, 계산/LLM 0.
+    derived = pf.get("line_id") or session.get("line_id")
+    client_vid = pf.get("vid")
+    if not client_vid:
+        pf["vid"] = derived
+    elif derived is not None and client_vid != derived:
+        raise HTTPException(422, f"vid mismatch: client '{client_vid}' != line '{derived}'")
+    # else: present & 일치(또는 권위 없음) → 존중 no-op
     session["pipeline_full"] = pf
     if pf.get("line_id"):
         session["line_id"] = pf["line_id"]
