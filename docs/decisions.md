@@ -1175,3 +1175,20 @@ task별 모달 UI (Playwright):
 | D-198 | 4.1.1 session-build vid 적재(D-197)는 Page-3 /full 핸들러(main.py:415·datalake_api.py:359)의 클라이언트 pipeline_full 통째 교체에 취약 — 클라이언트가 vid 미동반 시 prod가 /full 경로에서 vid None 회귀. session-build 소스 적재만으론 /full을 타는 prod 전 경로 e2e vid 도달 불보장. 해결 = /full 핸들러가 수신 dict에 vid 부재 시 line_id로 보존/재유도(백엔드 SSOT 일관, additive·결정론·LLM 0). frontend 재송신(ⓐ)은 D-188/D-197 "프론트 재송신 비채택"과 모순이라 기각 → ⓑ(백엔드 보존) 채택. 별도 미니단계 4.1.2로 DL-5 e2e 진입 전 필수 선행. | D-197 "session-build SSOT" 전제가 /full overwrite 경로 간과. vid=line_id(D-188) SSOT는 백엔드 일관 유지가 정합 — 클라이언트 vid 권위 위임 = D-188 위반. /full 보존 1지점 = additive seam, compute 불변(D-59). 4.1.1 게이트 ②는 정의 경로(create→structure→aggregate) 충족 PASS, prod 전 경로 완결은 D-198 후속. |
 | D-199 | 경계 가드(test_d_boundary_only_mainpy / test_e_boundary) 내구화 = closed-range 핀. 근본결함 = `git diff <baseline> --name-only`가 baseline↔작업트리(한쪽 끝만 고정, `..` 없음) → 각 가드가 후행 단계 변경 누적 흡수(test_d가 4.1.2 datalake_api.py를, test_e가 명명정정 b66291f 리네임을 위반 오판). 수정 = 각 가드를 닫힌 커밋범위 `start..end`(양끝 커밋) diff → 후행 작업·작업트리 편집 면역. test_d→`3343f3a..acc1f4c`(4.1.1 닫힌 범위, allowed는 該범위 historical name `tests/test_vid_source_dl41.py`). test_e→baseline acc1f4c→17f51df 정정(명명정정 2커밋이 acc1f4c↔4.1.2 사이라 acc1f4c는 stale start; 진짜 4.1.2 직전 HEAD=17f51df) + `17f51df..(4.1.2 close 커밋)` 닫음. assert 일체(allowed extra 공집합·forbidden-zone 0접촉·main.py[+datalake_api.py] 포함)는 전부 보존(은퇴 아님), 수정은 range뿐. 검증 내구성: 4.1.3에 future-step 시뮬(가짜 후행 변경→가드 무반응) 필수 포함 — "지금 green" 아닌 "앞으로도 green" 증명(직전 비내구 PASS 재발 차단). 순서 귀결: test_e는 4.1.2 커밋 후에야 닫힘 → 4.1.2 게이트는 functional-green + 경계 2 red를 range-아티팩트로 명시 제외, 4.1.3에서 closed-range 핀으로 green·durable. 커밋 후 untracked dl412 test 추적전환되어 가드 정상 포착. 이후 단계 공통 패턴. | 한쪽 끝 working-tree diff = 단계 N 가드가 N+1 작업을 위반 오판하는 비내구 결함(4.1.1 PASS 후 4.1.2 착수 즉시 red). 닫힌 범위는 역사적 사실이라 영속. 동적 baseline 픽스처(tag 자동산정)=magic silent 실패원(D-192 명시>영리 역행), 프로덕션-only 스코프="정확히 이 파일" 단정 약화 → 둘 다 비채택. baseline 17f51df 정정=측정 약화 아닌 명명정정 커밋이 무효화한 참조점 교정(intent=4.1.2만 측정 보존). 게이트 경계-red 제외=기능회귀 아닌 range 메커닉이라 4.1.2 기능 판정과 분리. |
 | D-200 | /full vid 불일치 fail-loud (B2). D-198 absence-preservation(부재→line_id 재유도) 위 elif 1개 additive: 양 핸들러(main.py session_put_full · datalake_api.py dl_session_put_full)에서 derived=pf.line_id or session.line_id, client_vid 존재 & derived 비-None & client_vid≠derived 시 HTTPException(422,"vid mismatch: client '{}' != line '{}'") raise(session["pipeline_full"]=pf 저장 전=모순 미저장). 부재→재유도(D-198 불변)·일치(또는 권위 부재)→존중 no-op. 422=D-190 anti-silent 거부 패턴 일관. 테스트: test_b("존중" 박제)→test_b_full_rejects_vid_mismatch(불일치 422 단정) 교체 + test_b2_full_respects_matching_vid(일치→존중) 신규, test_a/a2/c/d 불변. ★ A+log(클라값 저장+로그·상황별 해결)는 비채택 아닌 production-hardening fallback: 실배포서 정당 mismatch로 hard-stop이 UX 해치면 fail-loud→log+graceful-degrade 단계 다운그레이드. | 정상 플로우(백엔드 박은 vid round-trip)엔 vid==derived→발화 0·UX 무해. mismatch는 edge(버그/stale/조작)뿐 → 저장+로그(A)는 감사 lineage에 모순 잔류(IATF·21CFR 추적무결성 흠), 저장거부(B2)는 원천 차단=anti-silent 정합. pre-production이라 시끄러운 실패가 이득. derived=pf.line_id 우선은 D-198 기존(pf/session line 불일치는 별도 sub-carry, D-200 외). 권위 부재+client_vid=반증불가라 존중(silent 아님). |
+
+┌─ 2026-06-14 — datalake-redesign DL-5a: 엔진 로직-0 불변 가드 (Master 발행 → CC 실행)
+│ 명세: 엔진 5종(agents/{inspector,planner,executor,validator,ml})이 R0 baseline
+│ (dl-baseline-20260605) 대비 로직 변경 0임을 자동 박제 — DL-5 회귀 게이트 토대.
+│ additive(tests/ 신규만), 엔진·구경로·datalake_api 0접촉.
+│ | D-201 | 엔진 로직-0 불변 가드 = tests/test_engine_invariance_dl5a.py. 본 단정 =
+│   `git diff <R0 deref> -- agents/{inspector,planner,executor,validator,ml}` == 빈 목록
+│   (committed+미커밋 드리프트 모두 포착). ★경계 가드(D-199)와 반대 방향: 불변 가드는
+│   미래·미커밋 엔진 변경을 잡아야 하므로 한쪽-끝(baseline→worktree)이 정답·닫힌범위 아님.
+│   비공허 2중: (a) 대조 단정 = R0 대비 변경 확인된 DL-레이어 파일 diff != 빈 목록(probe 생존),
+│   (b) mutation check = 엔진 파일 임시 변경 시 본 단정 RED 실증 후 revert·트리 클린(가드가
+│   실제로 문다는 증명). 데이터 seam(datalake.get)·aggregator·EDA는 forbidden-zone 밖
+│   (PROTOCOL §3 additive 허용). | 사유: "엔진 변경 0"이 핵심 영업명제 — DL 전체(R0~) 불변을
+│   상시 회귀 게이트화. BLUEPRINT §1.5 보존 이음매 = dataset_id→path만 additive, 엔진 내부 0.
+│   실측 사전확인 = 엔진 diff vs DL-4(d8500d7) 0. "지금 green" 아닌 "앞으로도 green"(D-199)
+│   — mutation check로 비공허 증명. |
+└─
