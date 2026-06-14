@@ -1,9 +1,14 @@
 """
-tests/test_engine_invariance_dl5a.py — 엔진 로직-0 불변 가드 (DL-5a, D-201).
+tests/test_engine_invariance_dl5a.py — 엔진 로직-0 불변 가드 (DL-5a, D-201; DL-5b 정제, D-201 재정의).
 
 명제: 엔진 5종 = agents/{inspector,planner,executor,validator,ml} 이
 R0 baseline(tag dl-baseline-20260605) 대비 '로직 변경 0' 임을 자동 박제한다.
 → "엔진 변경 0"이라는 핵심 영업명제를 DL 전체(R0~)에 걸친 상시 회귀 게이트로 고정.
+
+★ DL-5b 정제(D-201 재정의): 파일 동결 → compute 동결 + 데이터 seam additive 허용.
+  {inspector,planner,validator,ml} = byte-동결(R0 대비 diff 0).
+  executor.py = compute 동결이되 문서화된 데이터 seam additive(data_path 인자+None 분기)만
+  허용(D-203 배선). seam 외 변경(특히 compute)은 RED — test_executor_seam_additive_only 가 강제.
 
 설계 (★ 경계 가드 D-199 와 반대 방향):
 - 본 단정은 baseline→worktree 의 '한쪽-끝' diff 다(닫힌범위 아님). 즉 committed 드리프트뿐
@@ -23,7 +28,7 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parent.parent  # = worktree 루트
 _R0_TAG = "dl-baseline-20260605"
 
-# 엔진 5종(불변이어야 하는 forbidden-zone). 데이터 seam(datalake.get)·aggregator·EDA 는
+# 엔진 5종(watched — 경로 실재 감시 대상). 데이터 seam(datalake.get)·aggregator·EDA 는
 # 이 목록 밖 = PROTOCOL §3 additive 허용(BLUEPRINT §1.5: dataset_id→path 만 additive).
 _ENGINE_PATHS = [
     "agents/inspector",
@@ -32,6 +37,18 @@ _ENGINE_PATHS = [
     "agents/validator",
     "agents/ml",
 ]
+
+# ── D-201 재정의(DL-5b): 파일 동결 → compute 동결 + 데이터 seam additive 허용 ──
+# {inspector,planner,validator,ml} = byte-동결(R0 대비 diff 0).
+# executor.py = compute 동결이되 '문서화된 데이터 seam additive'(data_path 인자+None 분기)만
+#   허용(D-203). seam 밖 변경은 RED — 아래 _EXECUTOR_SEAM_* 화이트리스트가 그 경계.
+_FROZEN_PATHS = [
+    "agents/inspector",
+    "agents/planner",
+    "agents/validator",
+    "agents/ml",
+]
+_EXECUTOR_PATH = "agents/executor/executor.py"
 
 # 대조(control) 경로 — R0 대비 변경이 *실증된* DL-레이어 파일(probe 비공허 증명용).
 # CC 가 STEP1~2 에서 `git diff --name-only <R0> -- backend/catalog.py` == 1 로 non-empty 확인.
@@ -63,12 +80,14 @@ def _changed_vs_r0(*pathspecs: str) -> list[str]:
     return [ln for ln in out.splitlines() if ln.strip()]
 
 
-# ── 본 단정: 엔진 로직-0 ─────────────────────────────────────────────────────
+# ── 본 단정: 엔진 로직-0 (byte-동결 4종 — executor 제외, D-201 재정의) ────────
 def test_engine_logic_zero_vs_r0() -> None:
-    """엔진 5종이 R0 대비 변경 0(committed+미커밋 모두). 위반 시 변경 파일을 명시."""
-    changed = _changed_vs_r0(*_ENGINE_PATHS)
+    """{inspector,planner,validator,ml} 이 R0 대비 변경 0(committed+미커밋 모두).
+    executor.py 는 데이터 seam additive 가 허용되어 본 단정에서 제외되고,
+    test_executor_seam_additive_only 가 별도로 그 경계를 강제한다(D-203)."""
+    changed = _changed_vs_r0(*_FROZEN_PATHS)
     assert changed == [], (
-        f"엔진 로직-0 불변 위반 — R0({_R0_TAG}) 대비 변경된 엔진 파일:\n"
+        f"엔진 로직-0 불변 위반 — R0({_R0_TAG}) 대비 변경된 동결 엔진 파일:\n"
         + "\n".join(f"  - {f}" for f in changed)
     )
 
@@ -94,3 +113,47 @@ def test_engine_paths_are_watched() -> None:
             f"엔진 경로 {p} 추적 파일 0 — 오타/리네임 의심. "
             f"본 단정의 빈-목록이 '불변'이 아닌 '미감시'일 수 있음(vacuous 차단)."
         )
+
+
+# ── executor 데이터 seam: additive-only 강제 (D-201 재정의 / D-203) ───────────
+# R0 대비 executor.py diff 의 +/- 내용 라인이 *오직* 아래 문서화 seam 라인뿐이어야 한다.
+# compute(변환·backup·lineage) 라인이 단 1줄이라도 변하면 화이트리스트 밖 = RED.
+# 화이트리스트는 DL-5b STEP2 실제 `git diff --unified=0 <R0> -- executor.py` 로 저작(즉흥 금지).
+_EXECUTOR_SEAM_ADDED = {
+    "                  selected_options: dict[str, str] | None = None,",
+    "                  data_path: str | None = None) -> dict:",
+    "    path = data_path if data_path is not None else _resolve(dataset_id, modality)",
+}
+_EXECUTOR_SEAM_REMOVED = {
+    "                  selected_options: dict[str, str] | None = None) -> dict:",
+    "    path = _resolve(dataset_id, modality)",
+}
+
+
+def _diff_pm_lines_vs_r0(pathspec: str) -> tuple[list[str], list[str]]:
+    """R0 대비 pathspec 의 unified=0 diff 에서 +/- 내용 라인(파일헤더·@@ 제외)을 (added, removed)로."""
+    r0 = _resolve_r0()
+    out = _git("diff", "--unified=0", r0, "--", pathspec)
+    added: list[str] = []
+    removed: list[str] = []
+    for ln in out.splitlines():
+        if ln.startswith("+++") or ln.startswith("---"):
+            continue
+        if ln.startswith("+"):
+            added.append(ln[1:])
+        elif ln.startswith("-"):
+            removed.append(ln[1:])
+    return added, removed
+
+
+def test_executor_seam_additive_only() -> None:
+    """executor.py 의 R0 대비 변경이 *정확히* 문서화된 데이터 seam additive 뿐임을 단정.
+    seam 화이트리스트 밖의 +/- 라인(특히 compute 변환·backup·lineage)이 하나라도 있으면 RED."""
+    added, removed = _diff_pm_lines_vs_r0(_EXECUTOR_PATH)
+    extra_added = sorted(set(added) - _EXECUTOR_SEAM_ADDED)
+    extra_removed = sorted(set(removed) - _EXECUTOR_SEAM_REMOVED)
+    assert not extra_added and not extra_removed, (
+        "executor seam 경계 위반 — 허용 seam additive 밖 변경 감지(compute 동결 위반 의심):\n"
+        + "".join(f"  + {ln}\n" for ln in extra_added)
+        + "".join(f"  - {ln}\n" for ln in extra_removed)
+    )
