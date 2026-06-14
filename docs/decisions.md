@@ -1198,3 +1198,15 @@ task별 모달 UI (Playwright):
     vacuous-green(미감시를 불변으로 오판)으로 만드는 잔여 벡터 차단. 비공허 실증 = 가짜 경로 임시
     주입 시 RED→revert mutation. | mutation이 inspector 1경로만 RED 실증했던 한계 보완 →
     5/5 경로 감시 확정. "지금 green" 아닌 "앞으로도 green"(D-199) 일관. |
+
+## 2026-06-14 — datalake-redesign DL-5b-seam-2: catalog.get 데이터 seam 배선 + 5a 가드 정제 (Master 발행 → CC 실행, GATE PASS)
+
+  | D-201 재정의 | 엔진 로직-0 가드 = 파일 동결 → compute 동결 + 데이터 seam additive 허용.
+    {inspector,planner,validator,ml} R0 byte-동결. executor.py는 R0 대비 diff가 오직 문서화 seam
+    additive(data_path 인자+None분기)만 허용, 그 외 RED. 비공허 3중 mutation. ⓒ baseline 이동 비채택. |
+    근거: §1.5/§3 "데이터 소스 seam만 additive" 정밀화(약화 아님). |
+  | D-203 | catalog.get 데이터 seam. main.py→resolve_dataset_path(id)[catalog.get(PG)→data_path
+    dir→실파일 locate→file_path]→executor.execute(...,data_path). executor=+optional data_path=None
+    + `path=data_path if data_path is not None else _resolve(...)`. None시 구경로 생존·회귀 0. compute 0.
+    inspector/MCP catalog-wiring=phase 2(게이트는 stub). 라이브 env·MCP=명선/병갑 영역. |
+    근거: catalog(PG)이 데이터 위치 단일 권위. |
