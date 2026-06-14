@@ -1210,3 +1210,14 @@ task별 모달 UI (Playwright):
     + `path=data_path if data_path is not None else _resolve(...)`. None시 구경로 생존·회귀 0. compute 0.
     inspector/MCP catalog-wiring=phase 2(게이트는 stub). 라이브 env·MCP=명선/병갑 영역. |
     근거: catalog(PG)이 데이터 위치 단일 권위. |
+
+## 2026-06-14 — datalake-redesign DL-5b-e2e: 결정론 전처리 e2e 게이트 + presence 단정 fold (Master 발행 → CC 실행, GATE PASS)
+
+  | D-202 개정 (5b-e2e) | 결정론 e2e 게이트 = 전처리 완주(profile fixture → Planner(LLM stub)
+    결정론 plan → execute(data_path 실 KAMP) → validate). 수기=profile fixture(실 29컬럼·flags
+    실데이터 충실)뿐, plan은 real Planner 결정론 산출(LLM 순서만→stub시 후보순서 폴백). 완주 단정=
+    예외0+산출물(backup/processed parquet·lineage non-empty)+형상(원본 보존·silent drop 0·lineage
+    =steps 정합)+결정론 재현(2회 동일). **ML/EDA=게이트 밖** — per-dataset ML 모드는 로컬 LLM
+    판단 영역이라 결정론 게이트 고정 부적합(이 셋 무라벨→anomaly 적합하나 fixture 아님). live
+    smoke(A)=capstone 이월(Ollama+main.py prod 배선 phase 2 종속). | 사유: 게이트=회귀 보호=
+    결정론 전처리 경로. LLM 추론·ML선택은 비결정·LLM도메인→게이트 밖, live/capstone. |
