@@ -81,3 +81,16 @@ def test_engine_guard_not_vacuous() -> None:
         f"가드 공허 — 대조 경로 {_CONTROL_PATH} 가 R0({_R0_TAG}) 대비 변경 0 "
         "(probe 신뢰 불가: 본 단정의 빈-목록이 '진짜 불변' 인지 'diff 무력화' 인지 구분 불가)"
     )
+
+
+# ── 경로 감시 보증: vacuous-via-bad-path 차단 (D-201 보강) ────────────────────
+def test_engine_paths_are_watched() -> None:
+    """엔진 5종이 각각 추적 파일 ≥1개로 실재함을 단정 → 경로 오타·미래 리네임이
+    본 단정(test_engine_logic_zero_vs_r0)을 vacuous-green('미감시'를 '불변'으로 오판)
+    으로 만드는 잔여 벡터를 fail-loud 차단."""
+    for p in _ENGINE_PATHS:
+        tracked = [ln for ln in _git("ls-files", "--", p).splitlines() if ln.strip()]
+        assert tracked, (
+            f"엔진 경로 {p} 추적 파일 0 — 오타/리네임 의심. "
+            f"본 단정의 빈-목록이 '불변'이 아닌 '미감시'일 수 있음(vacuous 차단)."
+        )
