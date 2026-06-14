@@ -183,7 +183,8 @@ _OPERATIONS = {
 
 async def execute(plan: dict, approved_keys: set | None = None,
                   modality: str = "timeseries",
-                  selected_options: dict[str, str] | None = None) -> dict:
+                  selected_options: dict[str, str] | None = None,
+                  data_path: str | None = None) -> dict:
     """PreprocessingPlan 실행.
 
     approved_keys: 사용자가 승인한 step_key 집합 (order 대신 안정적 식별자).
@@ -204,7 +205,7 @@ async def execute(plan: dict, approved_keys: set | None = None,
         return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options)
 
     # order는 CSV라 timeseries 경로 재사용 (DATA_ROOT만 order로)
-    path = _resolve(dataset_id, modality)
+    path = data_path if data_path is not None else _resolve(dataset_id, modality)
 
     if not os.path.exists(path):
         return ExecutionResult(dataset_id=dataset_id, all_done=False,
