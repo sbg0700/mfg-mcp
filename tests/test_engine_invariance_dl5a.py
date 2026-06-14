@@ -148,12 +148,24 @@ def _diff_pm_lines_vs_r0(pathspec: str) -> tuple[list[str], list[str]]:
 
 def test_executor_seam_additive_only() -> None:
     """executor.py 의 R0 대비 변경이 *정확히* 문서화된 데이터 seam additive 뿐임을 단정.
-    seam 화이트리스트 밖의 +/- 라인(특히 compute 변환·backup·lineage)이 하나라도 있으면 RED."""
+    (1) 동결: seam 화이트리스트 밖 +/- 라인(특히 compute·backup·lineage)이 하나라도 있으면 RED.
+    (2) presence(A1, DL-5b-e2e): seam 라인이 *존재함*도 단정 — D-203 배선이 사라지면 RED(자기완결).
+    → (1)∧(2) = R0 대비 diff 가 seam 화이트리스트와 정확히 일치(초과·결손 모두 RED)."""
     added, removed = _diff_pm_lines_vs_r0(_EXECUTOR_PATH)
-    extra_added = sorted(set(added) - _EXECUTOR_SEAM_ADDED)
-    extra_removed = sorted(set(removed) - _EXECUTOR_SEAM_REMOVED)
+    sa, sr = set(added), set(removed)
+    # (1) 동결: 허용 밖 변경 0
+    extra_added = sorted(sa - _EXECUTOR_SEAM_ADDED)
+    extra_removed = sorted(sr - _EXECUTOR_SEAM_REMOVED)
     assert not extra_added and not extra_removed, (
         "executor seam 경계 위반 — 허용 seam additive 밖 변경 감지(compute 동결 위반 의심):\n"
         + "".join(f"  + {ln}\n" for ln in extra_added)
         + "".join(f"  - {ln}\n" for ln in extra_removed)
+    )
+    # (2) presence(A1): seam 이 실재 — D-203 배선 회귀(seam 제거) 시 RED
+    missing_added = sorted(_EXECUTOR_SEAM_ADDED - sa)
+    missing_removed = sorted(_EXECUTOR_SEAM_REMOVED - sr)
+    assert not missing_added and not missing_removed, (
+        "executor seam 부재 — 문서화된 data_path seam 소실(D-203 배선 회귀 의심):\n"
+        + "".join(f"  (missing +) {ln}\n" for ln in missing_added)
+        + "".join(f"  (missing -) {ln}\n" for ln in missing_removed)
     )
