@@ -1192,3 +1192,9 @@ task별 모달 UI (Playwright):
 │   실측 사전확인 = 엔진 diff vs DL-4(d8500d7) 0. "지금 green" 아닌 "앞으로도 green"(D-199)
 │   — mutation check로 비공허 증명. |
 └─
+
+  | D-201 보강 (2026-06-14, DL-5a) | test_engine_paths_are_watched 추가 — 엔진 5종 경로가
+    각각 추적 파일 ≥1개로 실재함을 git ls-files non-empty 단정. 경로 오타·미래 리네임이 본 단정을
+    vacuous-green(미감시를 불변으로 오판)으로 만드는 잔여 벡터 차단. 비공허 실증 = 가짜 경로 임시
+    주입 시 RED→revert mutation. | mutation이 inspector 1경로만 RED 실증했던 한계 보완 →
+    5/5 경로 감시 확정. "지금 green" 아닌 "앞으로도 green"(D-199) 일관. |
