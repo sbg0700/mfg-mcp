@@ -133,6 +133,10 @@ _EXECUTOR_SEAM_ADDED = {
     "def _load_eventlog(dataset_id: str, data_path: str | None = None):",
     "    path = data_path if data_path is not None else os.path.join(EVENTLOG_DATA_ROOT, name)",
     "    if data_path is None and not os.path.exists(path):",
+    # DL-5c-3 (D-207): image seam additive — _execute_image data_path 전파(위치만, compute·**/* glob 0접촉)
+    "        return await _execute_image(plan, approved_keys, dataset_id, data_path)",
+    "async def _execute_image(plan: dict, approved_keys: set, dataset_id: str, data_path: str | None = None) -> dict:",
+    "    folder = data_path if data_path is not None else os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))",
 }
 _EXECUTOR_SEAM_REMOVED = {
     # DL-5b (기존)
@@ -145,6 +149,10 @@ _EXECUTOR_SEAM_REMOVED = {
     "def _load_eventlog(dataset_id: str):",
     "    path = os.path.join(EVENTLOG_DATA_ROOT, name)",
     "    if not os.path.exists(path):",
+    # DL-5c-3 (D-207): image seam 이전 라인
+    "        return await _execute_image(plan, approved_keys, dataset_id)",
+    "async def _execute_image(plan: dict, approved_keys: set, dataset_id: str) -> dict:",
+    "    folder = os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))",
 }
 
 

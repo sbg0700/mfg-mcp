@@ -200,7 +200,7 @@ async def execute(plan: dict, approved_keys: set | None = None,
 
     # ★모달리티 분기: 이미지는 CSV가 아니므로 전용 실행 경로
     if modality == "inspection-image":
-        return await _execute_image(plan, approved_keys, dataset_id)
+        return await _execute_image(plan, approved_keys, dataset_id, data_path)
     if modality == "event-log":
         return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options, data_path)
 
@@ -369,7 +369,7 @@ IMAGE_DATA_ROOT = os.environ.get(
 )
 
 
-async def _execute_image(plan: dict, approved_keys: set, dataset_id: str) -> dict:
+async def _execute_image(plan: dict, approved_keys: set, dataset_id: str, data_path: str | None = None) -> dict:
     """inspection-image 전처리 실행.
 
     timeseries와 ★동일한 권한 게이트 + lineage 계약★을 따른다.
@@ -379,7 +379,7 @@ async def _execute_image(plan: dict, approved_keys: set, dataset_id: str) -> dic
     import glob
     from PIL import Image as _Image
 
-    folder = os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))
+    folder = data_path if data_path is not None else os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))
     if not os.path.isdir(folder):
         return ExecutionResult(dataset_id=dataset_id, all_done=False,
                                results=[]).model_dump() | {"error": f"image folder not found: {folder}"}
