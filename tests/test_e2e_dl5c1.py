@@ -81,7 +81,7 @@ async def _run_one(cat, monkeypatch, did: str, modality: str, name: str):
     path = await resolve_dataset_path(did)                 # ★프로덕션 seam과 동일 해석점
     profile = _profile_from_real(did, modality, path)
 
-    async def _stub_inspect(dataset_id, model=None, modality="timeseries"):  # noqa: ARG001
+    async def _stub_inspect(dataset_id, model=None, modality="timeseries", data_path=None):  # noqa: ARG001
         return profile
     monkeypatch.setattr(inspector, "inspect", _stub_inspect)
     monkeypatch.setattr(llm, "generate", _stub_generate)

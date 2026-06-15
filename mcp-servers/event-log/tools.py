@@ -33,7 +33,10 @@ EVENTLOG_DATA_ROOT = os.environ.get(
 LABEL_HINTS = {"PASS_YN", "JUDGE", "JUDGEMENT", "RESULT", "OK_NG", "DEFECT_TYPE", "LABEL"}
 
 
-def _resolve(dataset_id: str) -> str:
+def _resolve(dataset_id: str, data_path: str | None = None) -> str:
+    # data_path(catalog 실 lake, D-206) 주어지면 그 경로를 권위로 사용(구 ROOT 탐색 생략).
+    if data_path is not None:
+        return data_path
     name = dataset_id
     if not (name.endswith(".csv") or name.endswith(".xlsx")):
         # 확장자 없으면 둘 다 시도
@@ -89,9 +92,9 @@ def detect_encoding(file_path: str) -> dict[str, Any]:
     return {"file_path": file_path, "encoding": "unknown", "confidence": "low"}
 
 
-def list_columns(dataset_id: str) -> dict[str, Any]:
+def list_columns(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     """통합 후 컬럼 분석 + 불균형/NaN 감지 (timeseries 계약과 동일 구조)."""
-    path = _resolve(dataset_id)
+    path = _resolve(dataset_id, data_path)
     df, meta = _load(path)
     columns = []
     for name in df.columns:
@@ -118,16 +121,16 @@ def list_columns(dataset_id: str) -> dict[str, Any]:
             "columns": columns, "read_notes": read_notes}
 
 
-def get_schema(dataset_id: str) -> dict[str, Any]:
-    meta = list_columns(dataset_id)
+def get_schema(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
+    meta = list_columns(dataset_id, data_path)
     props = {c["name"]: {"type": "number" if "float" in c["dtype"] or "int" in c["dtype"] else "string"}
              for c in meta["columns"]}
     return {"dataset_id": dataset_id, "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object", "properties": props}
 
 
-def sample(dataset_id: str, n: int = 5) -> dict[str, Any]:
-    path = _resolve(dataset_id)
+def sample(dataset_id: str, n: int = 5, data_path: str | None = None) -> dict[str, Any]:
+    path = _resolve(dataset_id, data_path)
     df, _ = _load(path)
     rows = df.head(n).where(pd.notna(df.head(n)), None).to_dict(orient="records")
     return {"dataset_id": dataset_id, "n": n, "rows": rows,

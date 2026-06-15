@@ -38,17 +38,18 @@ _ENGINE_PATHS = [
     "agents/ml",
 ]
 
-# ── D-201 재정의(DL-5b): 파일 동결 → compute 동결 + 데이터 seam additive 허용 ──
-# {inspector,planner,validator,ml} = byte-동결(R0 대비 diff 0).
-# executor.py = compute 동결이되 '문서화된 데이터 seam additive'(data_path 인자+None 분기)만
-#   허용(D-203). seam 밖 변경은 RED — 아래 _EXECUTOR_SEAM_* 화이트리스트가 그 경계.
+# ── D-201 재정의(DL-5b/5c-2): compute/프로파일 동결 + 데이터 seam additive 허용 ──
+# {planner,validator,ml}+inspector/schemas.py = byte-동결(R0 대비 diff 0).
+# executor.py(D-203)·inspector.py(D-206) = compute/프로파일 로직 동결이되 '문서화된 데이터 seam
+#   additive'(data_path 인자 전파)만 허용. seam 밖 변경은 RED — 아래 _*_SEAM_* 화이트리스트가 경계.
 _FROZEN_PATHS = [
-    "agents/inspector",
+    "agents/inspector/schemas.py",
     "agents/planner",
     "agents/validator",
     "agents/ml",
 ]
 _EXECUTOR_PATH = "agents/executor/executor.py"
+_INSPECTOR_PATH = "agents/inspector/inspector.py"
 
 # 대조(control) 경로 — R0 대비 변경이 *실증된* DL-레이어 파일(probe 비공허 증명용).
 # CC 가 STEP1~2 에서 `git diff --name-only <R0> -- backend/catalog.py` == 1 로 non-empty 확인.
@@ -82,9 +83,9 @@ def _changed_vs_r0(*pathspecs: str) -> list[str]:
 
 # ── 본 단정: 엔진 로직-0 (byte-동결 4종 — executor 제외, D-201 재정의) ────────
 def test_engine_logic_zero_vs_r0() -> None:
-    """{inspector,planner,validator,ml} 이 R0 대비 변경 0(committed+미커밋 모두).
-    executor.py 는 데이터 seam additive 가 허용되어 본 단정에서 제외되고,
-    test_executor_seam_additive_only 가 별도로 그 경계를 강제한다(D-203)."""
+    """{planner,validator,ml}+inspector/schemas.py 가 R0 대비 변경 0(committed+미커밋 모두).
+    executor.py(D-203)·inspector.py(D-206) 는 데이터 seam additive 가 허용되어 본 단정에서
+    제외되고, test_executor_seam_additive_only·test_inspector_seam_additive_only 가 각 경계를 강제."""
     changed = _changed_vs_r0(*_FROZEN_PATHS)
     assert changed == [], (
         f"엔진 로직-0 불변 위반 — R0({_R0_TAG}) 대비 변경된 동결 엔진 파일:\n"
@@ -183,6 +184,51 @@ def test_executor_seam_additive_only() -> None:
     missing_removed = sorted(_EXECUTOR_SEAM_REMOVED - sr)
     assert not missing_added and not missing_removed, (
         "executor seam 부재 — 문서화된 data_path seam 소실(D-203 배선 회귀 의심):\n"
+        + "".join(f"  (missing +) {ln}\n" for ln in missing_added)
+        + "".join(f"  (missing -) {ln}\n" for ln in missing_removed)
+    )
+
+
+# ── inspector 데이터 seam: additive-only 강제 (D-206 / DL-5c-2) ────────────────
+# R0 대비 inspector.py diff 의 +/- 내용 라인이 *오직* 아래 문서화 seam(data_path 인자 전파)뿐.
+# 프로파일·flags·LLM 로직이 단 1줄이라도 변하면 화이트리스트 밖 = RED.
+# 화이트리스트는 DL-5c-2 실제 `git diff --unified=0 <R0> -- inspector.py` 로 저작(즉흥 금지).
+_INSPECTOR_SEAM_ADDED = {
+    '                  modality: str = "timeseries", data_path: str | None = None) -> dict:',
+    '    columns = await _mcp_get(modality, "/list_columns", dataset_id=dataset_id, data_path=data_path)',
+    '    schema = await _mcp_get(modality, "/get_schema", dataset_id=dataset_id, data_path=data_path)',
+    '    sample = await _mcp_get(modality, "/sample", dataset_id=dataset_id, n=5, data_path=data_path)',
+    '    encoding = await _mcp_get(modality, "/detect_encoding", dataset_id=dataset_id, data_path=data_path)',
+}
+_INSPECTOR_SEAM_REMOVED = {
+    '                  modality: str = "timeseries") -> dict:',
+    '    columns = await _mcp_get(modality, "/list_columns", dataset_id=dataset_id)',
+    '    schema = await _mcp_get(modality, "/get_schema", dataset_id=dataset_id)',
+    '    sample = await _mcp_get(modality, "/sample", dataset_id=dataset_id, n=5)',
+    '    encoding = await _mcp_get(modality, "/detect_encoding", dataset_id=dataset_id)',
+}
+
+
+def test_inspector_seam_additive_only() -> None:
+    """inspector.py 의 R0 대비 변경이 *정확히* 문서화된 data_path seam 전파뿐임을 단정(D-206).
+    (1) 동결: seam 밖 +/- 라인(특히 프로파일·flags·LLM 로직)이 하나라도 있으면 RED.
+    (2) presence: seam 라인이 *실재*함도 단정 — D-206 배선이 사라지면 RED(자기완결).
+    → (1)∧(2) = R0 대비 diff 가 seam 화이트리스트와 정확히 일치(초과·결손 모두 RED)."""
+    added, removed = _diff_pm_lines_vs_r0(_INSPECTOR_PATH)
+    sa, sr = set(added), set(removed)
+    # (1) 동결: 허용 밖 변경 0
+    extra_added = sorted(sa - _INSPECTOR_SEAM_ADDED)
+    extra_removed = sorted(sr - _INSPECTOR_SEAM_REMOVED)
+    assert not extra_added and not extra_removed, (
+        "inspector seam 경계 위반 — 허용 seam 밖 변경 감지(프로파일 동결 위반 의심):\n"
+        + "".join(f"  + {ln}\n" for ln in extra_added)
+        + "".join(f"  - {ln}\n" for ln in extra_removed)
+    )
+    # (2) presence: seam 이 실재 — D-206 배선 회귀(seam 제거) 시 RED
+    missing_added = sorted(_INSPECTOR_SEAM_ADDED - sa)
+    missing_removed = sorted(_INSPECTOR_SEAM_REMOVED - sr)
+    assert not missing_added and not missing_removed, (
+        "inspector seam 부재 — 문서화된 data_path seam 소실(D-206 배선 회귀 의심):\n"
         + "".join(f"  (missing +) {ln}\n" for ln in missing_added)
         + "".join(f"  (missing -) {ln}\n" for ln in missing_removed)
     )

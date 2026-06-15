@@ -209,7 +209,10 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
     from executor import execute as run_execute
     from validator import validate as run_validate, validate_plan
     try:
-        profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality)
+        # ★DL-5c-2 (D-206): data_path(catalog 실 lake) 단일 취득 → inspect/execute 공통 전달.
+        data_path = await _resolve_seam_path(req.dataset_id, req.modality)
+        profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality,
+                                    data_path=data_path)
         plan_result = await run_plan(profile, constraints=req.constraints,
                                      module_context=req.module_context, model=req.model)
         # ★사전 검증 (STEP 1B-2c): Executor 전. blocking(high 충돌) 시 실행 중단
@@ -219,7 +222,6 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
                     "pre_validation": pre_validation,
                     "execution": None, "validation": None,
                     "note": "계획 사전 검증 실패(blocking) — 실행 중단"}
-        data_path = await _resolve_seam_path(req.dataset_id, req.modality)
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
                                         modality=req.modality, data_path=data_path)
         # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
@@ -517,8 +519,10 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 modality = _resolve_modality(module, node_id)
                 constraints = module.get("constraints") or {}
 
-                # 1) Inspector
-                profile = await run_inspect(dataset_id, model=model, modality=modality)
+                # 1) Inspector — ★DL-5c-2 (D-206): data_path(실 lake) 단일 취득 → inspect/execute 공통
+                data_path = await _resolve_seam_path(dataset_id, modality)
+                profile = await run_inspect(dataset_id, model=model, modality=modality,
+                                            data_path=data_path)
 
                 # 2) Planner — module_context는 stage·module에서 합성 (1B-1 연장)
                 module_context = {
@@ -603,7 +607,6 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 # 4) Executor (전부 승인됨) + Validator (사후 6종)
                 # ★STEP 2a (D-103): 세션에 저장된 옵션 선택을 Executor로 전달 (balance_classes 분기).
                 selected_options = session.get("selected_options") or {}
-                data_path = await _resolve_seam_path(dataset_id, modality)
                 execution = await run_execute(plan_result, approved_keys=approved,
                                               modality=modality,
                                               selected_options=selected_options,
