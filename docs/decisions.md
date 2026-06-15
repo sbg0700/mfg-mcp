@@ -1221,3 +1221,9 @@ task별 모달 UI (Playwright):
     판단 영역이라 결정론 게이트 고정 부적합(이 셋 무라벨→anomaly 적합하나 fixture 아님). live
     smoke(A)=capstone 이월(Ollama+main.py prod 배선 phase 2 종속). | 사유: 게이트=회귀 보호=
     결정론 전처리 경로. LLM 추론·ML선택은 비결정·LLM도메인→게이트 밖, live/capstone. |
+
+## 2026-06-15 — datalake-redesign DL-5c: DL-5 본체 재정의(프로덕션 seam 배선) (Master 저작 → CC verbatim 적용)
+
+> **D-204** | DL-5 본체 재정의 — "재설계가 실제 작동" = **프로덕션 전 모달리티 seam 배선.** 5a(엔진 로직-0 동결)·5b(seam 부품 `resolver`+`executor` data_path 인자 + e2e 테스트 벤치)는 정의 스코프 달성으로 CLOSE 유효. 단 **프로덕션 배선**(main.py가 `resolve_dataset_path` 호출→`executor.execute(data_path)` + inspector/MCP catalog 경유)은 phase 2로 분리돼 **미이행**. CC 전 체인 실측: 프로덕션 호출부(main.py:222·591)가 data_path 미전달, `resolve_dataset_path` 호출 0 → 전 모달리티가 부재한 `data/synthetic/*` ROOT 읽음(실행 시 not-found). 5b reach/e2e의 "catalog→engine 작동"은 throwaway PG + test call 한정. ENTRY/WORKLOG "5b=재설계 작동 증명"은 부품/테스트 한정 과장(정정 대상). → DL-5 close 본체 = 프로덕션 배선. 단계 분할: **5c-1**(execute 배선, csv 3종 timeseries/order/event-log) · **5c-2**(inspect/MCP 배선, MCP 방식 진입 시 실측·결정) · **5c-3**(image 추후). "8챌린지 회귀"(합성 전제·엔진 동결로 무의미) 게이트 기준 폐기 — 회귀 본질 = "프로덕션이 실 PG lake를 id 기준으로 읽고 전 과정 완주". 합성 미접촉. | 근거: 명선 프레임 "첫 입력부만 치환" 정합 — 치환이 프로덕션 레벨에서 미이행이었음. |
+
+> **D-205** | reparse_header·balance_classes = **ML 학습 관련 미완 기능, 데이터 seam 배선과 무관** → 5c 회귀 대상 제외, 안 건드림. reparse_header = timeseries executor 핸들러 미구현(skip "Sprint 2+"). balance_classes = 전처리 단계(감지→Page4 제안카드→메타 기록)는 작동하나 실 리샘플(SMOTE/class_weight)이 train_engine에서 미소비(model.fit에 class_weight 없음). 둘 다 redesign(데이터층)과 독립 — 향후 ML 학습 단계 구현 시 처리. | 근거: 데이터 흐름 배선과 별개 축. 안 건드린다는 결정을 명문화해 향후 "왜 빠졌나" 재질문 차단(WORKLOG·인계 문서에도 명시). |
