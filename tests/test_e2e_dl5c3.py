@@ -40,6 +40,8 @@ _MODALITY = "inspection-image"
 _REPS = [
     ("L2_auto_console_detect", "flat·무라벨", 20),
     ("L2_press_aluminum", "nested(학습용/샘플)·txt페어", 50),
+    # pattern C: bmp 100 + 라벨 csv 1 — n_images==100(csv 비처리) = 라벨파일 혼입 차단 실증(anti-silent)
+    ("L2_welding_electrode", "flat·단일 csv 라벨(pattern C)", 100),
 ]
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")   # image tools._scan 와 동일 집합
 
