@@ -31,6 +31,7 @@ DEFAULT_MODALITY = "timeseries"
 
 async def _mcp_get(modality: str, path: str, **params) -> dict:
     base = MCP_SERVERS.get(modality, MCP_SERVERS[DEFAULT_MODALITY])
+    params = {k: v for k, v in params.items() if v is not None}  # D-207 carry: None 파라미터 미전송(httpx 빈문자열 직렬화 회피)
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(f"{base}{path}", params=params)
         r.raise_for_status()

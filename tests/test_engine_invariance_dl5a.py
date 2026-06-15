@@ -207,6 +207,8 @@ _INSPECTOR_SEAM_ADDED = {
     '    schema = await _mcp_get(modality, "/get_schema", dataset_id=dataset_id, data_path=data_path)',
     '    sample = await _mcp_get(modality, "/sample", dataset_id=dataset_id, n=5, data_path=data_path)',
     '    encoding = await _mcp_get(modality, "/detect_encoding", dataset_id=dataset_id, data_path=data_path)',
+    # DL-5c-3 (D-207) carry: _mcp_get None 파라미터 미전송(httpx 빈문자열 직렬화 회피) — data_path 라우팅만, profile/flags 로직 불변
+    '    params = {k: v for k, v in params.items() if v is not None}  # D-207 carry: None 파라미터 미전송(httpx 빈문자열 직렬화 회피)',
 }
 _INSPECTOR_SEAM_REMOVED = {
     '                  modality: str = "timeseries") -> dict:',

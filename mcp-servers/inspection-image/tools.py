@@ -31,9 +31,10 @@ IMAGE_DATA_ROOT = os.environ.get(
 IMG_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
 
 
-def _resolve(dataset_id: str) -> str:
-    """dataset_id(폴더명) → 실제 폴더 경로. (timeseries는 파일, image는 폴더)"""
-    path = os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))
+def _resolve(dataset_id: str, data_path: str | None = None) -> str:
+    """dataset_id(폴더명) → 실제 폴더 경로. (timeseries는 파일, image는 폴더)
+    data_path(catalog 실 lake, D-207) 주어지면 그 디렉터리를 권위로 사용(구 ROOT 탐색 생략)."""
+    path = data_path if data_path is not None else os.path.normpath(os.path.join(IMAGE_DATA_ROOT, dataset_id))
     if not os.path.isdir(path):
         raise FileNotFoundError(f"image dataset not found: {dataset_id} ({path})")
     return path
@@ -79,10 +80,10 @@ def detect_encoding(file_path: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 2: list_columns  [L1]  — 이미지 '속성'을 컬럼처럼 노출
 # ---------------------------------------------------------------------------
-def list_columns(dataset_id: str) -> dict[str, Any]:
+def list_columns(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     """이미지 폴더의 속성 분포를 'columns'로 노출 (timeseries 컬럼 계약과 동일 구조).
     각 속성(width/height/mode/format/label)을 하나의 '컬럼'으로 보고 분포·혼재를 분석."""
-    path = _resolve(dataset_id)
+    path = _resolve(dataset_id, data_path)
     items = [i for i in _scan(path) if "error" not in i]
     n = len(items)
 
@@ -114,8 +115,8 @@ def list_columns(dataset_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 3: get_schema  [L1]
 # ---------------------------------------------------------------------------
-def get_schema(dataset_id: str) -> dict[str, Any]:
-    meta = list_columns(dataset_id)
+def get_schema(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
+    meta = list_columns(dataset_id, data_path)
     props = {c["name"]: {"type": "integer" if c["name"] in ("width", "height") else "string",
                          "x-image-attr": True} for c in meta["columns"]}
     return {"dataset_id": dataset_id, "$schema": "http://json-schema.org/draft-07/schema#",
@@ -125,9 +126,9 @@ def get_schema(dataset_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 4: sample  [L1]  — 이미지 N장의 속성 샘플
 # ---------------------------------------------------------------------------
-def sample(dataset_id: str, n: int = 5) -> dict[str, Any]:
+def sample(dataset_id: str, n: int = 5, data_path: str | None = None) -> dict[str, Any]:
     """이미지 N장의 속성을 샘플로 (timeseries의 행 샘플 ↔ image의 파일 샘플)."""
-    path = _resolve(dataset_id)
+    path = _resolve(dataset_id, data_path)
     items = _scan(path)[:n]
     return {"dataset_id": dataset_id, "n": n, "rows": items,
             "columns": ["file", "width", "height", "mode", "format", "label", "has_txt_label"],
