@@ -108,7 +108,7 @@ export default function PipelineBuildPage() {
     setSaving(true)
     try {
       await put(`/sessions/${sid}/structure`, { line_id: lineId, stages })
-      navigate(`/pipeline/data?session=${sid}`)
+      navigate(`/pipeline/${import.meta.env.VITE_DL_UI_V2 ? 'data-v2' : 'data'}?session=${sid}`)
     } catch (e) {
       setToast(`저장 실패: ${e.message}`)
     } finally {
