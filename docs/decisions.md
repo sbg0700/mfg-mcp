@@ -1235,3 +1235,15 @@ task별 모달 UI (Playwright):
 ## 2026-06-15 — datalake-redesign DL-5c-3: image 프로덕션 위치 seam 설계 락 (Master 저작 → CC verbatim 적용)
 
 > **D-207** | DL-5c-3 image 프로덕션 위치 seam 배선방식. image = inspection-image modality(7종, ~2.5GB), **단위=디렉터리(파일 아님)**. lake 실구조 5갈래(A flat+동명txt · B subdir+txt · C flat+단일csv · D nested 카테고리 · E class-folder) + L2_auto_console_detect 1종 구조 미실측(빌드 전 디렉터리 단위 1줄 확인). **배선**: ⓐ resolver.py:47(`glob "*.csv"`)는 **csv-only 불변** — image 디렉터리 반환은 main.py `_resolve_seam_path`에 **별도 분기**(modality 인지, catalog data_path 디렉터리 그대로 반환, csv glob **미경유**). 근거 = L2_welding_electrode 라벨 csv 1개가 csv glob에 걸려 데이터로 오인되는 잠복위험 **원천차단** + resolver churn 0. ⓑ executor.py:372 `_execute_image(..., data_path)` additive(execute :202-203 분기 전달, `if data_path else IMAGE_DATA_ROOT` :366, `**/*` recursive :388이라 5갈래 흡수) + **5a 화이트리스트(:123-148) 동시 갱신**(image seam 라인만, 초과·결손 RED). ⓒ MCP image(`mcp-servers/inspection-image/` tools.py:34) `_resolve(dataset_id, data_path=None)` + 7도구 optional(csv 3서버 동형, mcp-servers/는 5a 동결 밖). ⓓ main.py seam에 inspection-image 편입(디렉터리 반환, csv 분기와 별도). **스코프**: 위치만 PG 권위 이관, **라벨 5갈래 해석 미이관**(`_scan` 추론 불변) — D-204 "첫 입력부만 치환" 정합, 라벨 deferred(D-205 패턴, 향후 ML/라벨 단계 재질문 차단). **carry(D-206) 정리**: inspector.py:32 `_mcp_get` data_path None시 **파라미터 미전송**(빈문자열 직렬화 회피) + MCP `_resolve` 미수신=None→구경로. csv 무영향(main이 실경로 채움). **게이트**: image end-to-end inspect→plan→execute→validate(EDA 제외 D-123). 정합 단정 = **n_images(장수) + mode/size 분포**(image엔 n_rows 부재 → csv 정합지표 대체). 비공허 = seam-off(synthetic↔실lake 장수 차) + compute-mutation RED. MCP HTTP 실기동=live smoke=명선 env 영역. **csv 변환 비채택**: image→csv 평탄화는 modality 분리 락(BLUEPRINT §6)·엔진 변경0 위배·공간구조 손실·"어떤 데이터도 전처리" 메시지 약화 → image는 비정형 modality 그대로 유지. | 근거: PG 위치 단일권위(D-164·D-206 연장)·MCP 7종 계약 보존(CLAUDE §4)·D-204 위치배선 본질·modality 분리 락. 명선 "이미지는 별도 라인" 정합. |
+
+D-208 (MCP 라이브 경로 — smoke=b1, 프로덕션 posture deferred)
+
+DL-5 라이브 smoke는 b1(host-run: myeongsun97 user-space에서 MCP 4서버 9101–9104 + backend 18000 자체기동, PG·Ollama는 병갑 컨테이너 TCP 재사용)으로 수행·통과. 근거: 단일 머신(kwonlocalserver)·실 lake 그룹 r-x 읽기 가능(복사 불요)·catalog data_path 32건 전부 상대(읽는 주체 repo-root 종속). b1은 smoke/개발 한정 — CLAUDE §3/§4 "MCP=모달리티 컨테이너" 원칙상 프로덕션 posture 아님. 프로덕션 = b2(컨테이너 + lake bind-mount + catalog 절대경로화)가 원칙 정합이나 본진 추후 결정으로 deferred(b3 inspector 우회는 7종 계약·발표 메시지 손상으로 기각). ★ smoke 통과의 검증 범위 = "host에서 seam이 실 lake 관통"까지(컨테이너 분산배포 정합은 별개, 과장 금지 — D-204 패턴).
+
+D-209 (흐름배선 — 플래그 기반 v2 직행)
+
+Page2 "다음" navigate를 VITE_DL_UI_V2 분기로 전환(on → /pipeline/data-v2, off → /pipeline/data). 플래그 off에서 구 경로 보존 → D-181/184 "구 경로 무변경" 정합. 전환기 v2 자연내비(DL-3 carry) 충족. 변경 = PipelineBuildPage·AlarmBanner 2파일.
+
+D-210 (라이브 배포 부채 — 갱신 시 재기동 규율)
+
+코드 갱신 시 실행 중 서비스(backend·MCP) 재기동 누락이 이번 2층 stale의 근본. "갱신 → 재기동" 규율 + dev 서비스 systemd --user 영속화(MCP·backend, dl-frontend 패턴)를 R-final ①에 편입.
