@@ -219,8 +219,9 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
                     "pre_validation": pre_validation,
                     "execution": None, "validation": None,
                     "note": "계획 사전 검증 실패(blocking) — 실행 중단"}
+        data_path = await _resolve_seam_path(req.dataset_id, req.modality)
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
-                                        modality=req.modality)
+                                        modality=req.modality, data_path=data_path)
         # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
         validation = await run_validate(exec_result, plan=plan_result, profile=profile,
                                         constraints=req.constraints)
@@ -275,6 +276,20 @@ _NODE_MODALITY: dict[str, str] = {
 # ★STEP 2a (D-104): suspend 시 balance_classes 미리보기용 df 로드.
 #   Executor의 데이터 로더(_resolve / _load_eventlog)를 재사용 — 일관성 유지.
 #   balance_classes pending step이 없으면 로드 자체를 건너뜀(불필요 I/O 회피).
+# ── DL-5c-1 (D-204): 프로덕션 execute seam — csv 3종만 catalog data_path(실 lake) 해석 ──
+_CSV_SEAM_MODALITIES = ("timeseries", "order", "event-log")
+
+
+async def _resolve_seam_path(dataset_id: str, modality: str) -> str | None:
+    """csv 3 모달리티(timeseries/order/event-log) → catalog data_path → 실 lake CSV 경로.
+    image(inspection-image)는 None 반환 → executor 구경로 생존(5c-3 이월, D-204).
+    fail-loud: resolver 가 entry/data_path/CSV 부재·모호 시 raise (호출부 try 가 포착)."""
+    if modality not in _CSV_SEAM_MODALITIES:
+        return None
+    from resolver import resolve_dataset_path
+    return await resolve_dataset_path(dataset_id)
+
+
 def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict]):
     """미리보기 필요시에만 df 로드 (balance_classes pending step 있을 때).
     실패해도 파이프라인은 계속 (preview만 빠짐). LLM 0 — 순수 데이터 I/O."""
@@ -588,9 +603,11 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 # 4) Executor (전부 승인됨) + Validator (사후 6종)
                 # ★STEP 2a (D-103): 세션에 저장된 옵션 선택을 Executor로 전달 (balance_classes 분기).
                 selected_options = session.get("selected_options") or {}
+                data_path = await _resolve_seam_path(dataset_id, modality)
                 execution = await run_execute(plan_result, approved_keys=approved,
                                               modality=modality,
-                                              selected_options=selected_options)
+                                              selected_options=selected_options,
+                                              data_path=data_path)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
                 validation["pre_validation"] = pre_validation  # 사전 결과도 첨부

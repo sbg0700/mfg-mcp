@@ -120,13 +120,30 @@ def test_engine_paths_are_watched() -> None:
 # compute(변환·backup·lineage) 라인이 단 1줄이라도 변하면 화이트리스트 밖 = RED.
 # 화이트리스트는 DL-5b STEP2 실제 `git diff --unified=0 <R0> -- executor.py` 로 저작(즉흥 금지).
 _EXECUTOR_SEAM_ADDED = {
+    # DL-5b: execute() 시그니처 data_path 인자 + timeseries/order seam (기존)
     "                  selected_options: dict[str, str] | None = None,",
     "                  data_path: str | None = None) -> dict:",
     "    path = data_path if data_path is not None else _resolve(dataset_id, modality)",
+    # DL-5c-1 (D-204): event-log seam additive — execute 분기·_execute_eventlog·_load_eventlog
+    "        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options, data_path)",
+    "                            selected_options: dict[str, str] | None = None,",
+    "                            data_path: str | None = None) -> dict:",
+    "        df, path, n_sheets = _load_eventlog(dataset_id, data_path)",
+    "def _load_eventlog(dataset_id: str, data_path: str | None = None):",
+    "    path = data_path if data_path is not None else os.path.join(EVENTLOG_DATA_ROOT, name)",
+    "    if data_path is None and not os.path.exists(path):",
 }
 _EXECUTOR_SEAM_REMOVED = {
+    # DL-5b (기존)
     "                  selected_options: dict[str, str] | None = None) -> dict:",
     "    path = _resolve(dataset_id, modality)",
+    # DL-5c-1 (D-204): event-log seam 이전 라인
+    "        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options)",
+    "                            selected_options: dict[str, str] | None = None) -> dict:",
+    "        df, path, n_sheets = _load_eventlog(dataset_id)",
+    "def _load_eventlog(dataset_id: str):",
+    "    path = os.path.join(EVENTLOG_DATA_ROOT, name)",
+    "    if not os.path.exists(path):",
 }
 
 

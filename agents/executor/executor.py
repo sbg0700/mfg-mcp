@@ -202,7 +202,7 @@ async def execute(plan: dict, approved_keys: set | None = None,
     if modality == "inspection-image":
         return await _execute_image(plan, approved_keys, dataset_id)
     if modality == "event-log":
-        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options)
+        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options, data_path)
 
     # order는 CSV라 timeseries 경로 재사용 (DATA_ROOT만 order로)
     path = data_path if data_path is not None else _resolve(dataset_id, modality)
@@ -467,11 +467,11 @@ EVENTLOG_DATA_ROOT = os.environ.get(
 )
 
 
-def _load_eventlog(dataset_id: str):
+def _load_eventlog(dataset_id: str, data_path: str | None = None):
     """CSV/Excel(멀티시트 통합) 로드."""
     name = dataset_id
-    path = os.path.join(EVENTLOG_DATA_ROOT, name)
-    if not os.path.exists(path):
+    path = data_path if data_path is not None else os.path.join(EVENTLOG_DATA_ROOT, name)
+    if data_path is None and not os.path.exists(path):
         for ext in (".csv", ".xlsx"):
             p = os.path.join(EVENTLOG_DATA_ROOT, name + ext)
             if os.path.exists(p):
@@ -497,12 +497,13 @@ def _load_eventlog(dataset_id: str):
 
 
 async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str,
-                            selected_options: dict[str, str] | None = None) -> dict:
+                            selected_options: dict[str, str] | None = None,
+                            data_path: str | None = None) -> dict:
     """event-log 전처리. timeseries와 동일 권한 게이트+lineage.
     특유 작업: 멀티시트 통합(로드시 자동), balance_classes(불균형 보정 — STEP 2a 옵션 식별자 분기)."""
     selected_options = selected_options or {}
     try:
-        df, path, n_sheets = _load_eventlog(dataset_id)
+        df, path, n_sheets = _load_eventlog(dataset_id, data_path)
     except Exception as e:
         return ExecutionResult(dataset_id=dataset_id, all_done=False,
                                results=[]).model_dump() | {"error": f"load failed: {e}"}
