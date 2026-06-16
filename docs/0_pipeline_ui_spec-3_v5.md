@@ -246,9 +246,12 @@ const [selectedModule, setSelectedModule] = useState<{
 | 4 | `/api/sessions/{id}` | GET | 모든 | — | 세션 전체 상태 | 복원용 |
 | 5 | `/api/sessions/{id}/structure` | PUT | 2 | `PipelineStructure` | `{session_id, status}` | 1-1 저장 |
 | 6 | `/api/sessions/{id}/full` | PUT | 3 | `PipelineFull` | `{session_id, status, alarms}` | 1-2 저장 |
-| 7 | `/api/datalake/list` | GET | 3 | `?modality=&function=&source=` | `{entries: [DataLakeEntry]}` | 카탈로그 |
+| 7 | `/api/datalake/list` | GET | 3 | `?vid=&function=&site=` | `{entries: [DataLakeEntry]}` | 카탈로그 (D-166) |
 | 8 | `/api/datalake/register` | POST | 3 | multipart (Mode A) 또는 JSON (Mode B) | `DataLakeEntry` | 신규 등록 |
 | 9 | `/api/datalake/{id}/metadata` | GET | 3 | — | `DataLakeEntry` | 메타 조회 |
+| 9b | `/api/datalake/{id}/columns` | GET | 3 | — | `{datalake_id, columns: [...]}` (`column_kind`/`group_desc`/`__dupN` 포함) | Page 3 폼 실컬럼 소스 (D-90/D-161) — DL-3, D-187 |
+| 9c | `/api/datalake/{id}/constraints` | GET | 3 | — | `{datalake_id, constraints: [...]}` | prefill 소스 (D-167 제안) — DL-3, D-187 |
+| 9d | `/api/datalake/{id}/constraints` | POST | 3 | `{column_name, constraint_spec, approved_by?}` | 저장 결과 | "영속 업데이트" 쓰기 경로 (insert_constraint 경유 = D-179, type 화이트리스트 = D-185) — DL-3, D-187 |
 | 10 | `/api/datalake/{id}` | DELETE | 3 | — | `{deleted: true}` | 삭제 |
 | 11 | `/api/execute_pipeline` | POST | 4 | `{session_id, model}` | `{status, estimated_seconds}` | 실행 트리거 |
 | 12 | `/api/pipeline/{id}/status` | GET | 4 | — | `PipelineStatus` | 폴링 |
@@ -276,7 +279,7 @@ const [selectedModule, setSelectedModule] = useState<{
 | 4 | `PipelineResults` | Page 4 백엔드 실행 | DB `sessions.results` + `lineage.transformations` | 4, 5 (간접) |
 | 5 | `PipelineStatus` | Page 4 실시간 | 메모리 (SSE/폴링) | 4 |
 | 6 | `AnalysisQuestion` | Page 5 자동 생성 | DB `sessions.analysis` | 5 |
-| 7 | `DataLakeEntry` | 등록 시점 | DB `datalake.entries` + 파일 시스템 | 3 |
+| 7 | `DataLakeEntry` | 등록/적재 시점 | DB 정규화 3테이블 `datalake.entries`/`.columns`/`.constraints` + 파일 시스템 (D-160) | 3 |
 | 8 | `AggregatedContext` | Page 4 완료 후 자동 | DB `sessions.results` 확장 필드 | 5, 6 |
 
 ### 9-3. 사용자 입력 → 백엔드 저장 흐름
@@ -765,7 +768,7 @@ curl -X PUT http://localhost:8000/api/sessions/{id}/structure \
   }'
 
 # 4. Data Lake 조회
-curl "http://localhost:8000/api/datalake/list?modality=timeseries&function=process"
+curl "http://localhost:8000/api/datalake/list?vid=<vid>&function=process&site=<site>"
 
 # 5. Data Lake 신규 등록 (Mode A 업로드)
 curl -X POST http://localhost:8000/api/datalake/register \
@@ -967,7 +970,7 @@ pending  ──▶  inspecting  ──▶  planning  ──▶  executing
    - 검증: UX + 시연 흐름 + 차별점 5가지 전달
 
 4. **운영 단계** (실제 SI 고객)
-   - KAMP 등록 시나리오 A/B 최종 결정 (Part 1-9-1)
+   - KAMP 적재 = DB catalog 단일 진입점 확인 (물리경로 A/B 폐기 확정, D-159)
 
 ### 최종 산출물 (사용자 검토 대기)
 

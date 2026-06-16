@@ -69,7 +69,7 @@ def _find_module(pipeline_full: dict, stage_order: int, module_index: int) -> di
 # ─────────────────────────────────────────────────────────────────────────
 # 영역 E — agent_records 원본 보존
 # ─────────────────────────────────────────────────────────────────────────
-def _build_agent_record(stage_order: int, module: dict, mr: dict) -> dict:
+def _build_agent_record(stage_order: int, module: dict, mr: dict, vid: str | None = None) -> dict:
     """module_results[module_key] → agent_records[i]. 손실 0(spec-1 §1-9-7) 목표.
     profile / plan / execution / validation의 핵심 필드를 거의 그대로 옮긴다."""
     profile = mr.get("profile") or {}
@@ -150,6 +150,7 @@ def _build_agent_record(stage_order: int, module: dict, mr: dict) -> dict:
         "dataset_role": module.get("dataset_role") or module.get("datalake_id") or "?",
         "modality": mr.get("modality"),
         "dataset_id": mr.get("dataset_id"),
+        "vid": vid,                       # D-162 — 공정 흐름(라인) 단위 단일 ID. 흐름 그룹 ID 전파만(function/site 무관·별도 필터).
         "inspector": inspector_block,
         "planner": planner_block,
         "executor": executor_block,
@@ -284,7 +285,7 @@ def _downstream_template(findings: list[dict]) -> str:
     return " ".join(parts) if parts else _NO_FINDING_IMPLICATION
 
 
-def _build_stage_chain(pipeline_full: dict, key_findings: list[dict]) -> list[dict]:
+def _build_stage_chain(pipeline_full: dict, key_findings: list[dict], vid: str | None = None) -> list[dict]:
     chain: list[dict] = []
     for stage in pipeline_full.get("stages", []):
         so = stage.get("stage_order")
@@ -298,6 +299,7 @@ def _build_stage_chain(pipeline_full: dict, key_findings: list[dict]) -> list[di
         chain.append({
             "stage_order": so,
             "node_id": stage.get("node_id"),
+            "vid": vid,                   # D-162 — 흐름(라인) 단위 단일 ID 전파 (결정론, 실어 나르기만).
             "main_findings": main_findings,
             "downstream_implication": _downstream_template(stage_findings),
         })
@@ -346,6 +348,9 @@ def aggregate(session: dict) -> dict[str, Any]:
     sid = session.get("session_id") or "?"
     pipeline_full = session.get("pipeline_full") or {}
     module_results = session.get("module_results") or {}
+    # D-162 — vid(공정 흐름·라인 단위 단일 ID)를 결정론 경로에 전파. PipelineFull 최상위 SSOT
+    #   (entries.vid 동일명·별칭 금지). 분기·계산·LLM 0 — 실어 나르기만. function/site 무관(별도 필터).
+    vid = pipeline_full.get("vid")
 
     # 1) agent_records — 모듈 키를 안정적으로 정렬 (stage_order, module_index)
     sorted_keys = sorted(module_results.keys(), key=_parse_module_key)
@@ -353,7 +358,7 @@ def aggregate(session: dict) -> dict[str, Any]:
     for k in sorted_keys:
         so, mi = _parse_module_key(k)
         mod = _find_module(pipeline_full, so, mi) or {"index": mi}
-        rec = _build_agent_record(so, mod, module_results[k])
+        rec = _build_agent_record(so, mod, module_results[k], vid)
         agent_records.append(rec)
 
     # 2) key_findings — 각 record에서 규칙 추출, 등장 순서 유지
@@ -365,7 +370,7 @@ def aggregate(session: dict) -> dict[str, Any]:
     function_axis_summary = _build_function_axis(key_findings)
 
     # 4) stage_chain — stage별 요약 + downstream 함의 (템플릿)
-    stage_chain = _build_stage_chain(pipeline_full, key_findings)
+    stage_chain = _build_stage_chain(pipeline_full, key_findings, vid)
 
     # 5) pipeline_structure / pipeline_constraints — 앞단 입력 보존
     pipeline_structure = pipeline_full   # 1-1+1-2 구조 그대로

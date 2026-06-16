@@ -39,34 +39,34 @@ def datasets() -> dict[str, list[str]]:
 
 
 @app.get("/list_columns")
-def ep_list_columns(dataset_id: str) -> dict[str, Any]:
+def ep_list_columns(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     try:
-        return tools.list_columns(dataset_id)
+        return tools.list_columns(dataset_id, data_path)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
 
 
 @app.get("/get_schema")
-def ep_get_schema(dataset_id: str) -> dict[str, Any]:
+def ep_get_schema(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     try:
-        return tools.get_schema(dataset_id)
+        return tools.get_schema(dataset_id, data_path)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
 
 
 @app.get("/sample")
-def ep_sample(dataset_id: str, n: int = 5) -> dict[str, Any]:
+def ep_sample(dataset_id: str, n: int = 5, data_path: str | None = None) -> dict[str, Any]:
     try:
-        return tools.sample(dataset_id, n)
+        return tools.sample(dataset_id, n, data_path)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
 
 
 @app.get("/detect_encoding")
-def ep_detect_encoding(dataset_id: str) -> dict[str, Any]:
+def ep_detect_encoding(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     """이미지셋의 첫 이미지 포맷/모드 감지."""
     try:
-        path = tools._resolve(dataset_id)
+        path = tools._resolve(dataset_id, data_path)
         items = tools._scan(path)
         if not items:
             raise HTTPException(404, "no images")

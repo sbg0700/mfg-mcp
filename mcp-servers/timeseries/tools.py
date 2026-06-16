@@ -25,8 +25,11 @@ DATA_ROOT = os.environ.get(
 )
 
 
-def _resolve(dataset_id: str) -> str:
-    """dataset_id(파일명, 확장자 생략 가능) → 실제 파일 경로."""
+def _resolve(dataset_id: str, data_path: str | None = None) -> str:
+    """dataset_id(파일명, 확장자 생략 가능) → 실제 파일 경로.
+    data_path(catalog 실 lake, D-206) 주어지면 그 경로를 권위로 사용(구 ROOT 탐색 생략)."""
+    if data_path is not None:
+        return data_path
     name = dataset_id if dataset_id.endswith(".csv") else f"{dataset_id}.csv"
     path = os.path.normpath(os.path.join(DATA_ROOT, name))
     if not os.path.exists(path):
@@ -90,10 +93,10 @@ def _is_number(s: str) -> bool:
 # ---------------------------------------------------------------------------
 # 도구 2: list_columns  [L1]
 # ---------------------------------------------------------------------------
-def list_columns(dataset_id: str) -> dict[str, Any]:
+def list_columns(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     """컬럼명·dtype·기초 통계 + dtype 혼재 의심 플래그 + ★의미 그룹(semantic_group)★."""
     import semantic  # 같은 디렉터리 (우려 1: 공정 의미 분류)
-    path = _resolve(dataset_id)
+    path = _resolve(dataset_id, data_path)
     df, notes = _smart_read(path)
     col_names = [str(c) for c in df.columns]
     sem = semantic.classify_columns(col_names)  # {name: {semantic_group, strategy, is_grouped...}}
@@ -134,9 +137,9 @@ def list_columns(dataset_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 3: get_schema  [L1]
 # ---------------------------------------------------------------------------
-def get_schema(dataset_id: str) -> dict[str, Any]:
+def get_schema(dataset_id: str, data_path: str | None = None) -> dict[str, Any]:
     """JSON Schema 형태의 스키마 추출."""
-    meta = list_columns(dataset_id)
+    meta = list_columns(dataset_id, data_path)
     props = {}
     for c in meta["columns"]:
         dt = c["dtype"]
@@ -150,9 +153,9 @@ def get_schema(dataset_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 4: sample  [L1]
 # ---------------------------------------------------------------------------
-def sample(dataset_id: str, n: int = 5) -> dict[str, Any]:
+def sample(dataset_id: str, n: int = 5, data_path: str | None = None) -> dict[str, Any]:
     """[Harness §7-2] 큰 데이터를 LLM에 직접 넣지 않기 위해 요약·샘플만 반환."""
-    path = _resolve(dataset_id)
+    path = _resolve(dataset_id, data_path)
     df, notes = _smart_read(path, nrows=max(n * 4, 50))
     head = df.head(n)
     # NaN을 JSON 직렬화 가능하게

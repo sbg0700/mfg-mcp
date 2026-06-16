@@ -30,10 +30,10 @@
 
 | 모달리티 | 정의 위치 (서버) | 도구 위치 | 데이터 위치 | 명세 |
 |---|---|---|---|---|
-| `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/kamp/L1_press_forming/`, `L1_cnc_lathe_quality/` 등 (시나리오 A 가정, spec-1 Part 1-9-1 결정 대기) | spec-1.md Part 1-3 |
-| `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/kamp/L2_wafer_defect/`, `L2_welding_bead/` 등 (시나리오 A 가정) | 〃 |
-| `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/kamp/<event-log 더미>/` (시나리오 A 가정) | 〃 |
-| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/kamp/order_cp949/` (시나리오 A 가정) | 〃 |
+| `timeseries` | `mcp-servers/timeseries/server.py` | `mcp-servers/timeseries/tools.py` | `data/lake/L1_press_forming/`, `data/lake/L1_cnc_lathe_quality/` 등 (`data/lake/<id>/` flat 실 레이아웃, D-159) | spec-1.md Part 1-3 |
+| `inspection-image` | `mcp-servers/inspection-image/server.py` | `mcp-servers/inspection-image/tools.py` | `data/lake/L2_wafer_defect/`, `data/lake/L2_welding_bead/` 등 (〃) | 〃 |
+| `event-log` | `mcp-servers/event-log/server.py` | `mcp-servers/event-log/tools.py` | `data/lake/L4_ict_checker/`, `data/lake/L4_ict_inspection/` (〃) | 〃 |
+| `order` | `mcp-servers/order/server.py` | `mcp-servers/order/tools.py` | `data/lake/order_planning/` (〃) | 〃 |
 
 각 MCP 서버 = FastAPI HTTP, 같은 7도구 계약 (CLAUDE.md §4).
 
@@ -92,7 +92,7 @@
 ### Line 3 — 폴리머 성형·전자 검사·진동 신호 (7 Node)
 | Node ID | Display | Max Modules | hint_datasets |
 |---|---|---|---|
-| `order_planning` | 주문 계획 | 1 | order_cp949 |
+| `order_planning` | 주문 계획 | 1 | order_planning |
 | `injection_molding` | 사출 성형 | 3 | L1_injection_optimize, L1_injection_production, L1_cnc_machine_optimize |
 | `extrusion` | 압출 | 1 | L3_extrusion_pdm |
 | `precision_parts` | 정밀 부품 | 1 | L3_vacuum_pump |
@@ -230,13 +230,13 @@ POST 2개 (check_constraints, apply_preprocessing) — body 에 dataset_id + con
 | 자료구조 | 정의 | 생성 시점 | 저장 |
 |---|---|---|---|
 | `LineCatalog` | spec-1.md Part 1-2 (가) | 시스템 정적 | `catalogs/lines.yaml` (실재, STEP 1B-1) |
-| `PipelineStructure` | spec-1.md Part 1-2 (나) | Page 2 출력 | DB `sessions.structure` (JSONB) |
-| `PipelineFull` | spec-1.md Part 1-2 (다) | Page 3 출력 | DB `sessions.full_data` + 파일 시스템 |
+| `PipelineStructure` | spec-1.md Part 1-2 (나) | Page 2 출력 | DB `sessions.structure` (JSONB) — DL: module +chain_order/attached_to, top +vid (D-162/165) |
+| `PipelineFull` | spec-1.md Part 1-2 (다) | Page 3 출력 | DB `sessions.full_data` + 파일 시스템 — DL: module +chain_order/attached_to/datalake_id, top +vid (D-162/165) |
 | **`PipelineSession` | STEP 1B-2a 명세 §2 | `/api/sessions/create` 시점 | **`backend/session_store.py::_SESSIONS` 인메모리 (D-52, Sprint 2에 postgres) |
 | `PipelineResults` | spec-1.md Part 1-2 (라) | Page 4 출력 | DB `sessions.results` + `lineage.transformations` |
 | `PipelineStatus` | spec-2.md Part 5-2 | Page 4 실시간 | 메모리 (현재 폴링; SSE는 1B-3) |
 | `AnalysisQuestion` | spec-1.md Part 1-2 (마) | Page 5 자동 생성 | DB `sessions.analysis` |
-| `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록 시점 | DB `datalake.entries` |
+| `DataLakeEntry` | spec-1.md Part 1-2 (사) | 등록/적재 시점 | DB 정규화 3테이블 `datalake.entries`(+vid/site/reusable_flag/**format/company** — 14컬럼) · `datalake.columns`(column_kind scalar\|group; vibration=waveform) · `datalake.constraints`(유저 승인값) — D-160/161/174/176 |
 | **`AggregatedContext` | spec-1.md Part 1-2 (바) | execute_pipeline 완료 직후 자동 트리거 (D-63) | **실재 (STEP 1B-2b): `session["aggregated_context"]` 인메모리 캐시, Sprint 2에 postgres |
 
 특히 `AggregatedContext` 의 `agent_records` 필드 = MCP 4단 판단 기록 보존 (사용자 비전 핵심).
@@ -268,6 +268,7 @@ spec-1 Part 1-2 (바) 정합. 생성: `agents/aggregator/context_aggregator.py::
 | B | `key_findings` | 결정론 추출 (Inspector flags + Executor done steps + Validator issues). type ∈ {class_imbalance, missing_values, dtype_mixed, transformation_applied, sequence_normalized, constraint_violation, validation_concern} |
 | C | `function_axis_summary` | `{process,quality,maintenance,reference}` 4키 고정, finding 분류 |
 | D | `stage_chain` | `[{stage_order, node_id, main_findings, downstream_implication}]` — 함의는 사전정의 7종 템플릿 매핑 |
+| D' | `analysis_groups` | DL 신규 — vid 흐름 위치 + column-group descriptor를 EDA로 표면화. shape는 DL-4 확정. 결정론(LLM 0). D-170 |
 | E | `agent_records` | 4단 기록 원본 보존 (Inspector/Planner/Executor/Validator 손실 0) |
 | F | `user_intent` | 이번 범위 항상 `None` (Page 5 미구현, D-64) |
 
@@ -595,7 +596,7 @@ styles.css 신규 클래스 (D-140 패턴 일관 — 추가만): `.train-modal`/
 
 | 단계 | 데이터 | 사용자 | 검증 우선 |
 |---|---|---|---|
-| 알파 | KAMP 더미 (`data/lake/kamp/` — 시나리오 A 가정, 알파 시 1-9-1 결정 확정) | 개발자 본인 | Phase 3 의 8 검증 항목 모두 (컴포넌트/API/에러/테스트/데모/부록 A·B·C) + LLM 모니터링 7 지표 + 데이터 경로 시나리오 A/B 최종 결정 |
+| 알파 | KAMP 32건 (`data/lake/<id>/` flat 실 레이아웃 — D-159, 시나리오 A/B 물리경로 선택지 폐기) | 개발자 본인 | Phase 3 의 8 검증 항목 모두 (컴포넌트/API/에러/테스트/데모/부록 A·B·C) + LLM 모니터링 7 지표 + 데이터 경로 시나리오 A/B 최종 결정 |
 | 베타 | 4 시나리오 (B/D/A/C) | 팀원 시연 | UX + 시연 흐름 + 차별점 5가지 전달 |
 | 운영 | 고객 자기 데이터 (`data/lake/registered/`) | 공장 관리자 | 실용성 + 가치 + KAMP 등록 시나리오 A/B 결정 |
 
@@ -649,3 +650,4 @@ styles.css 신규 클래스 (D-140 패턴 일관 — 추가만): `.train-modal`/
 - 2026-06-02: STEP 3b 반영 (브랜치 `feature/step3-eda-ml`) — Page 5 EDA 차트 UI 실엔진. recharts ^3.8.1 도입(빌드 타임 번들, 런타임 외부 호출 0). `step5_analyze/charts/` 9 파일(ChartCard 디스패처 + 8 차트 컴포넌트 + common.js). BoxPlot은 ComposedChart + ErrorBar(D-133). `FreeformEda.jsx` 자연어 EDA UI(코드 미리보기 → 승인/취소 → 결과+lineage_id). AnalyzePage skeleton 한 블록만 교체 + savedResult 복원(D-138) + key_findings details 폴딩(D-139). styles.css 신규 클래스만(D-140). D-131~D-140 결정. 사용자 명시 클릭 모델(D-134, /plan 자동 호출 X), AI 요약 차트별 클릭만(D-136). 회귀 0(/select·QuestionRadioGroup·"다음→Page 6" 링크·다른 페이지 모두 보존)
 - 2026-06-02: STEP 3c 반영 (브랜치 `feature/step3-eda-ml`) — Page 6 ML 학습 실엔진(백엔드). `/api/model/{sid}/train/validate`·`/train`·`/train/status`·`/train/result` 4 신규 엔드포인트(`/recommend` 보존, 회귀 0). `agents/ml/` 신규 패키지(`train_models.py`·`param_whitelist.py`·`train_engine.py`). task 분기 — regression(R²/RMSE+importance) / classification(Acc/F1/AUC+confusion+importance) / anomaly(IsolationForest, n_anomaly+score_distribution). 파라미터 화이트리스트 clamp+notice(`ALLOWED_PARAMS`, D-144). `random_state=42` 고정(D-145). OOM 가드 — 카테고리 100+ 제외 + row 20만+ 샘플링(D-146). `asyncio.to_thread` 백그라운드(이벤트 루프 비차단, D-147). lineage `model_train` 성공·실패 모두 기록(D-148). 도커 재빌드(scikit-learn 1.5.2/xgboost 2.1.3/imbalanced-learn 0.12.4/joblib 1.4.2 — CPU 학습). D-141~D-150 결정. Page 1~5 영향 0, advisory_only(CNN 등) 자동 차단.
 - 2026-06-02: STEP 3d 반영 (브랜치 `feature/step3-eda-ml`) — Page 6 학습 UI 실엔진. `TrainSkeletonModal` 삭제(`git rm`) → `TrainModal.jsx` 신규(task 분기: 지도 타겟 드롭다운+confusion / 비지도 contamination 슬라이더+score 분포). `ConfusionTable.jsx` 신규(CSS 그리드 + 색 농도 — 대각선 quality 초록 / 오답 maintenance 주황, D-154). `GET /api/model/{sid}/data_profile` 신규(LLM 0, build_eda_profile 재사용 — `/eda/plan` LLM 9초 회피, D-152). 3b 차트 재사용 — Histogram(score), CorrelationBar(importance 어댑터) — ChartCard EDA 디스패처 무변경(CHART_TYPE_IDS 환각 방어 contract 보호, D-155). 폴링 1초 + setInterval cleanup 다중 안전(D-156, React Hooks 규칙 준수). ModelingPage·ModelCard·/recommend 보존(회귀 0). styles.css 신규 클래스만(D-140 일관). D-151~D-158 결정. Page 1~5 영향 0.
+- 2026-06-09: datalake-redesign R1~DL-2 §8 동기 — `DataLakeEntry` 정규화 3테이블(`datalake.entries` 14컬럼: +vid/site/reusable_flag/format/company), `datalake.columns`(column_kind scalar\|group, vibration=waveform), `datalake.constraints`(유저 승인값), `analysis_groups`(D-170). 메타 권위=`catalogs/datalake_manifest.yaml`(D-173), id=hint_dataset, capture 보류=멀티캡처 PK 복합 트랙(D-175). D-159~177 결정.

@@ -33,6 +33,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 app = FastAPI(title="manufacturing-mcp backend", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+import datalake_api                          # DL-3a — /api/datalake/* (D-184/D-187)
+app.include_router(datalake_api.router)      # additive only, 구 핸들러 무접촉 (D-181)
 
 FRONTEND = ROOT / "frontend" / "_legacy_dashboard.html"   # STEP 1B-3a: 새 React 앱은 Vite(5173)에서, 백엔드 / 는 레거시 보존
 
@@ -207,7 +209,10 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
     from executor import execute as run_execute
     from validator import validate as run_validate, validate_plan
     try:
-        profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality)
+        # ★DL-5c-2 (D-206): data_path(catalog 실 lake) 단일 취득 → inspect/execute 공통 전달.
+        data_path = await _resolve_seam_path(req.dataset_id, req.modality)
+        profile = await run_inspect(req.dataset_id, model=req.model, modality=req.modality,
+                                    data_path=data_path)
         plan_result = await run_plan(profile, constraints=req.constraints,
                                      module_context=req.module_context, model=req.model)
         # ★사전 검증 (STEP 1B-2c): Executor 전. blocking(high 충돌) 시 실행 중단
@@ -218,7 +223,7 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
                     "execution": None, "validation": None,
                     "note": "계획 사전 검증 실패(blocking) — 실행 중단"}
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
-                                        modality=req.modality)
+                                        modality=req.modality, data_path=data_path)
         # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
         validation = await run_validate(exec_result, plan=plan_result, profile=profile,
                                         constraints=req.constraints)
@@ -273,6 +278,42 @@ _NODE_MODALITY: dict[str, str] = {
 # ★STEP 2a (D-104): suspend 시 balance_classes 미리보기용 df 로드.
 #   Executor의 데이터 로더(_resolve / _load_eventlog)를 재사용 — 일관성 유지.
 #   balance_classes pending step이 없으면 로드 자체를 건너뜀(불필요 I/O 회피).
+# ── DL-5c-1 (D-204): 프로덕션 execute seam — csv 3종만 catalog data_path(실 lake) 해석 ──
+_CSV_SEAM_MODALITIES = ("timeseries", "order", "event-log")
+# ── DL-5c-3 (D-207): image 위치 seam — inspection-image 는 디렉터리 반환(csv glob 미경유) ──
+_IMAGE_SEAM_MODALITY = "inspection-image"
+
+
+async def _resolve_seam_path(dataset_id: str, modality: str) -> str | None:
+    """csv 3 모달리티(timeseries/order/event-log) → catalog data_path → 실 lake CSV 경로.
+    inspection-image → catalog data_path 디렉터리(*.csv glob 미경유, D-207 ⓐ).
+    그 외 modality → None(구경로 생존).
+    fail-loud: resolver/디렉터리 부재 시 raise (호출부 try 가 포착)."""
+    if modality in _CSV_SEAM_MODALITIES:
+        from resolver import resolve_dataset_path
+        return await resolve_dataset_path(dataset_id)
+    if modality == _IMAGE_SEAM_MODALITY:
+        return await _resolve_image_dir(dataset_id)
+    return None
+
+
+async def _resolve_image_dir(dataset_id: str) -> str:
+    """inspection-image: catalog data_path 디렉터리를 반환(csv glob 미경유 — D-207 ⓐ,
+    welding_electrode 라벨 csv 오인 차단). resolver 와 동일하게 repo-root 기준 절대화.
+    fail-loud(D-192): entry/data_path/디렉터리 부재 시 raise (호출부 try 가 포착)."""
+    import catalog
+    entry = await catalog.get(dataset_id)
+    if entry is None:
+        raise FileNotFoundError(f"datalake entry 없음: {dataset_id}")
+    data_path = entry.get("data_path")
+    if not data_path:
+        raise FileNotFoundError(f"data_path 비어있음(entry 손상): {dataset_id}")
+    directory = data_path if os.path.isabs(data_path) else os.path.join(ROOT, data_path)
+    if not os.path.isdir(directory):
+        raise FileNotFoundError(f"image data_path 디렉터리 부재: {directory} (id={dataset_id})")
+    return directory
+
+
 def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict]):
     """미리보기 필요시에만 df 로드 (balance_classes pending step 있을 때).
     실패해도 파이프라인은 계속 (preview만 빠짐). LLM 0 — 순수 데이터 I/O."""
@@ -329,7 +370,8 @@ async def sessions_create(req: CreateSessionReq) -> dict:
     from session_store import create_session, get_session, save_session
     if not req.line_id and not req.pipeline_full:
         raise HTTPException(400, "either line_id or pipeline_full is required")
-    skeleton = req.pipeline_full or {"line_id": req.line_id, "stages": []}
+    # 4.1.1(D-197/D-188): vid=line_id — PipelineFull 최상위에 흐름(라인) 단위 단일 ID 적재(전파 소스). line_id 복사만, 계산/분기/LLM 0.
+    skeleton = req.pipeline_full or {"line_id": req.line_id, "vid": req.line_id, "stages": []}
     sid = create_session(skeleton)
     # line_id를 세션 최상위에도 저장 (Page 2의 GET /sessions/{id}가 쉽게 읽도록)
     session = get_session(sid)
@@ -389,7 +431,8 @@ async def session_put_structure(session_id: str, req: StructureReq) -> dict:
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
-    session["pipeline_full"] = {"line_id": req.line_id, "stages": req.stages}
+    # 4.1.1(D-197/D-188): vid=line_id 전파 소스 적재 (line_id 복사만, additive·계산/분기/LLM 0).
+    session["pipeline_full"] = {"line_id": req.line_id, "vid": req.line_id, "stages": req.stages}
     session["line_id"] = req.line_id
     session["status"] = "structured"
     save_session(session_id, session)
@@ -411,6 +454,14 @@ async def session_put_full(session_id: str, req: FullReq) -> dict:
     if session is None:
         raise HTTPException(404, f"session not found: {session_id}")
     pf = req.pipeline_full or {}
+    # 4.1.2(D-198 보존 + D-200 fail-loud): vid 부재→line_id 재유도(① pf.line_id → ② 교체 전 세션 line_id, 둘 다 없으면 None graceful·silent default 0). vid 실값이 derived(권위)와 불일치면 422 거부(anti-silent, D-190 선례). 일치/권위없음→존중 no-op. 복사뿐, 계산/LLM 0.
+    derived = pf.get("line_id") or session.get("line_id")
+    client_vid = pf.get("vid")
+    if not client_vid:
+        pf["vid"] = derived
+    elif derived is not None and client_vid != derived:
+        raise HTTPException(422, f"vid mismatch: client '{client_vid}' != line '{derived}'")
+    # else: present & 일치(또는 권위 없음) → 존중 no-op
     session["pipeline_full"] = pf
     if pf.get("line_id"):
         session["line_id"] = pf["line_id"]
@@ -490,8 +541,10 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 modality = _resolve_modality(module, node_id)
                 constraints = module.get("constraints") or {}
 
-                # 1) Inspector
-                profile = await run_inspect(dataset_id, model=model, modality=modality)
+                # 1) Inspector — ★DL-5c-2 (D-206): data_path(실 lake) 단일 취득 → inspect/execute 공통
+                data_path = await _resolve_seam_path(dataset_id, modality)
+                profile = await run_inspect(dataset_id, model=model, modality=modality,
+                                            data_path=data_path)
 
                 # 2) Planner — module_context는 stage·module에서 합성 (1B-1 연장)
                 module_context = {
@@ -578,7 +631,8 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 selected_options = session.get("selected_options") or {}
                 execution = await run_execute(plan_result, approved_keys=approved,
                                               modality=modality,
-                                              selected_options=selected_options)
+                                              selected_options=selected_options,
+                                              data_path=data_path)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
                 validation["pre_validation"] = pre_validation  # 사전 결과도 첨부

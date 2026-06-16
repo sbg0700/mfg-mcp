@@ -1054,3 +1054,196 @@ task별 모달 UI (Playwright):
 사용자가 Page 5에서 분석 목적을 선택하면 Page 6에서: ① LLM이 적합한 모델을 추천(fit_score) → ② 모델 카드의 "학습 시작" 클릭 → ③ task별 입력(지도=타겟 드롭다운 / 비지도=contamination 슬라이더) → ④ "파라미터 확인"으로 notices 사전 확인 → ⑤ "학습 시작" → 1초 폴링 → ⑥ 결과: KPI 카드 + (분류)confusion CSS 그리드 / (회귀)R²/RMSE / (비지도)score 분포 + feature importance + notices 박스 + lineage_id 표시. STEP 3 전체(3a EDA + 3b EDA UI + 3c 학습 백엔드 + 3d 학습 UI) 완성.
 
 다음: 별도 브랜치 — main 머지 또는 후속 기능(파라미터 수동 입력 UI · 모델 비교 · 추론 엔드포인트 등).
+
+## 2026-06-08 — datalake-redesign R1: 명세 patch (Master 저작 → CC 적용)
+
+명세: BLUEPRINT(설계 SSOT) §5 매핑표를 본진 명세에 반영. 순수 문서·코드 0. 브랜치: `feature/datalake-redesign`.
+대상: spec-1 §1-2/§1-5/§1-6/§1-9-1/Part3/§4-3, blueprint Part4-2, variable_index §8.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-159 | 물리경로 A/B 폐기 → **DB catalog 단일 진입점**. `data_path` 컬럼이 경로 추상화 → 셀렉·엔진은 `datalake_id`만 인지, 물리경로는 `data/lake/<id>/`로 귀결(선택 아님). **D-53 supersede** (D-53 "datalake_id=기존 dataset_id 직접 사용, 카탈로그 미도입 전제"는 카탈로그 도입으로 폐기) | A/B는 결정 항목이 아니었음. 합성데이터 미생성·KAMP 외부폴더 → 마이그레이션 대상 0(클린 출발). KAMP·신규 대등 = 핵심 메시지("어떤 데이터가 와도") 정합 |
+| D-160 | catalog = **정규화 3테이블**(asyncpg): `datalake.entries`(타입드 인덱스 컬럼) + `datalake.columns`(per-column) + `datalake.constraints`(per datalake_id+column). 단일 JSONB metadata 폐기. 비대칭 수용: catalog=DB / session·lineage=인메모리(Sprint 2 postgres) | anti-silent-conversion — 런타임 슬롯/폴더 추론 대신 권위 컬럼. Silent 변환이 SI 장애 주원인 → 타입드 인덱스로 구조 차단. 멱등·비파괴(CREATE IF NOT EXISTS, DROP 금지) |
+| D-161 | `datalake.columns.column_kind = scalar \| group`. FFT 광폭/숫자헤더(L3 vibration, 컬럼=주파수값 수천)는 per-column 부적합 → **컬럼-그룹 descriptor**(`fft_spectrum: N개 numeric-header, 단위·범위`). 제약도 집계/대역형 | R0 KAMP 확인 + 사용자 확인 완료. per-column 폼이 수천 컬럼에 깨짐 → 그룹 단위로 구조화 |
+| D-162 | `vid`(가상 그룹 ID) = **공정 흐름(라인) 단위·단일**(1 데이터셋=1 흐름). 인계서 `hash(process+module)`에서 라인 단위로 교정. `reusable_flag`로 후속 다대다(reference 공유) 무손실 확장. `function`/`site`는 vid 내 별도 필터 컬럼(vid 종속 아님). 전파 3곳(스키마→`_build_agent_record`→`_build_stage_chain`), 결정론·LLM 0(D-59 유지) | Page 1 라인 선택이 자연스러운 흐름 경계. 단일 시작 + flag로 확장 = 무손실. 흐름·계보 컨텍스트의 기반 |
+| D-163 | **modality 결정론 라우터** `datalake.get(id) → {data_path, modality}`. 기존 `_resolve`(timeseries/order) + 이미지 경로 + event-log 경로 3곳 통합. LLM 0 | 데이터→엔진 경계 단일 해석점. 모달리티 분기 중복 제거, 환각 방어(결정론) |
+| D-164 | **엔진 보존 이음매(additive seam)** — 데이터→엔진 경계(`dataset_id→파일경로`)만 `datalake.get`으로 추상화. 뒤의 `pd.read_csv → Inspector·Planner·Executor·Validator·학습`은 변경 0. **D-66/D-67 validator(제약=원본 backup parquet 직접 대조) 변형 0 계승** — 신규 resolve 아님, lineage 보존 | 검증된 엔진 불변 = 롤백 최소화(PROTOCOL §3). 구 경로 생존. D-67의 "원본 기준 검증"은 정확성·추적성 자산이라 그대로 |
+| D-165 | Page 2 모델 = **4 function 모듈(P/Q/M/R) 배치** + P 체인(`chain_order`) + M/Q→P 묶음(`attached_to`). module 스키마 +`vid`/+`chain_order`/+`attached_to`. 기존 `(function,dataset_role)` 중복 차단 규칙 폐기(같은 function 복수 허용). 이중 처리: MCP=개별 주체 / EDA=흐름 내 위치 | 사용자 비전의 공정 흐름 구성. 데이터셋 드래그가 아니라 기능 슬롯 배치 → 데이터 바인딩은 Page 3 분리 |
+| D-166 | Page 3 셀렉 = **vid × function × site 메타필터 → 카드 UI** → 제한 목록 셀렉. 기존 modality+function 드롭다운 대체 | vid로 흐름 범위 한정 → 카드로 선택지 축소. 메타 기반 진입 |
+| D-167 | 제약 가드 = **무조건 유저 입력**(시스템 제안 0, D-43 강화). prefill = `datalake.constraints`(유저 과거 승인값) **제안만** — 잠금/자동적용 금지, 매칭돼도 **항상 재승인 게이트**. 키 스코프 = `datalake_id+column`. 머지 = **세션 오버라이드 > 카탈로그 prefill(재승인) > 빈칸**. 변경 시 "이번만 vs 메모리 업데이트(영속)" 질문. 불변식: catalog 제약 = 제안이지 디폴트 아님 (물리 컬럼명 `column_name`/`constraint_spec` — D-171) | SI는 고객사 머신별 limit을 모름 → 선택권 유저. 캐시 자동 고정 = 사실상 시스템 디폴트 = D-43 위반. 재승인으로 "LLM/시스템 제안, 사람 결정" 보존 |
+| D-168 | validator **"제약 공백/상태 알람"** 신설(데이터-미업로드 알람과 대칭). 승인 게이트 = Page 3 입력 시점 / 상태 알람 = validator 시점. MCP `/check_constraints` = 죽은 코드(미호출) 명시 | 제약 미입력/공백을 validator가 표면화 — 데이터 알람과 동일 패턴. 검증 책임 위치 명확화 |
+| D-169 | EDA **slim stage_chain** — `eda_engine.py` payload에 `node_id + downstream_implication`만 1키 + system prompt 1줄 추가. `main_findings`는 `key_findings`와 중복이라 생략. 상류(aggregator/main) 0. 결정론 `compute_chart_data` 무관(D-59 생명선 0) | 현 EDA가 stage_chain을 빌드만 하고 미소비 — main.py가 이미 ctx 통째로 넘기는데 안 꺼내 씀. e4b/26b JSON 안정성·8GB 토큰 위해 slim. "작은 엔진 손"(additive) |
+| D-170 | `AggregatedContext` +`analysis_groups`(additive, shape는 DL-4 확정). 원칙 잠금: **이종 매핑 부재 + lineage 흐름 컨텍스트 = 상보** — 이종 데이터를 스키마로 융합 안 함(개별 주체 유지), vid/stage_chain/lineage로 흐름·계보 관계 부여(+@ 컨텍스트). 데이터 비종속(D-82) → 메타 기반 catalog로 진화 | 융합 없이 흐름·계보로 관계 부여 = 안전한 +@. lineage 흐름 컨텍스트 강화는 후속 추가기능. 적재도구 메타 자동생성으로 "파일 넣고 한 번 적재=끝" 비종속성 유지 |
+| D-171 | `datalake.constraints` 컬럼 `column`/`constraint`는 PostgreSQL **예약어** → 따옴표 없는 컬럼명으로 CREATE TABLE syntax error. **rename**: `column`→`column_name`, `constraint`→`constraint_spec` (DDL·PK·CRUD 전부). 따옴표 우회 대신 rename 채택 | 모든 CRUD에서 따옴표 강제 = silent foot-gun(따옴표 누락 시 깨짐) = anti-silent-conversion 철학 위배. rename은 의미 불변(키 스코프 = datalake_id+column_name, D-167 무변), 영구 따옴표 부채 0. R1 §1-5 DDL 잠재버그 교정 |
+| D-172 | `catalog.upsert_entry` = **full-record-replace 시맨틱**(`ON CONFLICT(datalake_id) DO UPDATE SET 모든 컬럼=EXCLUDED`). 부분 필드 호출 시 미지정 컬럼이 NULL로 덮임. **계약: 호출자는 항상 완전한 레코드 전달**(부분 변경은 targeted UPDATE). registered_at만 UPDATE SET 제외(최초값 보존) | DL-2 적재도구가 매번 전체 메타 생성·upsert(D-82 "파일 넣고 한 번 적재=끝")라 full-replace가 의도된 올바른 동작 — 재적재 = 메타 전체 갱신. COALESCE 보존은 오히려 재적재 시 필드 정리 불가로 부정확. 부분 upsert = misuse → anti-silent-conversion상 계약 명문화. DL-1 A7 투명보고에서 식별 |
+
+### 정합 확인
+- D-53 supersede 명시(D-159), D-66/D-67 변형 0 계승 명시(D-164), D-43 강화(D-167), D-59 생명선 보존(D-163/169), D-82 진화(D-170).
+- spec-1 §1-2/§1-5/§1-6/§1-9-1/Part3/§4-3 + blueprint Part4-2 + variable_index §8 동기 패치.
+- 코드 0 — 본 블록은 R1(문서) 산출. 구현은 DL-1~DL-5.
+
+### R1 완료 = DL-1 진입 가능
+다음: DL-1(DB 연결 + catalog 접근 계층). 진입 선결(PROTOCOL §3/§4): ① `.env` DB 접속(127.0.0.1:5432, 자격=시크릿) ② 변경 전 build+smoke green ③ 공유 PG(byeonggab89) 첫 쓰기 전 백업.
+
+## 2026-06-09 — datalake-redesign DL-2 진입: id·메타 권위 + 스키마 확장 (Master 저작 → CC 적용)
+
+명세: DL-2(KAMP 적재) 진입 결정. CC dry-run 실측 근거(파일시스템 추론 신뢰 불가 — id 3건 silent divergence, order 휴리스틱 오분류, vibration 라벨 오류). 브랜치: `feature/datalake-redesign`.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-173 | **메타 권위 = `catalogs/datalake_manifest.yaml`(SSOT, repo 추적).** 적재도구의 파일시스템 추론(파일명 유도 `datalake_id`·폴더 파싱 `vid`) 폐기. `datalake_id`·`vid`(module 기준)·`modality`·`function`·`site` = manifest 명시값 권위. 휴리스틱(L접두사·module_N·포맷)은 manifest 작성용 **seed**일 뿐 — dry-run 검토 대상. ingest는 manifest **읽기만**(파생 0). manifest의 DB-미적재 필드(node·capture)는 ingest가 **명시적 화이트리스트로 처리**(`entry.get()` silent drop 금지 = anti-silent). per-column scalar 이름·dtype은 파일 헤더 실측(사실 읽기), group descriptor는 manifest 권위 + 파일 검산. BLUEPRINT §3 "ingest 자동 도출" refine. | 파일시스템 추론은 폴더명 접미(`_image`/`_quality`)·비ASCII만으로 silent 어긋남(34건 중 3건 실현, function 폴백이 은폐 → 더 위험). IATF·CFR(감사·재현성) 타깃에서 id·modality silent 오도 불가. `hint_dataset`(Page 2 참조)을 권위로 = Page 2↔catalog 바인딩 정의상 일치. 선언적 manifest row 추가 = D-82("파일 넣고 한 번 적재=끝") 정합 |
+| D-174 | **entries 스키마 확장 (+`format` +`company`).** `format TEXT`(원본 파일 포맷, #11 lineage — canonical utf-8 정규화 후 원본 추적), `company TEXT`(멀티테넌트 필터 차원, `site` 형제). D-160 "12 타입드 컬럼" → 14컬럼 확장. 멱등·비파괴: 기존 테이블(DL-1 생성)은 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`(DROP 0, PROTOCOL §3), CREATE문 동기 갱신. `company` index 추가. 구현(catalog.py MIGRATION_SQL/upsert_entry)은 요청 A. | `format` — ingest가 xlsx를 encoding칸에 silent 혼입(dry-run `enc=xlsx` 실측), 정규화 후 원본 format·encoding 둘 다 보존하려면 분리 필수(#11). `company` — 멀티테넌트 SI 제품 전제, 다른 회사=다른 `datalake_id`라 PK 무관 순수 필터. 빈 테이블(0행)이라 ALTER 무비용 = 추가 최적시점 |
+| D-175 | **capture·node = manifest provenance만, DB 컬럼 미추가.** 멀티캡처/재현(같은 라인 다른 캡처 무손실 보존)은 **PK=`(datalake_id, capture)` 복합 + `data_path` 계층(`data/lake/<id>/<capture>/`) + 재적재 dedup 동반 설계 = 별도 트랙(도래 시)**. 현 KAMP=단일 캡처라 의미 0. | 현 D-172(PK `datalake_id` 단일 + full-record-replace upsert)에선 같은 id 다른 캡처 = 덮어씀(재현 0) → capture 단순 컬럼 추가는 반쪽 함정. 진짜 멀티캡처는 D-159/160/172 재설계라 DL-2 범위 밖, reusable_flag(D-162)와 동일 무손실 확장 전략으로 예약. node = D-166 필터축 아님(파이프라인 슬롯 속성)이라 entries 부적합, lines.yaml 실재 |
+| D-176 | **D-161 라벨 정정 (`fft_spectrum`→`waveform`).** L3 vibration(`vibration_fault_sim`/`sim2`)은 FFT가 아니라 **raw 시간영역 waveform** — 헤더 숫자=시간오프셋[s](step→fs 488/800Hz, 1열=캡처 timestamp), 윈도 0~4.195s/2.559s. `column_kind=group` descriptor 실질 불변(1 scalar + N group), 라벨만 정정 + `group_desc`={axis:`time_offset_s`, `fs_hz`, `window`}. D-161 구조 결정(광폭=group, per-column 금지) 전부 유지. | "range 4.195 Hz"는 진동 물리 난센스 → 시간영역 확정(헤더 실측). R0 "FFT 광폭"은 도구 하드코딩 라벨을 옮긴 초안 → 두 트랙 독립 실측으로 waveform 이중확인. 감사·재현성 타깃에서 물리적으로 틀린 메타 라벨 불가 |
+| D-177 | **R0 가정 3건 실측 정정.** (1) "order 0건(데모 제외)" → **order 1건 실재**(order_planning, function=reference, module_3 set). modality=order 명시(휴리스틱 timeseries 오분류 교정), id=module_3 기준 semantic(cp949를 id에 안 박음 — encoding 별도 필드), 데모 주흐름 비중심. (2) "대부분 ASCII, cp949 우려 해소" → **cp949 3건**(order_planning·L4_ict_checker·L4_ict_inspection) → encoding 컬럼 기록 + utf-8 정규화. (3) **#15 이종 묶음 2폴더**(L1_mct_tool_improve·L3_mct_condition_inspect = 기술검증결과서 리포트, 8~9 이종 스키마+무헤더 1) = 데모 적재 제외(보류 플래그) → **34→32건**. | dry-run 실측이 R0 가정 교정(쓰기 전 보험 본전). order 미분류 시 timeseries MCP 오라우팅 위험. 리포트 산출물은 ML 데이터셋 아니라 제외해도 "어떤 데이터든" 메시지 훼손 0(나머지 32건 증명) |
+
+### 정합 확인
+- D-160 확장(D-174, 12→14컬럼) · D-161 라벨 정정·구조 불변(D-176) · D-172 보존(D-175 capture 보류 근거) · D-82 정합(D-173) · D-43/D-167 불변(적재도구 constraints 미기재 유지) · anti-silent 강화(D-173 silent-drop 금지 / D-174 format).
+- spec-1 §1-2/§1-5/§1-6 + blueprint §1.2/§3 + variable_index §8(DataLakeEntry +format/+company, column_kind waveform) 동기 패치 완료.
+- 코드 0 — 본 블록은 문서 산출. catalog.py ALTER/upsert + ingest manifest-driven = 요청 A.
+
+### DL-2 다음 단계
+요청 A(write-0): `catalogs/datalake_manifest.yaml` 32행 작성 + ingest manifest-driven 리팩터(EXECUTE_ENABLED=False 유지, 복사·INSERT 0, dry-run이 manifest↔1_data 정합 검산). → dry-run 통과 → 요청 B(실적재 = replace_columns + 백업 게이트 + Master greenlight).
+
+## 2026-06-10 — DL-2 B Phase 1 (진입게이트 ①③ 실행 + 백업게이트 재정의)
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-178 | DL-2 B 백업 게이트 재정의 — **빈 테이블 additive ALTER는 논리 baseline으로 갈음, 정식 백업은 Phase 2 直前으로 이월.** ③ 라이브 ALTER(entries +format/+company +idx_datalake_company) 시점 datalake 3테이블 0행 → 보호 대상 0 + ALTER가 additive·멱등·가역(`DROP COLUMN/INDEX IF EXISTS`) → pg_dump 없이 진행. 정식 백업 게이트(PROTOCOL §3 "대량 ingest 전 스냅샷")는 데이터가 들어가는 Phase 2(实ingest) 直前으로 이동. 백업 메커니즘 = **python/asyncpg 논리 덤프**(datalake 스코프·TCP·owner=myeongsun 전건) — host pg_dump 미설치 + mfg-postgres가 byeonggab89 rootless 네임스페이스라 `docker exec` 영구 불가(STEP A0/C 실측). | 0행 additive ALTER에 정식 덤프는 보호가치 0(실제 보호점=데이터 적재 시점). docker-exec·host pg_dump 둘 다 환경상 불가 실측 → 논리 덤프가 유일 CC 경로이며 owner 권한으로 누락 0 전건 가능. PROTOCOL §3 취지(데이터 손실 차단) 유지, 게이트 시점만 의미점으로 이동(스킵 아님) |
+
+## 2026-06-11 — datalake-redesign DL-2.5 hardening: 복원드릴·constraints 감사·자동화테스트·설계잠금 (Master 저작 → CC 적용)
+
+명세: DL-2 GATE PASS 직후 pre-DL-3 경화 4건 — ① 복원 드릴(백업 실효성 입증) ② constraints 감사 스키마(approved_by + history) ③ throwaway PG 자동화 pytest ④ 설계 잠금. 라이브 쓰기 = constraints 감사 ALTER 1회(additive·DROP 0, 백업·복원드릴 선행). 브랜치: feature/datalake-redesign.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-179 | constraints에 approved_by 추가, 모든 쓰기/삭제는 동일 트랜잭션에서 datalake.constraints_history(append-only, FK 없음, 앱 레벨 기록)에 action과 함께 적재. 현재 테이블은 last-write-wins 유지(prefill 소스 단순성), 이력은 history가 보존. 불변식: datalake.constraints에 대한 모든 현재·미래 쓰기 경로(DL-3에서 추가될 함수 포함)는 동일 트랜잭션 내 constraints_history append를 의무로 한다. 전용 delete_constraint는 DL-3 구현 시 이 불변식 준수 하에 추가(이월 트래킹). | D-167의 본질=유저 승인 — 주체·시점·이전값 추적 없는 승인은 반쪽. IATF/CFR 맥락(D-173) 정합. 0행 시점 additive ALTER가 최저비용. |
+| D-180 | 판별자 type 필수. scalar: {"type":"range","min":num\|null,"max":num\|null,"unit":str\|null} (min/max 중 1개 이상 non-null). group(column_kind=group): {"type":"aggregate","metric":"rms"\|"peak"\|"mean"\|"std","op":"<="\|">=","value":num,"unit":str\|null}. group 제약의 column_name = datalake.columns의 group 행 name (키 정합). 등록 시 type 화이트리스트 검증, 확장은 type 추가로. Page 3 폼은 column_kind로 렌더 분기(scalar=range 폼 / group=aggregate 폼). __dupN 컬럼은 폼에서 원본 헤더명 + 중복 배지로 표기(드롭·은닉 금지). | DL-3 진입 전 shape 미잠금 시 구현 중 즉흥 결정 = 설계잠금 원칙 첫 위반이 됨. |
+| D-181 | 백엔드 = 신규 엔드포인트를 /api/dl/* 네임스페이스로 additive 추가, 구 핸들러 무변경·무분기. 프론트 = 신규 Page 2/3을 env 플래그(DL_UI_V2, 기본 off) 뒤 별도 라우트에 마운트, 구 페이지 무변경. DL-5 green 후 구 경로·플래그 제거. | 프론트만 게이트하고 백엔드 핸들러를 공유 분기하는 반쪽 게이트가 회귀의 고전적 원인 — additive 네임스페이스가 PROTOCOL §3 '구 경로 생존'과 구조적으로 정합. |
+| D-182 | 게이트 증거 = repo 내 pytest (일회성 터미널 출력 박제). DB 테스트는 throwaway PG(127.0.0.1:55432/dl_test) 전용, ambient PG* env 미사용, 55432 하드 가드(E3 구조화). 개발 반복 쓰기 = throwaway, 라이브 접촉 = 게이트 검증 시점만. DL-3부터 검증 핵심부는 자동화 테스트 동반 필수(제약 머지 3케이스·재승인 게이트). | 정책 선언(근거 본문 내재). |
+| D-183 | 복원 드릴(fresh dump → throwaway 복원 → 동등성 검증) 1회 성공 = DL-3 진입 게이트. 이후 모든 재적재·스키마 변경 전 fresh dump 필수, 복원 드릴은 데이터 형상 변경 시(신규 테이블 등) 재실시. | 복원 미검증 백업은 백업이 아님 — constraints는 재생성 불가 데이터의 시작점. |
+| D-184 | API 네임스페이스 확정 (D-181 보강) | DL-3 신규 백엔드 엔드포인트 = /api/datalake/* (variable_index·spec-1 §1-3 기정합 — D-181의 /api/dl/* 표기 폐기). D-181 본질 불변: additive, 구 핸들러 무변경·무분기. 프론트 플래그 = import.meta.env.VITE_DL_UI_V2(기본 off), 신규 Page 2/3 별도 라우트 마운트, DL-5 green 후 구 경로·플래그 제거. |
+| D-185 | constraint_spec type 화이트리스트 보강 (D-180 보강) | 화이트리스트 = spec §4-4 폼 타입 5종(range/single_value/ratio/list/text) ∪ aggregate(column_kind=group 전용). 근거: D-180 v1(range/aggregate 2종)이 §4-4 constraint_keys 폼 렌더와 충돌 — 폼이 생성하는 값을 저장 계층 화이트리스트가 차단하는 모순 해소. 각 type의 캐노니컬 필드 세부 = DL-3 3c 설계 시 Part 1-2(가)·§4-4 본문과 byte 대조로 확정(즉흥 정의 금지). |
+
+### 정합 확인
+- D-167 강화(D-179 감사 추적) · D-161/D-176 group descriptor 정합(D-180 aggregate shape·키잉) · PROTOCOL §3 '구 경로 생존' 정합(D-181 additive 네임스페이스) · D-178 백업 게이트 보강(D-183 복원 드릴).
+- 구현 매핑: 자동화 테스트(D-182) = 커밋 ①. catalog MIGRATION_SQL additive + insert_constraint/delete_entry history(D-179) = 커밋 ②. spec-1 §1-5 동기(D-179) = 커밋 ③.
+- 라이브 적용: constraints 감사 ALTER 1회(C-2) — count 32/569/0 불변, 타 스키마(agent_logs/lineage/metadata) 미접촉, 멱등 확인.
+
+### DL-2.5 완료 = DL-3 진입 가능
+다음: DL-3(constraint_spec shape v1 = D-180 구현 + Page 3 폼 column_kind 렌더 분기 + 제약 머지/재승인 게이트). 진입 게이트(D-183): 복원 드릴 1회 성공 = 충족(2026-06-11). 자동화 테스트 동반 필수(D-182).
+
+## 2026-06-11 — datalake-redesign DL-3a: /api/datalake/* 백엔드 표면 (Master 저작 → CC 적용)
+
+명세: catalog 계층(entries/columns/constraints)을 `/api/datalake/*`로 노출 — additive only(D-181/D-184), 구 핸들러 무변경. register = Mode B 한정. 개발·테스트 전부 throwaway 55432(D-182), 라이브 접촉 0.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-186 | register = Mode B(서버 경로 메타 등록) 한정 — Mode A(파일 업로드)는 이월(데모는 사전 적재 파일 사용, 실시연 여부는 데모 영상 후 속도·성능 보고 재결정). datalake_id = slug(name)([a-z0-9_]), 충돌 시 409(자동 변형 금지 — anti-silent). function_hint는 유저 힌트 입력으로 받아 권위 컬럼 function에 해석·저장(rename 아님, R1 이월 소화). 등록 데이터도 data/lake/<id>/ 귀결 + 동일 catalog 경로(§1-6 불변). spec §4-11의 Mode A 체크 2항목은 이월 표기. | 병갑 확정(2026-06-11). 업로드 전송은 ingest 단건 API화라 DL-3 스코프 초과 — spec 표면과의 차이는 본 결정+체크리스트 이월 표기로 기록해 교차검증 모순 잔재 차단(R1 A/B-잔재 교훈). |
+| D-187 | DL-3 API 표면 확장 — GET /api/datalake/{id}/columns · GET·POST /api/datalake/{id}/constraints 3종을 spec §1-3/spec-3 §9-1 표에 additive 행으로 추가. columns = Page 3 폼의 실컬럼 소스(D-90/D-161), constraints GET = prefill 소스, POST = "영속 업데이트" 전용 쓰기 경로(insert_constraint 경유 = D-179 불변식 충족, "이번만"은 세션 저장이라 catalog 미접촉). POST 검증 = D-185 type 화이트리스트 + column_name 실존. | spec 25개 표에 없는 3종이 D-167 prefill/영속 흐름과 D-90 폼 렌더의 필수 전제 — 표면 추가를 결정·표 동기 없이 구현하면 명세↔구현 silent 괴리. |
+
+## 2026-06-12 — datalake-redesign DL-3b: Page 3 v2 셀렉 (Master 발행 → CC 실행)
+
+명세: VITE_DL_UI_V2 플래그 뒤 신규 Page 3 셀렉(카드 UI, catalog 소스), 구 경로 무접촉(D-181/D-184). orphan 가드(3a 룰링 ④ 후속) + SSOT 교차 테스트 동반.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-188 | vid 값 체계 = lines.yaml line_id와 동일 체계 — 실측 확정: line_id 집합 = manifest vid DISTINCT 집합, 부분집합 넘어 **동일 집합(3/3)** {module_1_metal_processing, module_2_forming_joining, module_3_polymer_electronic}. 수치: manifest 전 행 34 = 13+9+12 (excluded 2건 모두 module_1, D-177) → 적재 32 = 11+9+12. 신 Page 3 필터는 session line_id를 vid로 직사용. 교차 정합은 tests/test_ssot_cross.py 상시 박제(D-182) — hint_dataset 34종 dangling 0(excluded 참조 = 알려진 2건 고정), vid 분포 양 기준 모두 assert. | Page 1→3 바인딩 키가 문서상 미보증 — 이중 SSOT 교차 참조의 order_cp949형 사고 재발 차단. |
+
+## 2026-06-13 — datalake-redesign DL-3c: 제약 폼 (Master 발행 → CC 실행, GATE PASS)
+
+명세: 신 Page 3 v2 제약 입력 폼 — 머지 3케이스(세션>prefill>빈칸) + 재승인 게이트(prefill 자동적용 0) + 이번만/메모리 업데이트(영속) 분기 + column_kind 렌더 분기(scalar=range / group=aggregate) + delete + 자동화 테스트 동반(D-182). 라이브 constraints 첫 실쓰기 단계 — fresh dump(D-183) 선행. additive only(엔진·구 jsx 7종·구 핸들러 0접촉).
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-189 | constraints shape 신구 호환 = **저장·전달 분리**. catalog 저장 = D-180/D-185 shape(type 판별자). session→엔진 전달 = **range type만** 구 shape `{column_name:[min,max]}`로 다운컨버트(min/max 한쪽 null은 null 그대로 전달 — validator `_bounds` (None,None) skip 거동 활용). 비-range 전 type(aggregate 포함) = 엔진 전달 제외 + 세션 메타 `engine_excluded:[{column_name,type}]` 명시 기록(silent drop 금지). 엔진 파일(planner/validator/main 호출부) diff 0. D-168 알람 접점은 DL-5 전 Master 룰링 예약 — 3c는 메타 기록까지. | planner.py:105·validator.py:113(`_bounds`) 실측 — 구 엔진은 `{col:[min,max]}`만 해석. 임의 변환은 의미 추측 = 즉흥 정의 금지(D-173 계열). D-164 seam 보존. |
+| D-190 | canonical 필드 **byte 대조 확정**. 수용 3종: `range`(D-180 — min/max 중 1개 이상 non-null·unit str\|null) / `aggregate`(D-180 — metric∈{rms,peak,mean,std}·op∈{<=,>=}·value num·unit str\|null, column_name=group 컬럼) / `single_value`(`{"type":"single_value","value":num,"unit":str\|null}` — §4-4 NumberInput 실측). `ratio`·`list`·`text` = spec §4-4 placeholder 미정의 → POST 422("canonical 미확정 type") + 폼 구현 시 확정 이월. 허용 외 필드 = 422(anti-silent). | 즉흥 정의 금지(D-185)의 byte 대조가 spec 자체의 미정의를 드러냄 — 무검증 저장 = silent 위험. API 게이트가 화이트리스트(D-185 6종)보다 좁은 건 additive 무모순. **이탈 반영:** PUT v2도 D-185∩D-190 검증 적용(세션도 폼 생성 가능값만). 3a placeholder 테스트(aggregate-on-scalar 200→422) D-190 정합 갱신. |
+| D-191 | `delete_constraint` 3c 포함 — "빈칸 영속 업데이트" = delete 경로. `catalog.delete_constraint(datalake_id, column_name, approved_by)` 동일 트랜잭션 history append(action=delete, D-179 불변식), 부재 행 404(silent no-op 금지). POST 빈-spec(None\|{}) = 이 경로 재사용. register 모달 UI(프론트)는 3c 제외 → GATE PASS 후 별도 미니 단계 이월(백엔드 D-186/187 표면 기존 유지). | 빈칸 영속 = 의미상 delete, 누락 시 의미 구멍. 404는 anti-silent 정합. register UI는 분리 가능. |
+| D-192 | CC 검증/진단 셸 규율 격상: 모든 파이프라인 셸 `set -o pipefail` 의무 + 도달성·성공 판정은 파이프 종료코드가 아니라 **명시 상태 출력**(HTTP 코드 / row count / grep 매칭)으로. | 3b [STOP]②(테스트 혼입 — 파이프 종료코드 함정)·3c Phase2 진단(`wget\|head`가 항상 0 → 가짜 5173 REACHABLE 오판)에서 동일 함정 2회 재발. 가짜 서버 위장으로 반나절 소모 — 규율 박제 필수. |
+
+## 2026-06-13 — datalake-redesign DL-3.5: columns.ordinal SSOT + dry-run anti-silent 리포트 (Master 발행 → CC 실행, GATE PASS)
+
+명세: A=columns.ordinal(소스 헤더 물리 순서 SSOT, additive) + forward 캡처(replace_columns persist) + backfill(build_record 재사용·name-set fail-loud·멱등) + finalize(NOT NULL+UNIQUE) + get_columns ORDER BY ordinal + spec-1 §1-5 동기. B=ingest dry-run 헤더 anti-silent 리포트(__dupN/__unnamed/상류 .N 출처 분류). additive only(엔진·구경로·datalake_api 0접촉), 라이브=fresh dump(D-183) 선행·2-stop.
+
+| # | 결정 | 사유 |
+|---|---|---|
+| D-193 | datalake.columns ordinal INT additive 컬럼 = 소스 헤더 물리 순서 SSOT. PK(datalake_id,name) 불변·additive(D-167). forward 캡처 = 공유 헤더 빌드(ingest/register 단일 구현 재사용)가 ordinal=리스트 index 생산 → replace_columns가 persist → ingest execute_load·API register 양 호출자 자동 커버. backfill 후 finalize = SET NOT NULL(미채움 검출) + UNIQUE(datalake_id, ordinal)(중복 차단), 멱등 가드. get_columns ORDER BY name → ordinal. spec-1 §1-5 DDL 동기. | 구 ORDER BY name은 collation 종속 silent 재배열 — 한글 no-op(우연 보존)·ASCII/숫자 활성 재정렬(L1_cnc 10TH<1ST 실증) = anti-silent 위반. ordinal 미저장이 근본 원인. NOT NULL/UNIQUE = 완전성·유일성 fail-loud. 라이브 569 UPDATE: NULL 0·멱등 4회·spot-check 소스순서 확정. |
+| D-194 | ordinal backfill 시맨틱 — tools/datalake_ordinal_backfill.py(신규): build_record 재사용으로 헤더 재파싱→정렬 컬럼 리스트, ordinal=enumerate index, (datalake_id,name) 매칭 UPDATE. name-set 불일치 시 sys.exit(3) fail-loud(부분 UPDATE 0). group(waveform)=빌드 산출 순서상 위치(first-member rank, 비연속 group 0 실측). __dupN(ingest 마킹)·.N(상류 pandas)·__unnamed 물리 위치 보존(재정렬·병합 금지). 멱등(2회=동일). 라이브=fresh dump 선행(D-183)·2-stop. | 순서 권위 = 파일 헤더(manifest는 per-column 순서 미보유). ingest 빌드 재사용 = 재구현 발산 방지. name-set fail-loud = 헤더 드리프트 silent 차단. 상류 산물 존중(D-82). |
+| D-195 | ingest dry-run anti-silent 리포트 — audit_header_names(): 정확중복→__dupN / 빈헤더→__unnamed(ingest 마킹) vs 상류 pandas .N(X.정수+bare X 동반 판별자) 출처 분류·카운트. .N은 informational(결함 단정·제거·병합 금지 = 상류 보존). write-0. 인터랙티브 차단은 자동화 원칙상 과함→리포트. 실 32셋 __dupN=1·__unnamed=2·.N=5. UI 배지 출처 구분 이연. | __dupN과 상류 .N이 UI 출처 구분 불가 = silent ambiguity. 제거 아닌 표면화가 해. bare-base 동반 판별로 값(0.025)·타임스탬프 false-positive 제거(초안 \.\d+$ 정정). |
+| D-196 | DL-4 vid 전파 읽기 지점 = PipelineFull 최상위 `vid`(aggregate() 단일 읽기), catalog.get 라이브 재조회 아님. _build_agent_record·_build_stage_chain 산출물 최상위 `vid` 키 전파(별칭 0). function/site는 vid 종속 아닌 별도 컬럼 경계 유지(record에 function만·site 없음 → vid×function×site 혼동 0). 결정론·LLM 0(D-59), additive(시그니처 vid 인자 치환 외 분기·계산 0), 상류 main.py 0줄. | aggregate()는 동기·순수 dict 변환. catalog.get은 async → 직접 호출 시 async 전염 + main.py 호출부 시그니처 전파 = additive·상류 0줄·결정론 게이트와 자기모순. entries.vid SSOT는 Page-1 라인 선택(D-162)→PipelineFull 경로로 흘러든 동일값이므로 PipelineFull 읽기가 정합. DL-4 프롬프트 "catalog.get(datalake_id).vid" 문구를 읽기 지점 기준으로 정정. 게이트 T1 record/node vid 일치·집합 {L1} 실증. |
+| D-197 | vid 런타임 소스 활성화 = 백엔드 session-build에서 pipeline_full에 vid=line_id 적재(D-188 vid=line_id 근거). DL-4(aggregator/eda 전파 배선)의 상류 0줄 경계 밖(main.py 1~2줄)이라 별도 미니 단계 4.1.1로 분리. 현 prod는 session-build가 {line_id,stages}만 생성→vid 미적재→전파값 None(T1b graceful 박제)이 의도된 중간 상태. (b)프론트 직접 송신은 D-188과 중복 비채택, (c)무기한 유지는 prod 전파 무효화 비채택. DL-5 e2e 전 활성화 권장. | DL-4는 파이프(전파) 완성·검증, 입구(소스)는 별도 공사. vid=line_id(D-188)가 SSOT이므로 백엔드 session-build의 line_id→vid 복사가 일관(프론트 재송신 불요). additive·결정론·라이브 쓰기 0. |
+| D-198 | 4.1.1 session-build vid 적재(D-197)는 Page-3 /full 핸들러(main.py:415·datalake_api.py:359)의 클라이언트 pipeline_full 통째 교체에 취약 — 클라이언트가 vid 미동반 시 prod가 /full 경로에서 vid None 회귀. session-build 소스 적재만으론 /full을 타는 prod 전 경로 e2e vid 도달 불보장. 해결 = /full 핸들러가 수신 dict에 vid 부재 시 line_id로 보존/재유도(백엔드 SSOT 일관, additive·결정론·LLM 0). frontend 재송신(ⓐ)은 D-188/D-197 "프론트 재송신 비채택"과 모순이라 기각 → ⓑ(백엔드 보존) 채택. 별도 미니단계 4.1.2로 DL-5 e2e 진입 전 필수 선행. | D-197 "session-build SSOT" 전제가 /full overwrite 경로 간과. vid=line_id(D-188) SSOT는 백엔드 일관 유지가 정합 — 클라이언트 vid 권위 위임 = D-188 위반. /full 보존 1지점 = additive seam, compute 불변(D-59). 4.1.1 게이트 ②는 정의 경로(create→structure→aggregate) 충족 PASS, prod 전 경로 완결은 D-198 후속. |
+| D-199 | 경계 가드(test_d_boundary_only_mainpy / test_e_boundary) 내구화 = closed-range 핀. 근본결함 = `git diff <baseline> --name-only`가 baseline↔작업트리(한쪽 끝만 고정, `..` 없음) → 각 가드가 후행 단계 변경 누적 흡수(test_d가 4.1.2 datalake_api.py를, test_e가 명명정정 b66291f 리네임을 위반 오판). 수정 = 각 가드를 닫힌 커밋범위 `start..end`(양끝 커밋) diff → 후행 작업·작업트리 편집 면역. test_d→`3343f3a..acc1f4c`(4.1.1 닫힌 범위, allowed는 該범위 historical name `tests/test_vid_source_dl41.py`). test_e→baseline acc1f4c→17f51df 정정(명명정정 2커밋이 acc1f4c↔4.1.2 사이라 acc1f4c는 stale start; 진짜 4.1.2 직전 HEAD=17f51df) + `17f51df..(4.1.2 close 커밋)` 닫음. assert 일체(allowed extra 공집합·forbidden-zone 0접촉·main.py[+datalake_api.py] 포함)는 전부 보존(은퇴 아님), 수정은 range뿐. 검증 내구성: 4.1.3에 future-step 시뮬(가짜 후행 변경→가드 무반응) 필수 포함 — "지금 green" 아닌 "앞으로도 green" 증명(직전 비내구 PASS 재발 차단). 순서 귀결: test_e는 4.1.2 커밋 후에야 닫힘 → 4.1.2 게이트는 functional-green + 경계 2 red를 range-아티팩트로 명시 제외, 4.1.3에서 closed-range 핀으로 green·durable. 커밋 후 untracked dl412 test 추적전환되어 가드 정상 포착. 이후 단계 공통 패턴. | 한쪽 끝 working-tree diff = 단계 N 가드가 N+1 작업을 위반 오판하는 비내구 결함(4.1.1 PASS 후 4.1.2 착수 즉시 red). 닫힌 범위는 역사적 사실이라 영속. 동적 baseline 픽스처(tag 자동산정)=magic silent 실패원(D-192 명시>영리 역행), 프로덕션-only 스코프="정확히 이 파일" 단정 약화 → 둘 다 비채택. baseline 17f51df 정정=측정 약화 아닌 명명정정 커밋이 무효화한 참조점 교정(intent=4.1.2만 측정 보존). 게이트 경계-red 제외=기능회귀 아닌 range 메커닉이라 4.1.2 기능 판정과 분리. |
+| D-200 | /full vid 불일치 fail-loud (B2). D-198 absence-preservation(부재→line_id 재유도) 위 elif 1개 additive: 양 핸들러(main.py session_put_full · datalake_api.py dl_session_put_full)에서 derived=pf.line_id or session.line_id, client_vid 존재 & derived 비-None & client_vid≠derived 시 HTTPException(422,"vid mismatch: client '{}' != line '{}'") raise(session["pipeline_full"]=pf 저장 전=모순 미저장). 부재→재유도(D-198 불변)·일치(또는 권위 부재)→존중 no-op. 422=D-190 anti-silent 거부 패턴 일관. 테스트: test_b("존중" 박제)→test_b_full_rejects_vid_mismatch(불일치 422 단정) 교체 + test_b2_full_respects_matching_vid(일치→존중) 신규, test_a/a2/c/d 불변. ★ A+log(클라값 저장+로그·상황별 해결)는 비채택 아닌 production-hardening fallback: 실배포서 정당 mismatch로 hard-stop이 UX 해치면 fail-loud→log+graceful-degrade 단계 다운그레이드. | 정상 플로우(백엔드 박은 vid round-trip)엔 vid==derived→발화 0·UX 무해. mismatch는 edge(버그/stale/조작)뿐 → 저장+로그(A)는 감사 lineage에 모순 잔류(IATF·21CFR 추적무결성 흠), 저장거부(B2)는 원천 차단=anti-silent 정합. pre-production이라 시끄러운 실패가 이득. derived=pf.line_id 우선은 D-198 기존(pf/session line 불일치는 별도 sub-carry, D-200 외). 권위 부재+client_vid=반증불가라 존중(silent 아님). |
+
+┌─ 2026-06-14 — datalake-redesign DL-5a: 엔진 로직-0 불변 가드 (Master 발행 → CC 실행)
+│ 명세: 엔진 5종(agents/{inspector,planner,executor,validator,ml})이 R0 baseline
+│ (dl-baseline-20260605) 대비 로직 변경 0임을 자동 박제 — DL-5 회귀 게이트 토대.
+│ additive(tests/ 신규만), 엔진·구경로·datalake_api 0접촉.
+│ | D-201 | 엔진 로직-0 불변 가드 = tests/test_engine_invariance_dl5a.py. 본 단정 =
+│   `git diff <R0 deref> -- agents/{inspector,planner,executor,validator,ml}` == 빈 목록
+│   (committed+미커밋 드리프트 모두 포착). ★경계 가드(D-199)와 반대 방향: 불변 가드는
+│   미래·미커밋 엔진 변경을 잡아야 하므로 한쪽-끝(baseline→worktree)이 정답·닫힌범위 아님.
+│   비공허 2중: (a) 대조 단정 = R0 대비 변경 확인된 DL-레이어 파일 diff != 빈 목록(probe 생존),
+│   (b) mutation check = 엔진 파일 임시 변경 시 본 단정 RED 실증 후 revert·트리 클린(가드가
+│   실제로 문다는 증명). 데이터 seam(datalake.get)·aggregator·EDA는 forbidden-zone 밖
+│   (PROTOCOL §3 additive 허용). | 사유: "엔진 변경 0"이 핵심 영업명제 — DL 전체(R0~) 불변을
+│   상시 회귀 게이트화. BLUEPRINT §1.5 보존 이음매 = dataset_id→path만 additive, 엔진 내부 0.
+│   실측 사전확인 = 엔진 diff vs DL-4(d8500d7) 0. "지금 green" 아닌 "앞으로도 green"(D-199)
+│   — mutation check로 비공허 증명. |
+└─
+
+  | D-201 보강 (2026-06-14, DL-5a) | test_engine_paths_are_watched 추가 — 엔진 5종 경로가
+    각각 추적 파일 ≥1개로 실재함을 git ls-files non-empty 단정. 경로 오타·미래 리네임이 본 단정을
+    vacuous-green(미감시를 불변으로 오판)으로 만드는 잔여 벡터 차단. 비공허 실증 = 가짜 경로 임시
+    주입 시 RED→revert mutation. | mutation이 inspector 1경로만 RED 실증했던 한계 보완 →
+    5/5 경로 감시 확정. "지금 green" 아닌 "앞으로도 green"(D-199) 일관. |
+
+## 2026-06-14 — datalake-redesign DL-5b-seam-2: catalog.get 데이터 seam 배선 + 5a 가드 정제 (Master 발행 → CC 실행, GATE PASS)
+
+  | D-201 재정의 | 엔진 로직-0 가드 = 파일 동결 → compute 동결 + 데이터 seam additive 허용.
+    {inspector,planner,validator,ml} R0 byte-동결. executor.py는 R0 대비 diff가 오직 문서화 seam
+    additive(data_path 인자+None분기)만 허용, 그 외 RED. 비공허 3중 mutation. ⓒ baseline 이동 비채택. |
+    근거: §1.5/§3 "데이터 소스 seam만 additive" 정밀화(약화 아님). |
+  | D-203 | catalog.get 데이터 seam. main.py→resolve_dataset_path(id)[catalog.get(PG)→data_path
+    dir→실파일 locate→file_path]→executor.execute(...,data_path). executor=+optional data_path=None
+    + `path=data_path if data_path is not None else _resolve(...)`. None시 구경로 생존·회귀 0. compute 0.
+    inspector/MCP catalog-wiring=phase 2(게이트는 stub). 라이브 env·MCP=명선/병갑 영역. |
+    근거: catalog(PG)이 데이터 위치 단일 권위. |
+
+## 2026-06-14 — datalake-redesign DL-5b-e2e: 결정론 전처리 e2e 게이트 + presence 단정 fold (Master 발행 → CC 실행, GATE PASS)
+
+  | D-202 개정 (5b-e2e) | 결정론 e2e 게이트 = 전처리 완주(profile fixture → Planner(LLM stub)
+    결정론 plan → execute(data_path 실 KAMP) → validate). 수기=profile fixture(실 29컬럼·flags
+    실데이터 충실)뿐, plan은 real Planner 결정론 산출(LLM 순서만→stub시 후보순서 폴백). 완주 단정=
+    예외0+산출물(backup/processed parquet·lineage non-empty)+형상(원본 보존·silent drop 0·lineage
+    =steps 정합)+결정론 재현(2회 동일). **ML/EDA=게이트 밖** — per-dataset ML 모드는 로컬 LLM
+    판단 영역이라 결정론 게이트 고정 부적합(이 셋 무라벨→anomaly 적합하나 fixture 아님). live
+    smoke(A)=capstone 이월(Ollama+main.py prod 배선 phase 2 종속). | 사유: 게이트=회귀 보호=
+    결정론 전처리 경로. LLM 추론·ML선택은 비결정·LLM도메인→게이트 밖, live/capstone. |
+
+## 2026-06-15 — datalake-redesign DL-5c: DL-5 본체 재정의(프로덕션 seam 배선) (Master 저작 → CC verbatim 적용)
+
+> **D-204** | DL-5 본체 재정의 — "재설계가 실제 작동" = **프로덕션 전 모달리티 seam 배선.** 5a(엔진 로직-0 동결)·5b(seam 부품 `resolver`+`executor` data_path 인자 + e2e 테스트 벤치)는 정의 스코프 달성으로 CLOSE 유효. 단 **프로덕션 배선**(main.py가 `resolve_dataset_path` 호출→`executor.execute(data_path)` + inspector/MCP catalog 경유)은 phase 2로 분리돼 **미이행**. CC 전 체인 실측: 프로덕션 호출부(main.py:222·591)가 data_path 미전달, `resolve_dataset_path` 호출 0 → 전 모달리티가 부재한 `data/synthetic/*` ROOT 읽음(실행 시 not-found). 5b reach/e2e의 "catalog→engine 작동"은 throwaway PG + test call 한정. ENTRY/WORKLOG "5b=재설계 작동 증명"은 부품/테스트 한정 과장(정정 대상). → DL-5 close 본체 = 프로덕션 배선. 단계 분할: **5c-1**(execute 배선, csv 3종 timeseries/order/event-log) · **5c-2**(inspect/MCP 배선, MCP 방식 진입 시 실측·결정) · **5c-3**(image 추후). "8챌린지 회귀"(합성 전제·엔진 동결로 무의미) 게이트 기준 폐기 — 회귀 본질 = "프로덕션이 실 PG lake를 id 기준으로 읽고 전 과정 완주". 합성 미접촉. | 근거: 명선 프레임 "첫 입력부만 치환" 정합 — 치환이 프로덕션 레벨에서 미이행이었음. |
+
+> **D-205** | reparse_header·balance_classes = **ML 학습 관련 미완 기능, 데이터 seam 배선과 무관** → 5c 회귀 대상 제외, 안 건드림. reparse_header = timeseries executor 핸들러 미구현(skip "Sprint 2+"). balance_classes = 전처리 단계(감지→Page4 제안카드→메타 기록)는 작동하나 실 리샘플(SMOTE/class_weight)이 train_engine에서 미소비(model.fit에 class_weight 없음). 둘 다 redesign(데이터층)과 독립 — 향후 ML 학습 단계 구현 시 처리. | 근거: 데이터 흐름 배선과 별개 축. 안 건드린다는 결정을 명문화해 향후 "왜 빠졌나" 재질문 차단(WORKLOG·인계 문서에도 명시). |
+
+## 2026-06-15 — datalake-redesign DL-5c-2: inspect/MCP 프로덕션 seam 배선 (Master 확정 · CC verbatim 적용)
+
+> **D-206** | inspect/MCP 프로덕션 seam 배선 (5c-2). 배선방식 = **(a)변형**: main.py 두 호출부가 `resolve_dataset_path(id)`로 data_path **단일 취득(PG 권위 단일점)** → `run_inspect`·`run_execute` 공통 전달. inspector(inspect + 4 `_mcp_get`)·MCP 3서버 `_resolve`/7종 도구는 **optional data_path 받기만**(PG 비의존 — catalog.get 직접호출 (b)는 PG 권위 분산·테스트 복잡으로 비채택). MCP 7종 계약 시그니처 무파괴(data_path optional additive, CLAUDE §4 보존). **csv 3종만**(timeseries/order/event-log) — image는 resolver(`*.csv` glob)·executor 경로가 csv와 구조 상이(디렉터리/이미지)+5c-1 미배선이라 **5c-3 분리**. 5a 가드: inspector를 byte-동결→**seam 예외 전환**(executor 동형, D-201 재정의 확장) — `agents/inspector/schemas.py`만 동결 유지, `test_inspector_seam_additive_only` 신설(profile/flags 로직 동결·data_path 전파만 허용, 비공허=profile-mutation RED 실증). compute/profile 로직 0접촉이라 "엔진 변경 0"(compute 동결) 유지. **게이트**: MCP HTTP 실기동=live smoke(명선 env 영역), 게이트는 execute_endpoint 실태우기 + `_mcp_get`을 in-process MCP tools 호출로 우회(HTTP 레이어만 우회·데이터 로직 실행). 정합 단정 = inspect profile n_rows == execute backup 행수(동일 실 lake). | 근거: PG 권위 단일(D-164)·계약 보존·명선 "MCP 거쳐 id 쭉쭉" 정합. **carry**: HTTP data_path 직렬화 None→빈문자열 + MCP `_resolve` 빈문자열 처리(csv 무영향=main이 실경로 채움, image·live smoke 전 정리). |
+
+## 2026-06-15 — datalake-redesign DL-5c-3: image 프로덕션 위치 seam 설계 락 (Master 저작 → CC verbatim 적용)
+
+> **D-207** | DL-5c-3 image 프로덕션 위치 seam 배선방식. image = inspection-image modality(7종, ~2.5GB), **단위=디렉터리(파일 아님)**. lake 실구조 5갈래(A flat+동명txt · B subdir+txt · C flat+단일csv · D nested 카테고리 · E class-folder) + L2_auto_console_detect 1종 구조 미실측(빌드 전 디렉터리 단위 1줄 확인). **배선**: ⓐ resolver.py:47(`glob "*.csv"`)는 **csv-only 불변** — image 디렉터리 반환은 main.py `_resolve_seam_path`에 **별도 분기**(modality 인지, catalog data_path 디렉터리 그대로 반환, csv glob **미경유**). 근거 = L2_welding_electrode 라벨 csv 1개가 csv glob에 걸려 데이터로 오인되는 잠복위험 **원천차단** + resolver churn 0. ⓑ executor.py:372 `_execute_image(..., data_path)` additive(execute :202-203 분기 전달, `if data_path else IMAGE_DATA_ROOT` :366, `**/*` recursive :388이라 5갈래 흡수) + **5a 화이트리스트(:123-148) 동시 갱신**(image seam 라인만, 초과·결손 RED). ⓒ MCP image(`mcp-servers/inspection-image/` tools.py:34) `_resolve(dataset_id, data_path=None)` + 7도구 optional(csv 3서버 동형, mcp-servers/는 5a 동결 밖). ⓓ main.py seam에 inspection-image 편입(디렉터리 반환, csv 분기와 별도). **스코프**: 위치만 PG 권위 이관, **라벨 5갈래 해석 미이관**(`_scan` 추론 불변) — D-204 "첫 입력부만 치환" 정합, 라벨 deferred(D-205 패턴, 향후 ML/라벨 단계 재질문 차단). **carry(D-206) 정리**: inspector.py:32 `_mcp_get` data_path None시 **파라미터 미전송**(빈문자열 직렬화 회피) + MCP `_resolve` 미수신=None→구경로. csv 무영향(main이 실경로 채움). **게이트**: image end-to-end inspect→plan→execute→validate(EDA 제외 D-123). 정합 단정 = **n_images(장수) + mode/size 분포**(image엔 n_rows 부재 → csv 정합지표 대체). 비공허 = seam-off(synthetic↔실lake 장수 차) + compute-mutation RED. MCP HTTP 실기동=live smoke=명선 env 영역. **csv 변환 비채택**: image→csv 평탄화는 modality 분리 락(BLUEPRINT §6)·엔진 변경0 위배·공간구조 손실·"어떤 데이터도 전처리" 메시지 약화 → image는 비정형 modality 그대로 유지. | 근거: PG 위치 단일권위(D-164·D-206 연장)·MCP 7종 계약 보존(CLAUDE §4)·D-204 위치배선 본질·modality 분리 락. 명선 "이미지는 별도 라인" 정합. |
+
+D-208 (MCP 라이브 경로 — smoke=b1, 프로덕션 posture deferred)
+
+DL-5 라이브 smoke는 b1(host-run: myeongsun97 user-space에서 MCP 4서버 9101–9104 + backend 18000 자체기동, PG·Ollama는 병갑 컨테이너 TCP 재사용)으로 수행·통과. 근거: 단일 머신(kwonlocalserver)·실 lake 그룹 r-x 읽기 가능(복사 불요)·catalog data_path 32건 전부 상대(읽는 주체 repo-root 종속). b1은 smoke/개발 한정 — CLAUDE §3/§4 "MCP=모달리티 컨테이너" 원칙상 프로덕션 posture 아님. 프로덕션 = b2(컨테이너 + lake bind-mount + catalog 절대경로화)가 원칙 정합이나 본진 추후 결정으로 deferred(b3 inspector 우회는 7종 계약·발표 메시지 손상으로 기각). ★ smoke 통과의 검증 범위 = "host에서 seam이 실 lake 관통"까지(컨테이너 분산배포 정합은 별개, 과장 금지 — D-204 패턴).
+
+D-209 (흐름배선 — 플래그 기반 v2 직행)
+
+Page2 "다음" navigate를 VITE_DL_UI_V2 분기로 전환(on → /pipeline/data-v2, off → /pipeline/data). 플래그 off에서 구 경로 보존 → D-181/184 "구 경로 무변경" 정합. 전환기 v2 자연내비(DL-3 carry) 충족. 변경 = PipelineBuildPage·AlarmBanner 2파일.
+
+D-210 (라이브 배포 부채 — 갱신 시 재기동 규율)
+
+코드 갱신 시 실행 중 서비스(backend·MCP) 재기동 누락이 이번 2층 stale의 근본. "갱신 → 재기동" 규율 + dev 서비스 systemd --user 영속화(MCP·backend, dl-frontend 패턴)를 R-final ①에 편입.

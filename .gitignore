@@ -11,3 +11,13 @@ data/synthetic/order/
 *.patch
 # STEP 3c — ML 학습 산출물 (.joblib는 재학습으로 복원, lineage가 메타 보유)
 data/models/
+
+# DL-2 — KAMP 실적재 물리 타깃 (외부폴더, source 보존·재적재로 복원, D-159). git 미추적.
+data/lake/
+
+# DL 로컬 지시용 핸드오프 (원격 미보존 — 로컬 전용, 2026-06-08 사용자 지시)
+# WORKLOG·ENTRY 핸드오프는 와일드카드 일괄 무시 (2026-06-14 개별→패턴 전환).
+# DL_3A_FINAL_3B_ENTRY는 origin 추적분을 rm --cached로 로컬전용화해 형제 ENTRY와 통일.
+docs/datalake_redesign/*_WORKLOG.md
+docs/datalake_redesign/*_ENTRY.md
+docs/datalake_redesign/R1_HANDOFF_spec_patch.md

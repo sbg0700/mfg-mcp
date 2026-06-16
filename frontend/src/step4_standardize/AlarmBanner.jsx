@@ -21,7 +21,7 @@ export default function AlarmBanner({ alarms, onDismiss }) {
             </div>
           </div>
           <div className="alarm-actions">
-            <Link to={`/pipeline/data?session=${sid}`} className="btn">Page 3 으로 돌아가기</Link>
+            <Link to={`/pipeline/${import.meta.env.VITE_DL_UI_V2 ? 'data-v2' : 'data'}?session=${sid}`} className="btn">Page 3 으로 돌아가기</Link>
             {onDismiss && (
               <button className="btn" onClick={() => onDismiss(i)}>무시</button>
             )}

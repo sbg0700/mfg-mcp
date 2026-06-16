@@ -31,6 +31,7 @@ DEFAULT_MODALITY = "timeseries"
 
 async def _mcp_get(modality: str, path: str, **params) -> dict:
     base = MCP_SERVERS.get(modality, MCP_SERVERS[DEFAULT_MODALITY])
+    params = {k: v for k, v in params.items() if v is not None}  # D-207 carry: None 파라미터 미전송(httpx 빈문자열 직렬화 회피)
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(f"{base}{path}", params=params)
         r.raise_for_status()
@@ -38,7 +39,7 @@ async def _mcp_get(modality: str, path: str, **params) -> dict:
 
 
 async def inspect(dataset_id: str, model: str | None = None,
-                  modality: str = "timeseries") -> dict:
+                  modality: str = "timeseries", data_path: str | None = None) -> dict:
     """dataset_id를 받아 DataProfile을 생성한다.
 
     1) MCP 도구(결정론적)로 프로파일 수집 — modality에 맞는 MCP 서버로 라우팅
@@ -47,10 +48,10 @@ async def inspect(dataset_id: str, model: str | None = None,
     ★modality만 바꾸면 같은 코드가 timeseries/image 모두 처리 (재사용 증명).
     """
     # ---- 1. 결정론적 프로파일 수집 (MCP 도구 호출, 모달리티 라우팅) ----
-    columns = await _mcp_get(modality, "/list_columns", dataset_id=dataset_id)
-    schema = await _mcp_get(modality, "/get_schema", dataset_id=dataset_id)
-    sample = await _mcp_get(modality, "/sample", dataset_id=dataset_id, n=5)
-    encoding = await _mcp_get(modality, "/detect_encoding", dataset_id=dataset_id)
+    columns = await _mcp_get(modality, "/list_columns", dataset_id=dataset_id, data_path=data_path)
+    schema = await _mcp_get(modality, "/get_schema", dataset_id=dataset_id, data_path=data_path)
+    sample = await _mcp_get(modality, "/sample", dataset_id=dataset_id, n=5, data_path=data_path)
+    encoding = await _mcp_get(modality, "/detect_encoding", dataset_id=dataset_id, data_path=data_path)
 
     # 결정론적으로 감지된 '챌린지 신호' (LLM 없이도 잡히는 것)
     flags = []

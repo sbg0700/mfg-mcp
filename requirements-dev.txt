@@ -1,0 +1,6 @@
+# DL-2.5 (D-182) — throwaway-PG 자동화 테스트 전용 dev 의존성.
+# 런타임 deps 는 backend/requirements.txt. 버전 핀 고정(재현성).
+pytest==9.0.3
+pytest-asyncio==1.4.0
+# DL-3a (D-187) — /api/datalake/* ASGI 테스트 (httpx.ASGITransport)
+httpx==0.28.1
