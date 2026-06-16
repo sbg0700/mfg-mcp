@@ -1,0 +1,7 @@
+model,dataset,label,n_rows,n_cols,total_s,vram_baseline_mb,vram_peak_mb,vram_delta_mb,validation_passed,status
+gemma4:e4b,L1_injection_production,작은(184행),184,15,22.71,3495,3495,0,True,ok
+gemma4:e4b,L3_vacuum_pump,중간(43k행),43236,10,5.07,3495,3495,0,True,ok
+gemma4:e4b,L3_elevator_vibration,큰(210k행),210000,4,7.01,3495,3495,0,True,ok
+gemma4:26b,L1_injection_production,작은(184행),184,15,146.66,7259,7259,0,True,ok
+gemma4:26b,L3_vacuum_pump,중간(43k행),43236,10,240.31,7259,7261,2,True,ok
+gemma4:26b,L3_elevator_vibration,큰(210k행),210000,4,123.8,7261,7261,0,True,ok

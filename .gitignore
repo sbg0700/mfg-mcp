@@ -22,3 +22,7 @@ docs/datalake_redesign/*_WORKLOG.md
 docs/datalake_redesign/*_ENTRY.md
 docs/datalake_redesign/R1_HANDOFF_spec_patch.md
 data/lake
+.venv-measure/
+.venv/
+venv/
+scripts/ppt_assets/old/
