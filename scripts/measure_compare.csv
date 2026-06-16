@@ -1,0 +1,7 @@
+model,dataset,n_rows,before_s,after_s,cut_s,cut_pct
+gemma4:e4b,L1_injection_production,184,24.63,22.71,1.92,7.8
+gemma4:e4b,L3_vacuum_pump,43236,11.59,5.07,6.52,56.3
+gemma4:e4b,L3_elevator_vibration,210000,10.63,7.01,3.62,34.1
+gemma4:26b,L1_injection_production,184,137.65,146.66,-9.01,-6.5
+gemma4:26b,L3_vacuum_pump,43236,175.36,240.31,-64.95,-37.0
+gemma4:26b,L3_elevator_vibration,210000,125.84,123.8,2.04,1.6
