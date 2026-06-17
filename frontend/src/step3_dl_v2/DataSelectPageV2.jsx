@@ -190,6 +190,7 @@ export default function DataSelectPageV2() {
                       <DatalakeCardPicker
                         vid={structure.line_id}
                         moduleFunction={m.function}
+                        datasetRole={m.dataset_role}
                         value={st.datalake_id}
                         onChange={(entry) => {
                           if (!entry) {
