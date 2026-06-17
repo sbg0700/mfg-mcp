@@ -108,11 +108,12 @@ async def _entry_or_404(datalake_id: str) -> dict[str, Any]:
     return entry
 
 
-# ── 7. /list — 3축 AND 필터 (D-166, 모두 optional) ──────────────────────
+# ── 7. /list — 4축 AND 필터 (D-166/D-212, 모두 optional) ────────────────
 @router.get("/list")
 async def dl_list(vid: str | None = None, function: str | None = None,
-                  site: str | None = None) -> dict:
-    entries = await catalog.list_entries(vid=vid, function=function, site=site)
+                  site: str | None = None, company: str | None = None) -> dict:
+    entries = await catalog.list_entries(vid=vid, function=function, site=site,
+                                         company=company)
     return {"entries": [_ser(e) for e in entries]}
 
 

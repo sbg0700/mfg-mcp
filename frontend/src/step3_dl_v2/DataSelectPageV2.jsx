@@ -9,12 +9,14 @@
 // - register 모달 UI = 3c 범위 외 (D-191 — 백엔드 Mode B 는 3a 완비, D-186)
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { get, dlColumns, dlConstraintMerge, dlSessionPutFull } from '../api.js'
+import { get, dlList, dlColumns, dlConstraintMerge, dlSessionPutFull } from '../api.js'
 import { resolveModality } from '../lib/modality.js'
 import Toast from '../components/Toast.jsx'
 import ConstraintFormV2 from './ConstraintFormV2.jsx'
 import DatalakeCardPicker from './DatalakeCardPicker.jsx'
 import ColumnChips from './ColumnChips.jsx'
+
+const COMPANY_ALL = '__all__'   // D-212: 상단 회사 셀렉터 "전체"(필터 미적용) 센티넬
 
 // 3b 세션 호환 — 구 shape {col:[min,max]} → canonical range (충실 변환, silent drop 0)
 function upconvertLegacy(constraints) {
@@ -40,6 +42,9 @@ export default function DataSelectPageV2() {
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
   const [loadErr, setLoadErr] = useState('')
+  // D-212: 상단 회사 셀렉터 — 옵션 = 현재 vid 데이터의 distinct company, 기본 "전체"(필터 없음)
+  const [company, setCompany] = useState(COMPANY_ALL)
+  const [companyOptions, setCompanyOptions] = useState([])
 
   useEffect(() => {
     if (!sid) return
@@ -70,6 +75,18 @@ export default function DataSelectPageV2() {
       .catch((e) => setLoadErr(e.message || '로드 실패'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid])
+
+  // D-212: 현재 vid(라인) 데이터의 distinct company → 셀렉터 옵션. 비거나 1종이어도 무해.
+  useEffect(() => {
+    const vid = structure?.line_id
+    if (!vid) return
+    dlList({ vid })
+      .then((r) => {
+        const cs = [...new Set((r.entries || []).map((e) => e.company).filter(Boolean))].sort()
+        setCompanyOptions(cs)
+      })
+      .catch(() => setCompanyOptions([]))
+  }, [structure?.line_id])
 
   async function fetchColumns(datalakeId) {
     if (!datalakeId || columnsByDataset[datalakeId]) return
@@ -155,6 +172,18 @@ export default function DataSelectPageV2() {
         카탈로그 prefill 은 <strong>승인 시에만</strong> 적용됩니다 (D-167 재승인 게이트).
       </p>
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 16px' }}>
+        <label className="muted" style={{ fontSize: 13 }}>회사(company)</label>
+        <select value={company} onChange={(e) => setCompany(e.target.value)}
+                style={{ fontSize: 13, padding: '2px 6px' }}>
+          <option value={COMPANY_ALL}>전체</option>
+          {companyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <span className="muted" style={{ fontSize: 12 }}>
+          선택한 회사 데이터로 각 공정 카드를 거릅니다 (전체 = 미적용).
+        </span>
+      </div>
+
       {nModules === 0 && (
         <div className="error-text" style={{ padding: 12, border: '1px solid #f59e0b',
                                              borderRadius: 6, background: '#fffbeb' }}>
@@ -190,7 +219,7 @@ export default function DataSelectPageV2() {
                       <DatalakeCardPicker
                         vid={structure.line_id}
                         moduleFunction={m.function}
-                        datasetRole={m.dataset_role}
+                        company={company === COMPANY_ALL ? null : company}
                         value={st.datalake_id}
                         onChange={(entry) => {
                           if (!entry) {
