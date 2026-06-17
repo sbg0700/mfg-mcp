@@ -162,7 +162,7 @@ export default function DataConstraintPage() {
           return (
             <section key={stage.node_id} className="page3-stage-card">
               <h2 className="page3-stage-title">
-                Stage {stage.stage_order + 1}: {nodeDef?.display_name || stage.node_id}
+                단계 {stage.stage_order + 1}: {nodeDef?.display_name || stage.node_id}
               </h2>
               <div className="page3-modules">
                 {(stage.modules || []).map((m) => {

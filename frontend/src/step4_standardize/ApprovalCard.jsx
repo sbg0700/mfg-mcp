@@ -31,7 +31,7 @@ export default function ApprovalCard({
       <div className="approval-header">
         <strong>승인 필요</strong>
         <span className="muted">
-          · Stage {pending.stage_order + 1} ({pending.node_id})
+          · 단계 {pending.stage_order + 1} ({pending.node_id})
           · Module {pending.module_index}
           · dataset <code>{pending.dataset_id}</code>
           · modality <code>{pending.modality}</code>

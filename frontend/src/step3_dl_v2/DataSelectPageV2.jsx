@@ -138,6 +138,9 @@ export default function DataSelectPageV2() {
           modality: st.modality || resolveModality(m, s.node_id),
           // D-212 방어: dataset_role = 선택 datalake_id (Page 2 미설정 → 다운스트림 '?' 회피)
           dataset_role: st.dataset_role ?? st.datalake_id ?? null,
+          // Page 2 중첩 메타 보존(additive) — Page2→3→2 재방문 시 체인/부착 복원
+          chain_order: m.chain_order ?? null,
+          attached_to: m.attached_to ?? null,
           datalake_id: st.datalake_id || null,
           constraints_v2: st.cmap || {},   // 다운컨버트·engine_excluded 는 백엔드 (D-189)
         }
@@ -205,7 +208,7 @@ export default function DataSelectPageV2() {
           return (
             <section key={stage.node_id} className="page3-stage-card">
               <h2 className="page3-stage-title">
-                Stage {stage.stage_order + 1}: {nodeDef?.display_name || stage.node_id}
+                단계 {stage.stage_order + 1}: {nodeDef?.display_name || stage.node_id}
               </h2>
               <div className="page3-modules">
                 {(stage.modules || []).map((m) => {

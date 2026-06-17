@@ -12,7 +12,7 @@ export default function AlarmBanner({ alarms, onDismiss }) {
         <div key={i} className="alarm-row">
           <span>⚠</span>
           <div style={{ flex: 1 }}>
-            <strong>Stage {(a.stage_order ?? 0) + 1}{a.node_id ? ` (${a.node_id})` : ''}</strong>
+            <strong>단계 {(a.stage_order ?? 0) + 1}{a.node_id ? ` (${a.node_id})` : ''}</strong>
             <span className="muted"> · {(a.alarm?.missing || []).join(', ')} 미업로드</span>
             <div className="alarm-text">{a.alarm?.alarm_ko}</div>
             <div className="muted" style={{ fontSize: 12 }}>

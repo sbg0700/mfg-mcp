@@ -148,7 +148,7 @@ export default function StandardizePage() {
         onDismiss={(i) => setDismissedAlarms((prev) => [...prev, i])}
       />
 
-      {/* Stage 진행 카드 */}
+      {/* 단계 진행 카드 */}
       <section className="run-stages">
         {stages.map((s) => {
           const done = completedStages.includes(s.stage_order)
@@ -172,7 +172,7 @@ export default function StandardizePage() {
               className={`run-stage ${done ? 'stage-done' : ''} ${isPendingHere ? 'stage-pending' : ''}`}
             >
               <div className="run-stage-header">
-                <strong>Stage {s.stage_order + 1}: {s.node_id}</strong>
+                <strong>단계 {s.stage_order + 1}: {s.node_id}</strong>
                 {done && <span className="badge-ok">완료</span>}
                 {isPendingHere && <span className="badge-warn">진행 중</span>}
               </div>
