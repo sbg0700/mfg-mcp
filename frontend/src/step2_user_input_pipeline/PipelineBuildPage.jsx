@@ -90,9 +90,9 @@ export default function PipelineBuildPage() {
       addModule(nodeId, { uid: newUid(), function: fn, attached_to: null })
       return
     }
+    // 품질·보전: 공정이 있으면 마지막 공정에 묶기(선택), 없으면 강제 없이 그냥 세로 나열
     const ps = (byNode[nodeId] || []).filter((m) => m.function === 'process')
-    if (ps.length === 0) { setToast('공정(P)을 먼저 배치하세요 — 품질·보전은 공정에 부착됩니다.'); return }
-    addModule(nodeId, { uid: newUid(), function: fn, attached_to: ps[ps.length - 1].uid })
+    addModule(nodeId, { uid: newUid(), function: fn, attached_to: ps.length ? ps[ps.length - 1].uid : null })
   }
 
   // P 카드 위 드롭: M·Q = 그 P에 부착 / P·R = 일반 추가.

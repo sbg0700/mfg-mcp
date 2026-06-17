@@ -24,12 +24,17 @@ export default function StageBox({ stage, index, modules, onDropStage, onDropP, 
   }
 
   const pChain = modules.filter((m) => m.function === 'process')
-  const refs = modules.filter((m) => m.function === 'reference')
+  const pUids = new Set(pChain.map((m) => m.uid))
   const attachedByP = {}
+  const loose = []   // 참조 + 공정에 안 묶인 품질·보전(공정 없이 올린 경우) → 그냥 세로 나열
   for (const m of modules) {
-    if (m.function === 'quality' || m.function === 'maintenance') {
+    if (m.function === 'process') continue
+    const attachable = m.function === 'quality' || m.function === 'maintenance'
+    if (attachable && m.attached_to != null && pUids.has(m.attached_to)) {
       if (!attachedByP[m.attached_to]) attachedByP[m.attached_to] = []
       attachedByP[m.attached_to].push(m)
+    } else {
+      loose.push(m)
     }
   }
 
@@ -67,9 +72,9 @@ export default function StageBox({ stage, index, modules, onDropStage, onDropP, 
           </div>
         ))}
 
-        {refs.length > 0 && (
-          <div className="mod-ref-group">
-            {refs.map((r) => <Chip key={r.uid} m={r} />)}
+        {loose.length > 0 && (
+          <div className={pChain.length ? 'mod-ref-group' : 'mod-loose'}>
+            {loose.map((m) => <Chip key={m.uid} m={m} />)}
           </div>
         )}
       </div>

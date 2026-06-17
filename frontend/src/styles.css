@@ -15,7 +15,10 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* 전역 인스펙터 배경(근-블랙 + dot-grid). 다른 페이지 배경/상단 바도 같이 적용(의도). */
+  background: var(--ins-bg, #0b0e11);
+  background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 0);
+  background-size: 28px 28px;
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
   font-size: 14px;
@@ -27,7 +30,9 @@ a { color: #93c5fd; }
 
 .topbar {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+  padding: 10px 24px;
+  background: linear-gradient(180deg, var(--ins-panel, #14181d) 0%, var(--ins-bg, #0b0e11) 100%);
+  border-bottom: 1px solid var(--ins-line, #2a323b);
 }
 
 .breadcrumb { display: flex; gap: 8px; align-items: center; }
@@ -143,9 +148,8 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 /* ── Page 2 — INSPECTOR 테마 적용 + 단계 행 줄바꿈(가로 스크롤 없음) ── */
 .p2-wrap {
   margin: -24px -24px 0; padding: 24px 24px 120px; min-height: calc(100vh - 58px);
-  background: var(--ins-bg); color: var(--ins-text); font-family: var(--ins-mono);
-  background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 0);
-  background-size: 28px 28px;
+  /* 배경/dot-grid 는 전역 body 가 제공(이중 dot 방지). 여기선 모노 폰트만. */
+  color: var(--ins-text); font-family: var(--ins-mono);
 }
 /* 기능 액센트 색 (다크 + 아웃라인용 — 전역 .fn-* solid 채움은 아래 .p2-wrap 선택자로 오버라이드) */
 .p2-wrap .fn-process     { --fn: #4c9be8; }
@@ -155,7 +159,7 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 
 .p2-header {
   background: linear-gradient(180deg, var(--ins-panel) 0%, var(--ins-bg) 100%);
-  border: 1px solid var(--ins-line); border-left: 3px solid var(--ins-accent);
+  border: 1px solid var(--ins-line);
   border-radius: 4px; padding: 16px 22px; margin-bottom: 8px;
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
 }
@@ -191,13 +195,14 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
 .mod-chain-arrow { text-align: center; color: var(--ins-muted); font-size: 11px; line-height: 1; }
 .mod-attached { margin-left: 12px; border-left: 2px solid var(--ins-line); padding-left: 8px; display: flex; flex-direction: column; gap: 6px; }
 .mod-ref-group { margin-top: 6px; border-top: 1px dashed var(--ins-line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.mod-loose { display: flex; flex-direction: column; gap: 6px; }   /* 공정 없이 세로 나열 */
 
 /* 모듈 칩 — 다크 + 기능색 아웃라인/액센트 + 모노 라벨 (전역 .fn-* solid 채움 오버라이드) */
 .p2-wrap .mod-chip {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
   padding: 6px 9px; border-radius: 3px; font-size: 12px;
   background: var(--ins-panel-2); color: var(--ins-text);
-  border: 1px solid var(--ins-line); border-left: 3px solid var(--fn, var(--ins-muted));
+  border: 1.5px solid var(--fn, var(--ins-muted));   /* 4면 전체 기능색 */
 }
 .p2-wrap .mod-chip .mod-fn { color: var(--fn, var(--ins-muted)); font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; }
 
@@ -215,7 +220,7 @@ select { background: #334155; color: var(--text); border: 1px solid var(--border
   display: flex; align-items: center; gap: 10px;
   padding: 10px 13px; border-radius: 3px; cursor: grab;
   background: var(--ins-panel-2); color: var(--ins-text);
-  border: 1px solid var(--ins-line); border-left: 3px solid var(--fn, var(--ins-muted));
+  border: 1.5px solid var(--fn, var(--ins-muted));   /* 4면 전체 기능색 */
   transition: filter .12s, transform .08s, box-shadow .12s;
 }
 .p2-wrap .palette-card:hover { filter: brightness(1.1); box-shadow: 0 0 0 1px var(--fn); transform: translateY(-1px); }
