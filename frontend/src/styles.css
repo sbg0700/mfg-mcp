@@ -37,8 +37,15 @@ a { color: #93c5fd; }
   border-bottom: 1px solid var(--ins-line, #2a323b);
 }
 
-.breadcrumb { display: flex; gap: 8px; align-items: center; }
-.breadcrumb-title { font-weight: 700; }
+.breadcrumb { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.breadcrumb-row1 { display: flex; align-items: baseline; gap: 8px; }
+.brand {
+  font-family: 'Space Grotesk', var(--ins-display), sans-serif;
+  font-weight: 700; font-size: 19px; letter-spacing: 1px; color: var(--ins-text);
+}
+.breadcrumb-sub { font-size: 12px; color: var(--ins-muted); }
+.breadcrumb-row2 { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.breadcrumb-title { font-weight: 700; }   /* (구) — 유지(무해) */
 
 .page { padding: 24px; max-width: 1280px; margin: 0 auto; width: 100%; }
 
@@ -187,7 +194,7 @@ select { background: var(--ins-panel-2); color: var(--ins-text); border: 1px sol
 .flow-wrap-link .hook { color: var(--ins-accent); font-size: 16px; line-height: 1; }
 
 .flow-stage {
-  flex: 0 0 232px; width: 232px; display: flex; flex-direction: column;
+  flex: 0 0 256px; width: 256px; display: flex; flex-direction: column;
   background: var(--ins-panel); border: 1px solid var(--ins-line); border-radius: 4px;
   padding: 12px 13px; transition: border-color .12s, box-shadow .12s;
 }
@@ -211,6 +218,7 @@ select { background: var(--ins-panel-2); color: var(--ins-text); border: 1px sol
   background: var(--ins-panel-2); color: var(--ins-text);
   border: 1.5px solid var(--fn, var(--ins-muted));   /* 4면 전체 기능색 */
 }
+.p2-wrap .mod-chip > span { white-space: nowrap; }   /* "MAINTENANCE · 설비·보전" 한 줄 유지 */
 .p2-wrap .mod-chip .mod-fn { color: var(--fn, var(--ins-muted)); font-weight: 700; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .palette-bar {
