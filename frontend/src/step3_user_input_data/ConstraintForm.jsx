@@ -22,9 +22,6 @@ export default function ConstraintForm({ columns, hintKeys, rows, onChange, data
     <div className="constraint-form">
       <h4 className="constraint-title">
         제약 조건 (선택한 데이터셋의 컬럼 기준)
-        <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>
-          (D-90 해결 — 실제 컬럼명 매핑)
-        </span>
       </h4>
       {!datasetSelected ? (
         <div className="muted">데이터셋을 먼저 선택하세요.</div>

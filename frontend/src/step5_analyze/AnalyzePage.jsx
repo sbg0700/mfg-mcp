@@ -119,8 +119,8 @@ export default function AnalyzePage() {
     <div>
       <h1>분석 목적</h1>
       <p className="muted">
-        4단 표준화 결과(AggregatedContext)를 LLM이 보고 분석 목적을 추천합니다.
-        <code>available_options</code> 외 추천은 환각 방어 코드가 제거합니다 (D-91).
+        표준화 결과를 보고 분석 목적을 추천합니다.
+        허용 목록 밖의 추천은 환각 방어 코드가 자동으로 걸러냅니다.
       </p>
 
       {questions?.llm_status === 'failed' ? (

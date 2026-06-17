@@ -20,13 +20,13 @@ const isConstrainable = (c) => c.column_kind === 'group' || NUMERIC_DTYPES.has(c
 export function specSummary(spec) {
   if (!spec) return '(없음)'
   if (spec.type === 'range') {
-    return `range ${spec.min ?? '−∞'} ~ ${spec.max ?? '+∞'}${spec.unit ? ` ${spec.unit}` : ''}`
+    return `${spec.min ?? '−∞'} ~ ${spec.max ?? '+∞'}${spec.unit ? ` ${spec.unit}` : ''}`
   }
   if (spec.type === 'aggregate') {
-    return `aggregate ${spec.metric} ${spec.op} ${spec.value}${spec.unit ? ` ${spec.unit}` : ''}`
+    return `${spec.metric} ${spec.op} ${spec.value}${spec.unit ? ` ${spec.unit}` : ''}`
   }
   if (spec.type === 'single_value') {
-    return `single_value = ${spec.value}${spec.unit ? ` ${spec.unit}` : ''}`
+    return `${spec.value}${spec.unit ? ` ${spec.unit}` : ''}`
   }
   return JSON.stringify(spec)
 }
@@ -160,9 +160,9 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
       // catalog 변경 → prefill 제안을 서버 SSOT 와 재동기(삭제값 제안 잔존 차단, DL-3c fix).
       // 부모 fetchMerge 는 내부 catch — 실패해도 영속 성공을 되돌리지 않음.
       await onPersisted?.()
-      onToast(spec ? `영속 저장: ${col} — ${specSummary(spec)}` : `영속 삭제: ${col}`)
+      onToast(spec ? `저장됨: ${col} — ${specSummary(spec)}` : `삭제됨: ${col}`)
     } catch (e) {
-      onToast(`영속 ${spec ? '저장' : '삭제'} 실패 (${col}): ${e.message}`)
+      onToast(`${spec ? '저장' : '삭제'} 실패 (${col}): ${e.message}`)
     } finally {
       setBusy(false)
       setModal(null)
@@ -172,8 +172,7 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
   return (
     <div style={{ marginTop: 8 }}>
       <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-        제약 입력 — 숫자 scalar=range / group=aggregate / 비숫자=대상 아님 (D-180). 저장 시 [이번만]=세션,
-        [메모리 업데이트]=catalog 영속(D-179 감사 기록).
+        측정값의 허용 범위를 입력하세요. '이번만'은 이번 분석에만, '저장'하면 다음에도 같은 값이 제안됩니다.
       </div>
       {(columns || []).map((c) => {
         const col = c.name
@@ -197,8 +196,8 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
                 </span>
               ) : opaque ? (
                 <span style={{ fontSize: 12 }}>
-                  적용값: <code>{specSummary(applied)}</code>
-                  <span className="muted" style={{ fontSize: 11 }}> (이 type 은 폼 편집 미지원 — 빈칸 저장으로 해제)</span>
+                  현재 값: <code>{specSummary(applied)}</code>
+                  <span className="muted" style={{ fontSize: 11 }}> (여기서는 수정할 수 없습니다)</span>
                 </span>
               ) : kind === 'group' ? (
                 <>
@@ -227,26 +226,23 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
               {constrainable && (
                 <button className="btn" style={{ fontSize: 11, padding: '2px 10px' }}
                         disabled={busy} onClick={() => onSaveClick(col, kind)}>
-                  저장
+                  적용
                 </button>
               )}
               {applied && (
                 <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8,
                                background: '#dcfce7', border: '1px solid #22c55e', color: '#166534' }}>
-                  세션 적용: {specSummary(applied)}
+                  적용됨: {specSummary(applied)}
                 </span>
               )}
             </div>
             {suggestion && (
               <div style={{ marginTop: 4, padding: '6px 8px', borderRadius: 6, fontSize: 12,
                             background: '#eff6ff', border: '1px dashed #3b82f6', color: '#1e3a8a' }}>
-                카탈로그 제안(미적용): <strong>{specSummary(suggestion.constraint_spec)}</strong>
-                <span className="muted" style={{ fontSize: 11 }}>
-                  {' '}— 승인 {suggestion.approved_by || '?'} / {suggestion.approved_at || '?'}
-                </span>
+                추천 값: <strong>{specSummary(suggestion.constraint_spec)}</strong>
                 <button className="btn" style={{ fontSize: 11, padding: '1px 8px', marginLeft: 8 }}
                         onClick={() => applySession(col, suggestion.constraint_spec)}>
-                  승인(세션에 적용)
+                  적용
                 </button>
               </div>
             )}
@@ -256,50 +252,48 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
 
       {modal && modal.step === 'branch' && (
         <Modal
-          title={`제약 저장 — ${modal.col}`}
+          title={`허용 범위 적용 — ${modal.col}`}
           actions={
             <>
               <button className="btn" disabled={busy} onClick={() => setModal(null)}>취소</button>
               <button className="btn" disabled={busy} onClick={() => {
                 applySession(modal.col, modal.spec)
                 onToast(modal.spec
-                  ? `이번만 적용(세션): ${modal.col} — ${specSummary(modal.spec)}`
-                  : `세션에서 제거: ${modal.col}`)
+                  ? `이번만 적용: ${modal.col} — ${specSummary(modal.spec)}`
+                  : `제거됨: ${modal.col}`)
                 setModal(null)
               }}>
-                이번만 (세션)
+                이번만
               </button>
               <button className="btn btn-primary" disabled={busy} onClick={() => {
                 if (modal.spec == null) setModal({ ...modal, step: 'confirm-delete' })
                 else persist(modal.col, modal.spec)
               }}>
-                메모리 업데이트 (영속)
+                저장
               </button>
             </>
           }
         >
           <div>값: <code>{specSummary(modal.spec)}</code></div>
           <div className="muted" style={{ marginTop: 6 }}>
-            [이번만] = 이 세션에만 적용 (catalog 미접촉) /
-            [메모리 업데이트] = catalog 영속 저장 (감사 기록 동반, D-179)
+            '이번만'은 이번 분석에만 적용됩니다. '저장'하면 다음에도 같은 값이 제안됩니다.
           </div>
         </Modal>
       )}
       {modal && modal.step === 'confirm-delete' && (
         <Modal
-          title={`영속 삭제 확인 — ${modal.col}`}
+          title={`저장된 값 삭제 — ${modal.col}`}
           actions={
             <>
               <button className="btn" disabled={busy} onClick={() => setModal(null)}>취소</button>
               <button className="btn btn-primary" disabled={busy}
                       onClick={() => persist(modal.col, null)}>
-                영속 삭제 실행
+                삭제
               </button>
             </>
           }
         >
-          빈칸으로 영속 업데이트 = catalog 의 기존 제약을 <strong>삭제</strong>합니다
-          (constraints_history 에 delete 기록, D-191). 계속할까요?
+          이 항목에 저장된 허용 범위를 <strong>삭제</strong>합니다. 계속할까요?
         </Modal>
       )}
     </div>

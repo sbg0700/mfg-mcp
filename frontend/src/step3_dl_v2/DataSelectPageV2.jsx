@@ -110,7 +110,7 @@ export default function DataSelectPageV2() {
         ...prev, [mk]: { ...(prev[mk] || {}), merged: r.merged || [] },
       }))
     } catch (e) {
-      setToast(`prefill 조회 실패 (${datalakeId}): ${e.message}`)
+      setToast(`추천 값 조회 실패 (${datalakeId})`)
     }
   }
 
@@ -151,7 +151,7 @@ export default function DataSelectPageV2() {
       const r = await dlSessionPutFull(sid, { line_id: structure.line_id, stages })
       const nEx = (r.engine_excluded || []).length
       if (nEx > 0) {
-        setToast(`저장 완료 — 비-range 제약 ${nEx}건은 엔진 전달 제외(메타 기록, D-189)`)
+        setToast(`저장 완료 — 범위가 아닌 제약 ${nEx}건은 분석 엔진에 전달되지 않습니다`)
       }
       navigate(`/pipeline/run?session=${sid}`)
     } catch (e) {
@@ -172,15 +172,14 @@ export default function DataSelectPageV2() {
 
   return (
     <div>
-      <h1>{lineDef.display_name} — 데이터·제약 입력 <span style={{ fontSize: 13, color: '#2563eb' }}>(DL v2)</span></h1>
+      <h1>{lineDef.display_name} — 데이터·제약 입력</h1>
       <p className="muted">
-        Data Lake catalog에서 카드로 선택합니다.
-        제약은 선택 데이터셋의 <strong>catalog 실컬럼</strong>에 매핑되며,
-        카탈로그 prefill 은 <strong>승인 시에만</strong> 적용됩니다 (D-167 재승인 게이트).
+        데이터 카드를 골라 각 공정에 연결하세요.
+        선택한 데이터의 컬럼에 측정값 허용 범위를 지정할 수 있습니다.
       </p>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 16px' }}>
-        <label className="muted" style={{ fontSize: 13 }}>회사(company)</label>
+        <label className="muted" style={{ fontSize: 13 }}>회사</label>
         <select value={company} onChange={(e) => setCompany(e.target.value)}
                 style={{ fontSize: 13, padding: '2px 6px' }}>
           <option value={COMPANY_ALL}>전체</option>

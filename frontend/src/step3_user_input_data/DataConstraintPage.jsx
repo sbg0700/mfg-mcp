@@ -150,7 +150,7 @@ export default function DataConstraintPage() {
     <div>
       <h1>{lineDef.display_name} — 데이터·제약 입력</h1>
       <p className="muted">
-        각 모듈에 데이터셋을 연결 후, 그 데이터셋의 <strong>실제 컬럼</strong>에 제약을 매핑합니다 (D-90 해결).
+        각 모듈에 데이터셋을 연결한 뒤, 그 데이터의 <strong>실제 컬럼</strong>에 제약을 지정합니다.
         미선택 모듈은 Page 4에서 알람 대상이 됩니다.
       </p>
 

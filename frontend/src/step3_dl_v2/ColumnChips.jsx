@@ -18,7 +18,7 @@ export default function ColumnChips({ columns }) {
   return (
     <div style={{ margin: '6px 0' }}>
       <span className="muted" style={{ fontSize: 11, marginRight: 6 }}>
-        실컬럼 {columns.length}개 (catalog):
+        컬럼 {columns.length}개:
       </span>
       {columns.map((c) => {
         const m = DUP_RE.exec(c.name)

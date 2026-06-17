@@ -42,10 +42,10 @@ export default function ModelingPage() {
     <div>
       <h1>모델링 — 추천</h1>
       <p className="muted">
-        AggregatedContext(key_findings)와 분석 목적
+        표준화 결과와 분석 목적
         {data?.user_purpose && <> (<code>{data.user_purpose}</code>)</>}을 보고
-        LLM이 <code>recommended_models</code> 풀 안에서 적합도(fit_score 1~5)를 매깁니다.
-        풀 외 추천 / fit_score 1~5 외 값은 환각 방어 코드가 제거합니다 (D-92).
+        추천 모델 후보 안에서 적합도(1~5)를 매깁니다.
+        후보 밖 추천이나 1~5 밖의 값은 환각 방어 코드가 자동으로 걸러냅니다.
       </p>
 
       {data?.llm_status === 'failed' ? (
