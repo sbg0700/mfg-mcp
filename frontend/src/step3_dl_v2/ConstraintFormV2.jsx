@@ -67,7 +67,7 @@ function Modal({ title, children, actions }) {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
       <div style={{ background: '#fff', borderRadius: 8, padding: 20, minWidth: 360,
-                    maxWidth: 480, boxShadow: '0 8px 30px rgba(0,0,0,0.2)' }}>
+                    maxWidth: 480, boxShadow: '0 8px 30px rgba(0,0,0,0.2)', color: '#1f2937' }}>
         <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>{title}</h3>
         <div style={{ fontSize: 13, marginBottom: 14 }}>{children}</div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>{actions}</div>
@@ -79,7 +79,7 @@ function Modal({ title, children, actions }) {
 function ColumnName({ name, kind, groupDesc }) {
   const m = DUP_RE.exec(name)
   const badge = { marginLeft: 4, padding: '0 5px', borderRadius: 8, fontSize: 10,
-                  background: '#fde68a', border: '1px solid #f59e0b' }
+                  background: '#fde68a', border: '1px solid #f59e0b', color: '#1f2937' }
   const groupBadge = { ...badge, background: '#ddd6fe', border: '1px solid #8b5cf6' }
   return (
     <span style={{ fontWeight: 600, fontSize: 12 }} title={name}>
@@ -218,14 +218,14 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
               </button>
               {applied && (
                 <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8,
-                               background: '#dcfce7', border: '1px solid #22c55e' }}>
+                               background: '#dcfce7', border: '1px solid #22c55e', color: '#166534' }}>
                   세션 적용: {specSummary(applied)}
                 </span>
               )}
             </div>
             {suggestion && (
               <div style={{ marginTop: 4, padding: '6px 8px', borderRadius: 6, fontSize: 12,
-                            background: '#eff6ff', border: '1px dashed #3b82f6' }}>
+                            background: '#eff6ff', border: '1px dashed #3b82f6', color: '#1e3a8a' }}>
                 카탈로그 제안(미적용): <strong>{specSummary(suggestion.constraint_spec)}</strong>
                 <span className="muted" style={{ fontSize: 11 }}>
                   {' '}— 승인 {suggestion.approved_by || '?'} / {suggestion.approved_at || '?'}
