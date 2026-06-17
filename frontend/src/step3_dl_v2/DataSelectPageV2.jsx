@@ -35,7 +35,7 @@ export default function DataSelectPageV2() {
   const sid = params.get('session') || ''
   const [structure, setStructure] = useState(null)
   const [linesCatalog, setLinesCatalog] = useState([])
-  // {mk: {datalake_id, modality, cmap, merged}} — modality 는 catalog entry 권위(D-163),
+  // {mk: {datalake_id, modality, dataset_role, dataset_name, cmap, merged}} — modality catalog 권위(D-163),
   // cmap = {col: canonical_spec}(세션 적용분), merged = constraint_merge rows(prefill 제안 소스)
   const [moduleState, setModuleState] = useState({})
   const [columnsByDataset, setColumnsByDataset] = useState({})
@@ -60,6 +60,9 @@ export default function DataSelectPageV2() {
             restored[mk] = {
               datalake_id: m.datalake_id || null,
               modality: m.modality || null,
+              // D-212 방어: 복원 시 dataset_role = 저장값 → datalake_id 폴백 (Page 2는 미설정)
+              dataset_role: m.dataset_role || m.datalake_id || null,
+              dataset_name: null,   // 이름은 카드 재선택 시 채워짐 (복원 시 datalake_id로 표시)
               // 복원: constraints_v2(canonical) 우선, 부재 시 3b 구 shape 업컨버트
               cmap: m.constraints_v2 || upconvertLegacy(m.constraints),
               merged: null,
@@ -133,7 +136,8 @@ export default function DataSelectPageV2() {
           function: m.function,
           // modality = 선택 entry 의 catalog 값 우선(권위, D-163), 미선택 시 구 규칙 폴백
           modality: st.modality || resolveModality(m, s.node_id),
-          dataset_role: m.dataset_role,
+          // D-212 방어: dataset_role = 선택 datalake_id (Page 2 미설정 → 다운스트림 '?' 회피)
+          dataset_role: st.dataset_role ?? st.datalake_id ?? null,
           datalake_id: st.datalake_id || null,
           constraints_v2: st.cmap || {},   // 다운컨버트·engine_excluded 는 백엔드 (D-189)
         }
@@ -214,7 +218,11 @@ export default function DataSelectPageV2() {
                         <span className={`module-fn fn-${m.function} module-fn-chip`}>
                           {m.function}
                         </span>
-                        <span className="muted">dataset_role: {m.dataset_role || '?'}</span>
+                        {st.datalake_id ? (
+                          <span className="muted">선택: {st.dataset_name || st.datalake_id}</span>
+                        ) : (
+                          <span className="muted">데이터 미선택 — 아래 카드에서 선택</span>
+                        )}
                       </div>
                       <DatalakeCardPicker
                         vid={structure.line_id}
@@ -224,13 +232,17 @@ export default function DataSelectPageV2() {
                         onChange={(entry) => {
                           if (!entry) {
                             setForModule(mk, { datalake_id: null, modality: null,
+                                               dataset_role: null, dataset_name: null,
                                                cmap: {}, merged: null })
                             return
                           }
                           // 데이터셋 변경 = 구 세션 제약 무효 (merge view 도 동일 규칙)
+                          // ★D-212 방어: dataset_role = 선택 datalake_id, 이름은 헤더 표시용
                           setForModule(mk, {
                             datalake_id: entry.datalake_id,
                             modality: entry.modality || null,
+                            dataset_role: entry.datalake_id,
+                            dataset_name: entry.name || null,
                             cmap: {}, merged: null,
                           })
                           fetchColumns(entry.datalake_id)

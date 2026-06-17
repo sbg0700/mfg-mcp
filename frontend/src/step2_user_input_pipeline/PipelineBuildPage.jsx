@@ -1,21 +1,27 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { get, put } from '../api.js'
-import CatalogPanel from './CatalogPanel.jsx'
 import StageBox from './StageBox.jsx'
 import Toast from '../components/Toast.jsx'
 
 // Page 2 — Pipeline 구성 (spec-1 Part 3, 드래그앤드롭).
-// 좌: 카탈로그 (선택한 Line의 Node별 available_modules)
-// 우: Stage 박스들 (Line.stages 순서, ↓ 화살표로 시간순)
-// 드래그앤드롭으로 모듈 배치 후 "다음" → PUT /sessions/{id}/structure → Page 3 이동.
+// D-212: 좌측 = 4기능 팔레트(process/quality/maintenance/reference). 실데이터 미바인딩.
+//   기능 카드를 Stage에 드롭 → 모듈 {function} 추가 (dataset_role 미설정, chain/attached null,
+//   중첩 없음 = v1 평면). 데이터 선택은 Page 3에서. 모듈은 function만 보유.
+const FUNCTIONS = [
+  { id: 'process', label: '공정 (process)' },
+  { id: 'quality', label: '품질 (quality)' },
+  { id: 'maintenance', label: '설비·보전 (maintenance)' },
+  { id: 'reference', label: '참조 (reference)' },
+]
+
 export default function PipelineBuildPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const sid = params.get('session') || ''
   const [lineId, setLineId] = useState('')
   const [lineDef, setLineDef] = useState(null)         // 해당 Line catalog: {stages, ...}
-  const [byNode, setByNode] = useState({})             // node_id → [{function, dataset_role}]
+  const [byNode, setByNode] = useState({})             // node_id → [{function}] (D-212: 데이터 미바인딩)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
   const [loadErr, setLoadErr] = useState('')
@@ -35,48 +41,33 @@ export default function PipelineBuildPage() {
         }
         setLineDef(def)
 
-        // 이전에 저장된 structure 복원
+        // 이전에 저장된 structure 복원 — 모듈은 function만 (D-212: dataset_role 미사용)
         const restored = {}
         const stages = sess.pipeline_full?.stages || []
         for (const s of stages) {
-          restored[s.node_id] = (s.modules || []).map((m) => ({
-            function: m.function,
-            dataset_role: m.dataset_role || m.hint_dataset || '',
-          }))
+          restored[s.node_id] = (s.modules || []).map((m) => ({ function: m.function }))
         }
         setByNode(restored)
       })
       .catch((e) => setLoadErr(e.message || '세션/카탈로그 로드 실패'))
   }, [sid])
 
+  function onPaletteDragStart(e, fn) {
+    e.dataTransfer.setData('application/json', JSON.stringify({ function: fn }))
+    e.dataTransfer.effectAllowed = 'copy'
+  }
+
   function onDrop(targetNodeId, payload) {
     if (!lineDef || !payload?.function) return
-    // 검증 1: source_node_id !== target_node_id → 노드 불일치
-    if (payload.source_node_id && payload.source_node_id !== targetNodeId) {
-      const stage = lineDef.stages.find((s) => s.node_id === targetNodeId)
-      setToast(`다른 공정 노드의 모듈은 추가할 수 없습니다 (대상: ${stage?.display_name || targetNodeId}).`)
-      return
-    }
     const stage = lineDef.stages.find((s) => s.node_id === targetNodeId)
     if (!stage) return
     const cur = byNode[targetNodeId] || []
-    // 검증 2: max_modules 초과
+    // max_modules 초과만 차단 (같은 function 중복 허용 — Page 3에서 각자 다른 데이터 바인딩)
     if (cur.length >= stage.max_modules) {
       setToast(`이 Stage는 최대 ${stage.max_modules}개까지만 배치할 수 있습니다.`)
       return
     }
-    // 검증 3: 같은 (function + dataset_role) 중복
-    const dup = cur.find(
-      (m) => m.function === payload.function && m.dataset_role === payload.hint_dataset,
-    )
-    if (dup) {
-      setToast('이미 추가된 모듈입니다.')
-      return
-    }
-    setByNode({
-      ...byNode,
-      [targetNodeId]: [...cur, { function: payload.function, dataset_role: payload.hint_dataset }],
-    })
+    setByNode({ ...byNode, [targetNodeId]: [...cur, { function: payload.function }] })
   }
 
   function onRemove(nodeId, idx) {
@@ -94,8 +85,7 @@ export default function PipelineBuildPage() {
         node_id: s.node_id,
         modules: (byNode[s.node_id] || []).map((m, mi) => ({
           index: mi,
-          function: m.function,
-          dataset_role: m.dataset_role,
+          function: m.function,   // D-212: dataset_role 미포함 (데이터 바인딩은 Page 3)
         })),
       }))
       .filter((s) => s.modules.length > 0)
@@ -133,11 +123,31 @@ export default function PipelineBuildPage() {
     <div>
       <h1>{lineDef.display_name} — 파이프라인 구성</h1>
       <p className="muted">
-        왼쪽 카탈로그에서 모듈을 끌어와 오른쪽 Stage 박스에 놓으세요. (현재 {totalModules}개 모듈 / {filledStages} Stage 채움)
+        왼쪽 기능 팔레트에서 기능을 끌어와 오른쪽 Stage 박스에 놓으세요. 데이터 선택은 다음 단계(Page 3).
+        (현재 {totalModules}개 모듈 / {filledStages} Stage 채움)
       </p>
 
       <div className="pipeline-grid">
-        <CatalogPanel lineDef={lineDef} />
+        <div className="catalog-panel">
+          <h3>기능 팔레트</h3>
+          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+            4개 기능을 Stage로 드래그하세요. (데이터는 Page 3)
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {FUNCTIONS.map((f) => (
+              <div
+                key={f.id}
+                className={`module-card fn-${f.id} draggable`}
+                draggable
+                onDragStart={(e) => onPaletteDragStart(e, f.id)}
+                title={f.label}
+              >
+                <span className="module-fn">{f.id}</span>
+                <span className="module-ds">{f.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="stage-column">
           {lineDef.stages.map((s, idx) => (
