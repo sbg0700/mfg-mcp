@@ -20,7 +20,7 @@ export default function DatalakeCardPicker({ vid, moduleFunction, company, value
   const [entries, setEntries] = useState(null)   // null = 로딩
   const [err, setErr] = useState('')
 
-  // 카드 필터 쿼리 — vid + function(모듈 고정) + company(상단 셀렉터). 4축 AND 는 서버 수행(D-166).
+  // 카드 필터 쿼리 — vid + 모듈 function + company(상단 셀렉터). 4축 AND 는 서버 수행(D-166).
   useEffect(() => {
     if (!vid) return
     setEntries(null)
@@ -34,8 +34,7 @@ export default function DatalakeCardPicker({ vid, moduleFunction, company, value
   return (
     <div className="dlv2-picker" style={{ marginTop: 6 }}>
       <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-        function={moduleFunction || '?'}(모듈 고정)
-        {company ? ` · company=${company}` : ' · company=전체'} · vid={vid}
+        모듈 고정{company ? ` · company=${company}` : ' · company=전체'}
       </div>
       {err && <div className="error-text">⚠ {err}</div>}
       {entries === null ? (

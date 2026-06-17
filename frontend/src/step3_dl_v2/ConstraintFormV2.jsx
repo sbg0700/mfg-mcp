@@ -12,6 +12,10 @@ import { dlConstraintPost } from '../api.js'
 const DUP_RE = /^(.*)__dup(\d+)$/
 const AGG_METRICS = ['rms', 'peak', 'mean', 'std']
 const AGG_OPS = ['<=', '>=']
+const NUMERIC_DTYPES = new Set(['integer', 'float'])
+// 제약 가능 = group(aggregate) | 숫자 scalar(integer/float→range). 그 외 비숫자 scalar
+// (text/datetime/boolean/unknown/빈값/null) = "범위 제약 대상 아님" (min/max 입력 없음).
+const isConstrainable = (c) => c.column_kind === 'group' || NUMERIC_DTYPES.has(c.dtype)
 
 export function specSummary(spec) {
   if (!spec) return '(없음)'
@@ -140,6 +144,8 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
 
   // [저장] → 분기 모달. 빈칸 + 영속 선택 시 delete 확인 단계로.
   function onSaveClick(col, kind) {
+    const c = (columns || []).find((x) => x.name === col)
+    if (c && !isConstrainable(c)) return   // 비숫자 scalar = 제약 spec 생성 스킵(draftToSpec 미호출)
     const spec = draftToSpec(kind, drafts[col] || {})
     setModal({ col, spec, step: 'branch' })
   }
@@ -166,7 +172,7 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
   return (
     <div style={{ marginTop: 8 }}>
       <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-        제약 입력 — scalar=range / group=aggregate (D-180). 저장 시 [이번만]=세션,
+        제약 입력 — 숫자 scalar=range / group=aggregate / 비숫자=대상 아님 (D-180). 저장 시 [이번만]=세션,
         [메모리 업데이트]=catalog 영속(D-179 감사 기록).
       </div>
       {(columns || []).map((c) => {
@@ -175,15 +181,21 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
         const d = drafts[col] || specToDraft(kind, null)
         const applied = cmap?.[col]
         const mv = mergedByCol[col]
-        // 재승인 게이트 — 세션 미적용 + prefill 존재 시에만 제안 박스 (값 미주입)
-        const suggestion = !applied && mv?.source === 'prefill' ? mv.prefill : null
+        const constrainable = isConstrainable(c)
+        // 재승인 게이트 — 세션 미적용 + prefill 존재 시에만 제안 박스 (값 미주입). 비숫자는 제안도 미표시.
+        const suggestion = constrainable && !applied && mv?.source === 'prefill' ? mv.prefill : null
         const opaque = !editableType(kind, applied)
         const inp = { width: 80, fontSize: 12, padding: '2px 4px' }
         return (
           <div key={col} style={{ borderTop: '1px solid #f3f4f6', padding: '6px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <ColumnName name={col} kind={kind} groupDesc={c.group_desc} />
-              {opaque ? (
+              {!constrainable ? (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  <span className="ins-badge" style={{ marginRight: 6 }}>{c.dtype || 'null'}</span>
+                  범위 제약 대상 아님
+                </span>
+              ) : opaque ? (
                 <span style={{ fontSize: 12 }}>
                   적용값: <code>{specSummary(applied)}</code>
                   <span className="muted" style={{ fontSize: 11 }}> (이 type 은 폼 편집 미지원 — 빈칸 저장으로 해제)</span>
@@ -212,10 +224,12 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
                          onChange={(e) => setDraft(col, { unit: e.target.value })} />
                 </>
               )}
-              <button className="btn" style={{ fontSize: 11, padding: '2px 10px' }}
-                      disabled={busy} onClick={() => onSaveClick(col, kind)}>
-                저장
-              </button>
+              {constrainable && (
+                <button className="btn" style={{ fontSize: 11, padding: '2px 10px' }}
+                        disabled={busy} onClick={() => onSaveClick(col, kind)}>
+                  저장
+                </button>
+              )}
               {applied && (
                 <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8,
                                background: '#dcfce7', border: '1px solid #22c55e', color: '#166534' }}>

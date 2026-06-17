@@ -174,7 +174,7 @@ export default function DataSelectPageV2() {
     <div>
       <h1>{lineDef.display_name} — 데이터·제약 입력 <span style={{ fontSize: 13, color: '#2563eb' }}>(DL v2)</span></h1>
       <p className="muted">
-        Data Lake catalog(vid={structure.line_id})에서 카드로 선택합니다.
+        Data Lake catalog에서 카드로 선택합니다.
         제약은 선택 데이터셋의 <strong>catalog 실컬럼</strong>에 매핑되며,
         카탈로그 prefill 은 <strong>승인 시에만</strong> 적용됩니다 (D-167 재승인 게이트).
       </p>
@@ -263,7 +263,7 @@ export default function DataSelectPageV2() {
                         onPersisted={() => fetchMerge(mk, st.datalake_id)}
                       />
                       <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>
-                        신규 등록(register)은 추후 지원 — 현재는 사전 적재 catalog 선택 (D-186/D-191)
+                        신규 등록은 추후 지원 — 현재는 사전 적재 catalog 선택
                       </div>
                     </div>
                   )
