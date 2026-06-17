@@ -148,28 +148,50 @@ export default function PipelineBuildPage() {
   const totalModules = Object.values(byNode).reduce((n, arr) => n + arr.length, 0)
   const filledStages = lineDef.stages.filter((s) => (byNode[s.node_id] || []).length > 0).length
 
+  // 단계를 한 줄 PER_ROW개씩 끊어 행으로 배치(가로 스크롤 제거). 7단계 → 4 + 3.
+  const PER_ROW = 4
+  const rows = []
+  for (let i = 0; i < lineDef.stages.length; i += PER_ROW) rows.push(lineDef.stages.slice(i, i + PER_ROW))
+
   return (
     <div className="p2-wrap">
       <div className="p2-header">
-        <h1>{lineDef.display_name}</h1>
-        <p className="muted">
-          파이프라인 구성 — 아래 기능을 끌어 단계에 놓으세요. 데이터 선택은 다음 단계(Page 3).
-          <span className="p2-counter"> {totalModules}개 모듈 · {filledStages}/{lineDef.stages.length}단계 채움</span>
-        </p>
+        <div className="p2-header-main">
+          <span className="p2-eyebrow">MANUFACTURING·MCP / pipeline</span>
+          <h1>{lineDef.display_name}</h1>
+        </div>
+        <div className="p2-meta">
+          <span className="p2-pill">모듈 <span className="v">{totalModules}</span></span>
+          <span className="p2-pill">단계 <span className="v accent">{filledStages}/{lineDef.stages.length}</span></span>
+          <span className="p2-pill">라인 <span className="v">{lineId}</span></span>
+        </div>
       </div>
+      <p className="p2-help">아래 기능을 끌어 단계에 놓으세요 · 데이터 선택은 다음 단계(Page 3)</p>
 
-      <div className="flow-row">
-        {lineDef.stages.map((s, idx) => (
-          <div key={s.node_id} className="flow-cell">
-            <StageBox
-              stage={s}
-              index={idx}
-              modules={byNode[s.node_id] || []}
-              onDropStage={onDropStage}
-              onDropP={onDropP}
-              onRemove={onRemove}
-            />
-            {idx < lineDef.stages.length - 1 && <div className="flow-arrow">→</div>}
+      <div className="flow-rows">
+        {rows.map((row, ri) => (
+          <div key={`row-${ri}`}>
+            <div className="flow-row">
+              {row.map((s, ci) => {
+                const idx = ri * PER_ROW + ci
+                return (
+                  <div key={s.node_id} className="flow-cell">
+                    <StageBox
+                      stage={s}
+                      index={idx}
+                      modules={byNode[s.node_id] || []}
+                      onDropStage={onDropStage}
+                      onDropP={onDropP}
+                      onRemove={onRemove}
+                    />
+                    {ci < row.length - 1 && <div className="flow-arrow">→</div>}
+                  </div>
+                )
+              })}
+            </div>
+            {ri < rows.length - 1 && (
+              <div className="flow-wrap-link"><span className="hook">↳</span> 다음 줄로 이어짐</div>
+            )}
           </div>
         ))}
       </div>
@@ -186,8 +208,8 @@ export default function PipelineBuildPage() {
             </span>
           </div>
         ))}
-        <button className="btn btn-primary palette-next" onClick={onNext} disabled={saving}>
-          {saving ? '저장 중…' : '다음 → (Page 3)'}
+        <button className="ins-btn ins-btn-primary palette-next" onClick={onNext} disabled={saving}>
+          {saving ? '저장 중…' : '▶ 다음 → Page 3'}
         </button>
       </div>
 
