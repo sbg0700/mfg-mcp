@@ -43,7 +43,7 @@ export default function LineSelectPage() {
   return (
     <div>
       <h1>라인을 선택하세요</h1>
-      <p className="muted">파이프라인을 구성할 공정 라인을 1개 선택합니다. (3 Line × 18 Node, KAMP 기준)</p>
+      <p className="muted">파이프라인을 구성할 공정 라인을 1개 선택합니다. (라인 3 · 노드 18, KAMP 기준)</p>
 
       {error && <div className="error-text" style={{ marginBottom: 12 }}>⚠ {error}</div>}
 
@@ -60,7 +60,7 @@ export default function LineSelectPage() {
             />
             <span style={{ marginLeft: 12 }}>
               <strong>{ln.display_name}</strong>
-              <span className="muted"> ({ln.max_stages} Stage / 노드 {ln.stages?.length ?? '?'}개)</span>
+              <span className="muted"> (노드 {ln.stages?.length ?? '?'}개)</span>
               <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
                 {(ln.stages || []).slice(0, 4).map((s) => s.display_name).join(' · ')}
                 {(ln.stages || []).length > 4 ? ' …' : ''}
