@@ -358,18 +358,23 @@ def _resolve_modality(module: dict, node_id: str | None = None) -> str:
 
 
 # ── 승인 카드/실행 정합 seam (엔진 무변경·additive) ──────────────────────────
-# timeseries/order executor 는 미구현 op(remove_outlier/create_feature/drop_column/relabel/
-# detect_encoding/reparse_header)를 status="skipped"(미구현)로 no-op 처리(행 변경 0 — 실측 확인).
-# → 실행 스텝/승인 카드에서 제외(헛 승인·"삭제합니다" 오표시 방지). 제약 위반은 Validator 가
-#   constraints 로 독립 검사하므로 issues 로 그대로 남음(회귀 0). 이미지/eventlog 는 별도 실행경로(미적용).
-_STRICT_SKIP_MODALITIES = {"timeseries", "order"}
+# executor 가 실제 df 를 바꾸지 않는 미구현 op(remove_outlier/create_feature/drop_column/relabel 등)를
+# 승인 카드·실행 스텝에서 제외(헛 승인·"삭제/완료" 거짓표시 방지). 제약 위반은 Validator 가 constraints 로
+# 독립 검사하므로 issues 로 그대로 남음(회귀 0). 구현셋은 모달리티별 executor 디스패치 기준.
+def _implemented_ops(modality: str) -> set | None:
+    """모달리티별 '실제 df 변경' 구현 연산. None = 필터 미적용(이미지=메타 경로)."""
+    if modality in ("timeseries", "order"):
+        from executor import _OPERATIONS as _EXEC_OPS     # 등록 연산(읽기) + 특수분기 normalize_group
+        return set(_EXEC_OPS) | {"normalize_group"}
+    if modality == "event-log":
+        return {"balance_classes", "fill_missing", "compute_stats"}   # _execute_eventlog 명시 분기
+    return None
 
 
 def _filter_implemented_steps(plan_result: dict, modality: str) -> dict:
-    if modality not in _STRICT_SKIP_MODALITIES:
+    implemented = _implemented_ops(modality)
+    if implemented is None:
         return plan_result
-    from executor import _OPERATIONS as _EXEC_OPS         # 구현 연산 권위(읽기 — 엔진 무변경)
-    implemented = set(_EXEC_OPS) | {"normalize_group"}    # normalize_group = executor 특수분기 구현
     steps = plan_result.get("steps") or []
     kept = [s for s in steps if s.get("operation") in implemented]
     if len(kept) == len(steps):

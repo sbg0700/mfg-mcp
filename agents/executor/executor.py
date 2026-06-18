@@ -553,8 +553,12 @@ async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str,
                 detail = f"기초 통계 산출{sheet_note}. 행={len(df)}, 컬럼={len(df.columns)}"
                 before, after = {}, {"n_rows": len(df), "n_cols": len(df.columns)}
             else:
-                detail = f"{op} 완료"
-                before, after = {}, {}
+                # event-log 미구현/미적용 op(remove_outlier 등)는 df 무변경 — 거짓 "완료"/lineage 금지.
+                # status="skipped" 로만 보고(transformation_applied 미기록). (timeseries fn is None 동작과 정합)
+                results.append(StepResult(order=order, step_key=step.get("step_key"), operation=op,
+                    target_column=col, permission_level=perm, status="skipped",
+                    detail=f"'{op}'는 event-log 경로 미구현 — 미적용(데이터 무변경)."))
+                continue
 
             lineage_params: dict = {"permission_level": perm, "modality": "event-log"}
             if op == "balance_classes" and applied_strategy:
