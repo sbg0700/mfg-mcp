@@ -39,7 +39,7 @@ export default function ApprovalCard({
       </div>
       <p className="muted">
         이 작업들은 데이터를 변경합니다. 검토 후 승인하세요.
-        ({steps.length}개 중 {approved.size}개 승인됨)
+        ({steps.length}개 중 {steps.length - remaining.length}개 승인됨)
       </p>
       <ul className="approval-list">
         {steps.map((s) => {

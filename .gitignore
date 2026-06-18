@@ -14,6 +14,8 @@ data/models/
 
 # DL-2 — KAMP 실적재 물리 타깃 (외부폴더, source 보존·재적재로 복원, D-159). git 미추적.
 data/lake/
+# 멀티샤드 concat 병합 캐시 (resolver 파생물, 샤드에서 재생성). git 미추적.
+data/_shard_merge/
 
 # DL 로컬 지시용 핸드오프 (원격 미보존 — 로컬 전용, 2026-06-08 사용자 지시)
 # WORKLOG·ENTRY 핸드오프는 와일드카드 일괄 무시 (2026-06-14 개별→패턴 전환).
