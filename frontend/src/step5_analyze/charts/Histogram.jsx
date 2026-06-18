@@ -1,7 +1,7 @@
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { AXIS, GRID, TOOLTIP_STYLE, COLORS, CHART_HEIGHT } from './common'
+import { AXIS, GRID, TOOLTIP_STYLE, COLORS, CHART_HEIGHT, fmtAxis } from './common'
 
 // data: {column, bins:[N+1], counts:[N], stats:{mean,std,min,max,n}}
 // bins 중점을 x 라벨로, counts를 y로. (BarChart 한 개 막대 시리즈)
@@ -17,7 +17,7 @@ export default function Histogram({ data }) {
       <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
         <CartesianGrid {...GRID} />
         <XAxis dataKey="x" {...AXIS} />
-        <YAxis {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={fmtAxis} />
         <Tooltip wrapperStyle={TOOLTIP_STYLE} contentStyle={TOOLTIP_STYLE} />
         <Bar dataKey="count" name={data.column || '빈도'} fill={COLORS.process} />
       </BarChart>

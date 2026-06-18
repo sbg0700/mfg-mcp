@@ -242,18 +242,23 @@ def filter_recommendations(recs: list[dict], modality: str) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────
 # 인덱스성/순번 컬럼 이름 패턴 (CSV 인덱스 누출 'Unnamed: 0', 'idx', 행번호 류)
 _INDEXY_NAME_RE = re.compile(r"^(unnamed.*|index|idx|no\.?|seq(no)?|순번|행번호|번호|row(num)?)$", re.I)
+# 타임스탬프/날짜 컬럼 이름 (앵커드 — 'Injection_Time'·'Cycle_Time' 같은 '시간 측정값'은 보존)
+_TIME_NAME_RE = re.compile(r"^(_?time|timestamp|datetime|_?start|_?stop|date|reg_?date|dttm|일시|시각|날짜)$", re.I)
 
 
 def _junk_cols(df: pd.DataFrame) -> set:
-    """EDA feature·상관·타깃 선택에서 제외할 인덱스성/순번 컬럼.
-    데이터 삭제가 아니라 '표시 선택'에서만 배제(additive). 판정:
-      ① 이름이 Unnamed/index/idx/순번/행번호 류, 또는
-      ② 숫자 단조증가 + 전부 고유(= 0,1,2,… 행번호/인덱스 누출)."""
+    """feature·상관·타깃·라벨 선택에서 제외할 컬럼(데이터 삭제 아님 — '선택'에서만 배제, additive).
+      ① 인덱스성: 이름이 Unnamed/index/idx/순번/행번호, 또는 숫자 단조증가+전부 고유(행번호 누출),
+      ② 타임스탬프/날짜: dtype datetime64, 또는 이름이 TimeStamp/_time/_start/_stop/date 류
+         (단 'Injection_Time'·'Cycle_Time' 등 시간 '측정값'은 앵커드 정규식으로 보존)."""
     junk: set = set()
     for c in df.columns:
         name = str(c).strip()
         if name.lower().startswith("unnamed") or _INDEXY_NAME_RE.match(name):
             junk.add(c)
+            continue
+        if pd.api.types.is_datetime64_any_dtype(df[c]) or _TIME_NAME_RE.match(name):
+            junk.add(c)           # 타임스탬프/날짜 = raw feature·라벨·타깃 부적합
             continue
         if not pd.api.types.is_numeric_dtype(df[c]):
             continue
