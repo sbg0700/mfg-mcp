@@ -16,6 +16,8 @@ const NUMERIC_DTYPES = new Set(['integer', 'float'])
 // 제약 가능 = group(aggregate) | 숫자 scalar(integer/float→range). 그 외 비숫자 scalar
 // (text/datetime/boolean/unknown/빈값/null) = "범위 제약 대상 아님" (min/max 입력 없음).
 const isConstrainable = (c) => c.column_kind === 'group' || NUMERIC_DTYPES.has(c.dtype)
+// 관측 통계 숫자 포맷(읽기 쉽게 천단위·소수 2자리). 규격 제안 아닌 데이터 사실 표시(D-43).
+const fmtNum = (x) => (x == null ? '' : Number(x).toLocaleString(undefined, { maximumFractionDigits: 2 }))
 
 export function specSummary(spec) {
   if (!spec) return '(없음)'
@@ -223,6 +225,11 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
                          onChange={(e) => setDraft(col, { max: e.target.value })} />
                   <input placeholder="unit(옵션)" value={d.unit} style={inp}
                          onChange={(e) => setDraft(col, { unit: e.target.value })} />
+                  {c.stat_min != null && c.stat_max != null && (
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      관측 범위 {fmtNum(c.stat_min)} ~ {fmtNum(c.stat_max)}
+                    </span>
+                  )}
                 </>
               )}
               {constrainable && (

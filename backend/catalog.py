@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS datalake.columns (
 -- — run_migration(항상 실행)에 두면 backfill 전 NULL / replace_columns(ordinal 미주입)로 실패 → 분리.
 ALTER TABLE datalake.columns ADD COLUMN IF NOT EXISTS ordinal INT;
 
+-- (b) 관측 통계 min/max — 데이터 '사실'(규격 제안 아님 → D-43 무위반). additive, DROP 0, 멱등.
+--     백필 = tools/datalake_stats_backfill.py (라인3 우선, 후속 전체). get_columns SELECT * 로 API 자동 노출.
+ALTER TABLE datalake.columns ADD COLUMN IF NOT EXISTS stat_min DOUBLE PRECISION;
+ALTER TABLE datalake.columns ADD COLUMN IF NOT EXISTS stat_max DOUBLE PRECISION;
+
 CREATE TABLE IF NOT EXISTS datalake.constraints (
     datalake_id     TEXT NOT NULL REFERENCES datalake.entries(datalake_id),
     column_name     TEXT NOT NULL,
