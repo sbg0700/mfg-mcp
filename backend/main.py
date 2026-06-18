@@ -222,6 +222,8 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
                     "pre_validation": pre_validation,
                     "execution": None, "validation": None,
                     "note": "계획 사전 검증 실패(blocking) — 실행 중단"}
+        # 승인 카드/실행 정합: 미구현 op(remove_outlier 등) 제외 (Validator issues 는 유지)
+        plan_result = _filter_implemented_steps(plan_result, req.modality)
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
                                         modality=req.modality, data_path=data_path)
         # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
@@ -353,6 +355,29 @@ def _resolve_modality(module: dict, node_id: str | None = None) -> str:
     if node_id and node_id in _NODE_MODALITY:
         return _NODE_MODALITY[node_id]
     return "timeseries"
+
+
+# ── 승인 카드/실행 정합 seam (엔진 무변경·additive) ──────────────────────────
+# timeseries/order executor 는 미구현 op(remove_outlier/create_feature/drop_column/relabel/
+# detect_encoding/reparse_header)를 status="skipped"(미구현)로 no-op 처리(행 변경 0 — 실측 확인).
+# → 실행 스텝/승인 카드에서 제외(헛 승인·"삭제합니다" 오표시 방지). 제약 위반은 Validator 가
+#   constraints 로 독립 검사하므로 issues 로 그대로 남음(회귀 0). 이미지/eventlog 는 별도 실행경로(미적용).
+_STRICT_SKIP_MODALITIES = {"timeseries", "order"}
+
+
+def _filter_implemented_steps(plan_result: dict, modality: str) -> dict:
+    if modality not in _STRICT_SKIP_MODALITIES:
+        return plan_result
+    from executor import _OPERATIONS as _EXEC_OPS         # 구현 연산 권위(읽기 — 엔진 무변경)
+    implemented = set(_EXEC_OPS) | {"normalize_group"}    # normalize_group = executor 특수분기 구현
+    steps = plan_result.get("steps") or []
+    kept = [s for s in steps if s.get("operation") in implemented]
+    if len(kept) == len(steps):
+        return plan_result
+    out = dict(plan_result)
+    out["steps"] = kept
+    out["requires_approval"] = any(s.get("permission_level") in ("L2", "L3") for s in kept)
+    return out
 
 
 class CreateSessionReq(BaseModel):
@@ -576,6 +601,9 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                     return {"status": "error", "blocking_module": module_key,
                             "pre_validation": pre_validation,
                             "session": public_view(session)}
+
+                # 승인 카드/실행 정합: 미구현 op(remove_outlier 등) 제외 (Validator issues 는 유지)
+                plan_result = _filter_implemented_steps(plan_result, modality)
 
                 # 3) 권한 게이트 — unapproved L2/L3 있으면 suspend-and-return
                 approved = set(session["approved_step_keys"])
