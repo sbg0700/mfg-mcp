@@ -15,6 +15,7 @@ import Toast from '../components/Toast.jsx'
 import ConstraintFormV2 from './ConstraintFormV2.jsx'
 import DatalakeCardPicker from './DatalakeCardPicker.jsx'
 import ColumnChips from './ColumnChips.jsx'
+import { ESSENTIAL_COLUMNS } from './essentialColumns.js'
 
 const COMPANY_ALL = '__all__'   // D-212: 상단 회사 셀렉터 "전체"(필터 미적용) 센티넬
 
@@ -45,6 +46,8 @@ export default function DataSelectPageV2() {
   // D-212: 상단 회사 셀렉터 — 옵션 = 현재 vid 데이터의 distinct company, 기본 "전체"(필터 없음)
   const [company, setCompany] = useState(COMPANY_ALL)
   const [companyOptions, setCompanyOptions] = useState([])
+  // 핵심 컬럼 토글 — mk(공정 카드)별, 기본 접힘(핵심만). 라인3 맵 데이터셋에만 노출.
+  const [showAllCols, setShowAllCols] = useState({})
 
   useEffect(() => {
     if (!sid) return
@@ -214,6 +217,12 @@ export default function DataSelectPageV2() {
                   const mk = `${stage.stage_order}.${m.index}`
                   const st = moduleState[mk] || {}
                   const allCols = st.datalake_id ? (columnsByDataset[st.datalake_id] || []) : []
+                  const essential = st.datalake_id ? ESSENTIAL_COLUMNS[st.datalake_id] : null
+                  const showAll = !!showAllCols[mk]
+                  // 맵 데이터셋 + 접힘이면 핵심 컬럼만, 그 외(맵 없음 또는 펼침)는 전체
+                  const visibleCols = essential && !showAll
+                    ? allCols.filter((c) => essential.includes(c.name))
+                    : allCols
                   return (
                     <div key={mk} className="page3-module">
                       <div className="page3-module-header">
@@ -251,10 +260,16 @@ export default function DataSelectPageV2() {
                           fetchMerge(mk, entry.datalake_id)
                         }}
                       />
-                      <ColumnChips columns={allCols} />
+                      {essential && allCols.length > 0 && (
+                        <button className="btn" style={{ fontSize: 11, padding: '2px 10px', margin: '6px 0' }}
+                                onClick={() => setShowAllCols((prev) => ({ ...prev, [mk]: !showAll }))}>
+                          {showAll ? '핵심 컬럼만 보기' : `전체 컬럼 보기 (${allCols.length}개)`}
+                        </button>
+                      )}
+                      <ColumnChips columns={visibleCols} />
                       <ConstraintFormV2
                         datalakeId={st.datalake_id}
-                        columns={allCols}
+                        columns={visibleCols}
                         merged={st.merged}
                         cmap={st.cmap || {}}
                         onChange={(cmap) => setForModule(mk, { cmap })}

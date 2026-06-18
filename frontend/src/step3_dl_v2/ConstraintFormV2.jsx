@@ -111,8 +111,10 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
   const [modal, setModal] = useState(null)   // {col, spec, step: 'branch'|'confirm-delete'}
   const [busy, setBusy] = useState(false)
 
-  // 초기 draft = 세션 적용분(cmap) — dataset/columns 변경 시에만 전체 재초기화
-  // (cmap 갱신은 applySession 에서 해당 컬럼 draft 만 동기화 — 타이핑 중 타 컬럼 보존)
+  // 초기 draft = 세션 적용분(cmap) — dataset 또는 컬럼 '집합' 변경 시에만 전체 재초기화.
+  // colsKey(컬럼명 join)로 의존 → 핵심/전체 토글로 집합이 바뀔 때만 재초기화,
+  // 부모 리렌더로 columns 배열 참조만 바뀌는 경우(Apply 등)엔 타이핑 보존.
+  const colsKey = (columns || []).map((c) => c.name).join('')
   useEffect(() => {
     const next = {}
     for (const c of columns || []) {
@@ -120,7 +122,7 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
     }
     setDrafts(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datalakeId, columns])
+  }, [datalakeId, colsKey])
 
   if (!datalakeId) {
     return <p className="muted" style={{ fontSize: 12 }}>데이터셋을 선택하면 제약 폼이 표시됩니다.</p>
