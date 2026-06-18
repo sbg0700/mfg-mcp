@@ -225,7 +225,8 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
         # 승인 카드/실행 정합: 미구현 op(remove_outlier 등) 제외 (Validator issues 는 유지)
         plan_result = _filter_implemented_steps(plan_result, req.modality)
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
-                                        modality=req.modality, data_path=data_path)
+                                        modality=req.modality, data_path=data_path,
+                                        constraints=req.constraints)
         # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
         validation = await run_validate(exec_result, plan=plan_result, profile=profile,
                                         constraints=req.constraints)
@@ -316,17 +317,20 @@ async def _resolve_image_dir(dataset_id: str) -> str:
     return directory
 
 
-def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict]):
-    """미리보기 필요시에만 df 로드 (balance_classes pending step 있을 때).
-    실패해도 파이프라인은 계속 (preview만 빠짐). LLM 0 — 순수 데이터 I/O."""
-    if not any(s.get("operation") == "balance_classes" and s.get("target_column")
+def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict],
+                               data_path: str | None = None):
+    """미리보기/건수 계산용 df 로드 (balance_classes 또는 remove_outlier pending 시).
+    data_path(실 lake) 우선 — Executor 와 동일 데이터로 미리보기 정합. LLM 0, 순수 I/O."""
+    if not any(s.get("operation") in ("balance_classes", "remove_outlier") and s.get("target_column")
                for s in pending_steps):
         return None
     try:
         import pandas as pd
         if modality in ("timeseries", "order"):
-            from executor import _resolve
-            path = _resolve(dataset_id, modality)
+            path = data_path
+            if path is None:
+                from executor import _resolve
+                path = _resolve(dataset_id, modality)
             for enc in ("utf-8-sig", "cp949", "latin1"):
                 try:
                     return pd.read_csv(path, encoding=enc, low_memory=False)
@@ -335,12 +339,32 @@ def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: li
             return None
         if modality == "event-log":
             from executor import _load_eventlog
-            df, _path, _n = _load_eventlog(dataset_id)
+            df, _path, _n = _load_eventlog(dataset_id, data_path)
             return df
-        # inspection-image: balance_classes 의미 없음
+        # inspection-image: balance_classes/remove_outlier 의미 없음
         return None
     except Exception:
         return None
+
+
+def _remove_outlier_preview(df, col: str, bounds) -> dict:
+    """승인 전 '범위 밖 N행' 건수 (Validator 위반 카운트와 동일 규약)."""
+    try:
+        import pandas as pd
+        from executor import _constraint_bounds
+        lo, hi = _constraint_bounds(bounds)
+        if col not in df.columns or (lo is None and hi is None):
+            return {"applicable": False, "reason": "대상 컬럼/제약 경계 없음"}
+        s = pd.to_numeric(df[col], errors="coerce")
+        viol = pd.Series(False, index=s.index)
+        if lo is not None:
+            viol |= (s < lo)
+        if hi is not None:
+            viol |= (s > hi)
+        return {"applicable": True, "removed": int(viol.fillna(False).sum()),
+                "n_total": int(len(df)), "bounds": [lo, hi]}
+    except Exception as e:
+        return {"applicable": False, "reason": f"건수 계산 실패: {e}"}
 
 
 def _resolve_modality(module: dict, node_id: str | None = None) -> str:
@@ -364,10 +388,10 @@ def _resolve_modality(module: dict, node_id: str | None = None) -> str:
 def _implemented_ops(modality: str) -> set | None:
     """모달리티별 '실제 df 변경' 구현 연산. None = 필터 미적용(이미지=메타 경로)."""
     if modality in ("timeseries", "order"):
-        from executor import _OPERATIONS as _EXEC_OPS     # 등록 연산(읽기) + 특수분기 normalize_group
-        return set(_EXEC_OPS) | {"normalize_group"}
+        from executor import _OPERATIONS as _EXEC_OPS     # 등록 연산(읽기) + 특수분기 normalize_group/remove_outlier
+        return set(_EXEC_OPS) | {"normalize_group", "remove_outlier"}
     if modality == "event-log":
-        return {"balance_classes", "fill_missing", "compute_stats"}   # _execute_eventlog 명시 분기
+        return {"balance_classes", "fill_missing", "compute_stats", "remove_outlier"}   # _execute_eventlog 분기
     return None
 
 
@@ -621,7 +645,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                     session["status"] = "awaiting_approval"
                     # ★STEP 2a (D-104): balance_classes pending step에 available_options + 결정론 미리보기 첨부.
                     #   df는 미리보기 시점에만 로드 (Executor와 별개 — 가벼움). LLM 호출 없음.
-                    preview_df = _maybe_load_df_for_preview(dataset_id, modality, unapproved)
+                    preview_df = _maybe_load_df_for_preview(dataset_id, modality, unapproved, data_path)
                     pending_steps_payload = []
                     for s in unapproved:
                         ps = {
@@ -643,6 +667,14 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                             except Exception as _e:
                                 ps["preview"] = {"applicable": False,
                                                  "reason": f"preview 계산 실패: {_e}"}
+                        # remove_outlier: 승인 전 '범위 밖 N행 제거' 건수 표시
+                        if (s.get("operation") == "remove_outlier" and preview_df is not None
+                                and s.get("target_column")):
+                            ps["preview"] = _remove_outlier_preview(
+                                preview_df, s["target_column"], (constraints or {}).get(s["target_column"]))
+                            if ps["preview"].get("applicable"):
+                                ps["rationale"] = (ps.get("rationale") or "") + \
+                                    f" · 범위 밖 {ps['preview']['removed']}행 제거 예정 (총 {ps['preview']['n_total']}행)"
                         pending_steps_payload.append(ps)
                     session["pending"] = {
                         "stage_order": so,
@@ -665,7 +697,8 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 execution = await run_execute(plan_result, approved_keys=approved,
                                               modality=modality,
                                               selected_options=selected_options,
-                                              data_path=data_path)
+                                              data_path=data_path,
+                                              constraints=constraints)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
                 validation["pre_validation"] = pre_validation  # 사전 결과도 첨부
@@ -843,6 +876,22 @@ def _collect_recommended_models(session: dict) -> list[dict]:
                 "from_node": node_id,
                 "advisory_only": name in _VRAM_HEAVY_MODELS,
             })
+    return out
+
+
+def _fallback_models(available: list[dict]) -> list[dict]:
+    """LLM 추천 0/死 시 풀 폴백 (EDA fallback_charts_from_guide·D-121 패턴) — 비-advisory 모델을
+    실행 가능으로 노출(중립 fit_score). '실행 가능 0'으로 끝나지 않게."""
+    out = []
+    for m in available:
+        if m.get("advisory_only"):
+            continue
+        out.append({
+            "name": m["name"], "fit_score": 3,
+            "rationale_ko": "LLM 미응답 — 풀에서 기본 추천(실행 가능). 분석 목적에 맞는 모델을 선택하세요.",
+            "context_reflections": [], "task": m.get("task"), "when": m.get("when"),
+            "from_node": m.get("from_node"), "advisory_only": False, "fallback": True,
+        })
     return out
 
 
@@ -1528,9 +1577,10 @@ async def model_recommend(session_id: str) -> dict:
     from llm import _try_parse_llm
     parsed = _try_parse_llm(raw)
     if parsed.get("_llm_failed"):
-        return {"session_id": session_id, "recommendations": [],
+        # LLM 死 → 풀 폴백(실행 가능 ≥1), 0으로 끝내지 않음 (D-121 패턴)
+        return {"session_id": session_id, "recommendations": _fallback_models(available),
                 "available_models": available, "user_purpose": user_purpose,
-                "llm_status": "failed", "llm_error": parsed.get("error"),
+                "llm_status": "failed_fallback", "llm_error": parsed.get("error"),
                 "model_used": model}
     name_to_meta = {m["name"]: m for m in available}
     recs = []
@@ -1557,6 +1607,10 @@ async def model_recommend(session_id: str) -> dict:
             "advisory_only": meta.get("advisory_only", False),
         })
     recs.sort(key=lambda x: -x["fit_score"])
+    if not recs:                                  # LLM ok 이나 전부 필터/0 → 풀 폴백(실행 가능 ≥1)
+        return {"session_id": session_id, "recommendations": _fallback_models(available),
+                "available_models": available, "user_purpose": user_purpose,
+                "llm_status": "ok_fallback", "model_used": model}
     return {"session_id": session_id, "recommendations": recs,
             "available_models": available, "user_purpose": user_purpose,
             "llm_status": "ok", "model_used": model}

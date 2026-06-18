@@ -16,6 +16,8 @@ data/models/
 data/lake/
 # 멀티샤드 concat 병합 캐시 (resolver 파생물, 샤드에서 재생성). git 미추적.
 data/_shard_merge/
+# 전후 비교 CSV export (processed/backup parquet 파생). git 미추적.
+data/_export/
 
 # DL 로컬 지시용 핸드오프 (원격 미보존 — 로컬 전용, 2026-06-08 사용자 지시)
 # WORKLOG·ENTRY 핸드오프는 와일드카드 일괄 무시 (2026-06-14 개별→패턴 전환).

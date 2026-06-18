@@ -134,6 +134,12 @@ def _check_constraint_violation(execution: dict, constraints: dict | None) -> li
     if not constraints:
         return issues
 
+    # remove_outlier 가 실제 적용(done)된 컬럼 — 메시지를 '검토 권장'이 아닌 '승인 제거됨'으로 정합.
+    removed_cols = {
+        str(r.get("target_column")) for r in (execution.get("results") or [])
+        if r.get("operation") == "remove_outlier" and r.get("status") == "done"
+    }
+
     import os
     # ★D-67: 사용자 제약은 원본 측정값 기준이므로 정제 전 backup parquet에서 검증.
     #   backup이 없으면(레거시 세션) processed로 폴백 (회귀 안전, low severity 경고는 안 함).
@@ -175,12 +181,20 @@ def _check_constraint_violation(execution: dict, constraints: dict | None) -> li
         n_viol = int(viol_mask.fillna(False).sum())
         if n_viol > 0:
             bound_str = f"[{lo if lo is not None else '-∞'}, {hi if hi is not None else '∞'}]"
-            issues.append({
-                "kind": "constraint", "severity": "medium",
-                "column": actual, "n_violations": n_viol, "n_total": n_total,
-                "bounds": [lo, hi], "source": src_kind,
-                "message": f"'{actual}' 범위 {bound_str} 위반 {n_viol}/{n_total}행 — 사용자 검토 권장",
-            })
+            if actual in removed_cols:                    # 승인 제거 적용 — 보존 아님
+                issues.append({
+                    "kind": "constraint", "severity": "low",
+                    "column": actual, "n_violations": n_viol, "n_total": n_total,
+                    "bounds": [lo, hi], "source": src_kind, "removed": True,
+                    "message": f"'{actual}' 범위 {bound_str} 밖 {n_viol}/{n_total}행 — 승인 제거됨(감사 기록)",
+                })
+            else:
+                issues.append({
+                    "kind": "constraint", "severity": "medium",
+                    "column": actual, "n_violations": n_viol, "n_total": n_total,
+                    "bounds": [lo, hi], "source": src_kind,
+                    "message": f"'{actual}' 범위 {bound_str} 위반 {n_viol}/{n_total}행 — 사용자 검토 권장",
+                })
     return issues
 
 

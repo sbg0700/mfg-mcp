@@ -179,7 +179,7 @@ export default function ConstraintFormV2({ datalakeId, columns, merged, cmap,
         측정값의 허용 범위를 입력하세요. '이번만'은 이번 분석에만, '저장'하면 다음에도 같은 값이 제안됩니다.
       </div>
       <div className="muted" style={{ fontSize: 11, marginBottom: 6, opacity: 0.8 }}>
-        범위 밖 값은 자동 삭제되지 않고 위반으로 표시되어 검토 대상이 됩니다 (데이터 보존).
+        범위 밖 값은 이상치로 표시되며, 승인하면 제거됩니다 (감사 기록).
       </div>
       {(columns || []).map((c) => {
         const col = c.name
