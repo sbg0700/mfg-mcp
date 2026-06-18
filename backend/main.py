@@ -1209,6 +1209,12 @@ async def eda_freeform(session_id: str, req: EdaFreeformReq) -> dict:
     code = gen.get("code", "")
     ok, reason = validate_eda_code(code)
     if not ok:
+        # LLM이 코드 대신 자연어·이모지를 뱉어 파싱 실패(SyntaxError/empty) → 친절 안내(자연어를
+        # '생성된 코드'로 덤프하지 않아 '원본 데이터 제공' 류 오해 방지). 안전 위반(import 등)은 사유 유지.
+        if reason.startswith("SyntaxError") or reason == "empty code":
+            return {"session_id": session_id, "status": "rejected",
+                    "reason": "코드 생성 실패 — 질문을 더 단순하게 바꿔 다시 시도해 주세요.",
+                    "model_used": model, "query": req.user_query}
         return {"session_id": session_id, "status": "rejected",
                 "reason": reason, "code": code, "model_used": model,
                 "query": req.user_query}
