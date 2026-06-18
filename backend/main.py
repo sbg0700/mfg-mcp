@@ -247,6 +247,43 @@ async def lineage_endpoint(dataset_id: str) -> dict:
     return {"dataset_id": dataset_id, "n_records": len(chain), "chain": chain}
 
 
+@app.get("/api/lineage/session/{session_id}")
+async def lineage_session_endpoint(session_id: str) -> dict:
+    """세션의 모든 모듈(데이터셋) 누적 lineage를 시각순으로 — 추적성 시연/캡처용.
+    read-only·additive(엔진 변경 0). 인메모리라 재기동 시 소실(같은 세션 캡처 전제).
+    record별: lineage_id, dataset_id, 작업종류, 대상컬럼, 제거 행수(remove_outlier 등), 시각, 승인."""
+    from session_store import get_session
+    from harness.lineage import get_chain
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    pf = session.get("pipeline_full") or {}
+    dsids: list[str] = []
+    for s in pf.get("stages", []):
+        for m in s.get("modules", []):
+            did = m.get("datalake_id")
+            if did and did not in dsids:
+                dsids.append(did)
+    records: list[dict] = []
+    for did in dsids:
+        for e in get_chain(did):
+            params = e.get("transformation_params") or {}
+            records.append({
+                "lineage_id": e.get("id"),
+                "dataset_id": did,
+                "transformation_type": e.get("transformation_type"),
+                "target_column": e.get("source_column") or e.get("result_column"),
+                "removed_rows": params.get("removed_rows"),   # remove_outlier 등 행 변경분
+                "applied_at": e.get("applied_at"),
+                "applied_by_agent": e.get("applied_by_agent"),
+                "approved": bool(e.get("user_approval_id")),
+                "can_rollback": e.get("can_rollback"),
+            })
+    records.sort(key=lambda r: r.get("applied_at") or "")
+    return {"session_id": session_id, "datasets": dsids,
+            "n_records": len(records), "chain": records}
+
+
 @app.get("/api/lines")
 async def lines_endpoint() -> dict:
     """Line·Node·Module 카탈로그 조회 (STEP 1B-1, Page 2 CatalogPanel 향). lines.yaml 파싱.
@@ -1307,6 +1344,42 @@ async def eda_freeform_approve(session_id: str, req: EdaApproveCodeReq) -> dict:
             "result": exec_result["result"], "result_type": exec_result["result_type"],
             "lineage_id": lineage_id,
             "code": code, "query": pending["query"]}
+
+
+class FreeformSummaryReq(BaseModel):
+    query: str = ""
+    result: object | None = None        # sandbox _coerce_result 출력 (dict/list/scalar)
+    result_type: str | None = None
+
+
+@app.post("/api/analyze/{session_id}/eda/freeform/summary")
+async def eda_freeform_summary(session_id: str, req: FreeformSummaryReq) -> dict:
+    """자유분석 결과(dict) → 한국어 1~2문장 요약 (best-effort). 차트 요약과 동일 패턴.
+    실패해도 프런트는 결정론 표로 폴백 — 여기선 빈 summary만 반환(에러 비표면)."""
+    import json as _json
+    from session_store import get_session
+    from llm import generate_json
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    model = session.get("model")
+    system = (
+        "You are a manufacturing data analysis explainer (Korean). "
+        "Given a user question and its analysis RESULT, write 1~2 plain Korean sentences "
+        "that read the result back to the user with the KEY numbers. "
+        "STRICT: cite numbers EXACTLY from the result; never invent numbers; "
+        "if values look normalized (e.g. z-score, small +/- range), call them 정규화된 상대값. "
+        "Respond ONLY in JSON: {\"summary\": \"...\", \"key_points\": [\"...\"]}."
+    )
+    user = _json.dumps({"question": req.query, "result_type": req.result_type,
+                        "result": req.result}, ensure_ascii=False, default=str)[:6000]
+    parsed = await generate_json(user, system=system, model=model)
+    if parsed.get("_llm_failed"):
+        return {"session_id": session_id, "llm_status": "failed",
+                "summary": "", "key_points": [], "llm_error": parsed.get("error")}
+    return {"session_id": session_id, "llm_status": "ok",
+            "summary": str(parsed.get("summary", "")),
+            "key_points": list(parsed.get("key_points", []) or [])[:5]}
 
 
 # ─────────────────────────────────────────────────────────────────────────

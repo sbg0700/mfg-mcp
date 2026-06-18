@@ -5,6 +5,7 @@ import Toast from '../components/Toast.jsx'
 import QuestionRadioGroup from './QuestionRadioGroup.jsx'
 import ChartCard from './charts/ChartCard.jsx'
 import FreeformEda from './FreeformEda.jsx'
+import LineagePanel from './LineagePanel.jsx'
 
 // Page 5 — 분석목적 + EDA (spec-2 Part 6).
 // 추천(LLM)·선택은 실동작. EDA는 STEP 3a 실엔진(LLM 판단 + 결정론 차트) + STEP 3b recharts.
@@ -199,6 +200,8 @@ export default function AnalyzePage() {
         )}
 
         <FreeformEda sessionId={sid} />
+
+        <LineagePanel sessionId={sid} />
 
         {kf.length > 0 && (
           <details className="findings-details">

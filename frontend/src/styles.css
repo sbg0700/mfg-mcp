@@ -578,6 +578,32 @@ select { background: var(--ins-panel-2); color: var(--ins-text); border: 1px sol
 }
 .freeform-actions { display: flex; gap: 8px; margin-top: 10px; }
 .freeform-result { margin-top: 12px; }
+.freeform-result-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 8px;
+}
+.btn-sm { padding: 3px 10px; font-size: 12px; }
+.freeform-summary {
+  background: var(--bg); border-left: 3px solid var(--accent, #3b82f6);
+  padding: 8px 12px; border-radius: 4px; margin-bottom: 10px;
+  font-size: 13px; line-height: 1.5; color: var(--text);
+}
+.freeform-summary p { margin: 0 0 4px 0; }
+.freeform-summary ul { margin: 4px 0 0 0; padding-left: 18px; }
+.freeform-summary li { font-size: 12px; color: var(--muted, #94a3b8); }
+.result-table-wrap { overflow-x: auto; }
+.result-table {
+  border-collapse: collapse; width: 100%; font-size: 12px; color: var(--text);
+}
+.result-table th, .result-table td {
+  border: 1px solid var(--border, #2a2f3a); padding: 4px 8px; text-align: left;
+}
+.result-table th { background: var(--bg); font-weight: 600; }
+.result-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.result-scalar { font-size: 20px; font-weight: 600; color: var(--text); padding: 6px 0; }
+.freeform-note { margin-top: 8px; font-size: 11px; }
+.freeform-raw { margin-top: 8px; }
+.freeform-raw > summary { cursor: pointer; font-size: 12px; padding: 4px 0; }
 .result-json {
   background: var(--bg);
   padding: 10px;
@@ -586,7 +612,19 @@ select { background: var(--ins-panel-2); color: var(--ins-text); border: 1px sol
   font-size: 12px;
   overflow-x: auto;
   color: var(--text);
-  margin: 0;
+  margin: 6px 0 0 0;
+}
+
+/* 변환 이력 (Lineage) 패널 */
+.lineage-panel {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border, #2a2f3a);
+}
+.lineage-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.lineage-head h3 {
+  margin: 0; font-size: 14px; color: var(--text);
+  text-transform: none; letter-spacing: 0;
 }
 
 /* key_findings collapsed (skeleton 자리 보관) */

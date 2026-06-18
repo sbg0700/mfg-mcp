@@ -323,7 +323,7 @@ export default function TrainModal({ model, sessionId, onClose }) {
             </div>
 
             {job?.status === 'running' && (
-              <div className="muted train-progress">⏳ 학습 진행 중… (1초 폴링, job <code>{job.job_id.slice(0, 8)}</code>)</div>
+              <div className="muted train-progress">⏳ 학습 진행 중…</div>
             )}
           </>
         )}
