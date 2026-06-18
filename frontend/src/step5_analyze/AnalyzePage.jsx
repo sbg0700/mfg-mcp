@@ -120,7 +120,7 @@ export default function AnalyzePage() {
       <h1>분석 목적</h1>
       <p className="muted">
         표준화 결과를 보고 분석 목적을 추천합니다.
-        허용 목록 밖의 추천은 환각 방어 코드가 자동으로 걸러냅니다.
+        정해진 목적 외 추천은 자동으로 걸러집니다.
       </p>
 
       {questions?.llm_status === 'failed' ? (
@@ -154,7 +154,7 @@ export default function AnalyzePage() {
 
       <div style={{ marginTop: 16, textAlign: 'right' }}>
         <button className="btn btn-primary" onClick={onSubmit} disabled={submitting || !selected}>
-          {submitting ? '저장 중…' : '선택 저장 (function_axis 결정)'}
+          {submitting ? '저장 중…' : '분석 목적 저장'}
         </button>
       </div>
 
@@ -202,7 +202,7 @@ export default function AnalyzePage() {
 
         {kf.length > 0 && (
           <details className="findings-details">
-            <summary className="muted">키 핀딩 ({kf.length}개) — 1B-2b 결정론 추출</summary>
+            <summary className="muted">주요 발견 {kf.length}개</summary>
             <ul className="findings-list">
               {kf.map((f, i) => (
                 <li key={i} className="finding-row">

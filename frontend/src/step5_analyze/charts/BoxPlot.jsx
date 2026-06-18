@@ -25,6 +25,9 @@ function BoxTooltip({ active, payload }) {
   )
 }
 
+// Y축 눈금 = 천단위 구분 + 소수 2자리 (실데이터 이상치 큰 값이 "1000004"로 깨져 보이던 것 정상화)
+const fmtTick = (v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })
+
 export default function BoxPlot({ data }) {
   const groups = data.groups || {}
   const rows = Object.entries(groups).map(([label, g]) => ({
@@ -45,7 +48,7 @@ export default function BoxPlot({ data }) {
       <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
         <CartesianGrid {...GRID} />
         <XAxis dataKey="label" {...AXIS} />
-        <YAxis {...AXIS} domain={[allMin - pad, allMax + pad]} />
+        <YAxis {...AXIS} domain={[allMin - pad, allMax + pad]} tickFormatter={fmtTick} />
         <Tooltip content={<BoxTooltip />} />
         {/* base = q1 (투명) */}
         <Bar dataKey="q1" stackId="box" fill="transparent" isAnimationActive={false} />
