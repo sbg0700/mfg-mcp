@@ -214,18 +214,20 @@ async def llm_generate_eda_code(user_query: str, profile: dict,
 
     system = (
         "제조 데이터 분석 코드 생성기. 사용자 한국어 요청을 pandas/numpy 코드로 변환. "
-        "엄격 규칙: (1) df는 이미 로드되어 있음 (읽기 전용), "
-        "(2) 결과는 result 변수에 dict로 저장, "
-        "(3) 허용 모듈: pandas (pd), numpy (np). 별명 외 사용 금지. "
-        "(4) 금지: import, 파일 I/O(open/read), 네트워크, exec/eval, "
-        "os/sys/subprocess, df 수정, dunder(__) 접근. "
-        "(5) 출력은 코드만 (설명·마크다운·코드펜스 금지). "
+        "데이터는 변수 df(pandas DataFrame)로 이미 로드돼 있다 — df만 사용한다(읽기 전용). "
+        "출력은 '실행 가능한 파이썬 코드'만. 설명·자연어 문장·마크다운·이모지·코드펜스(```) 절대 금지. "
+        "엄격 규칙: (1) df는 이미 로드(읽기 전용), (2) 결과는 result 변수에 dict로 저장, "
+        "(3) 허용 모듈: pandas(pd), numpy(np) — 별명 외 사용 금지, "
+        "(4) 금지: import, 파일 I/O(open/read), 네트워크, exec/eval, os/sys/subprocess, df 수정, dunder(__) 접근, "
+        "(5) 주어진 컬럼명만 사용. "
         "예: result = df.groupby('PASS_YN')['PRESS_FORCE'].mean().to_dict()"
     )
-    import json as _json
+    cols = profile.get("columns") or []
+    schema = ", ".join(f"{c.get('name')}:{c.get('dtype')}" for c in cols[:80]) or "(스키마 없음)"
     prompt = (
-        f"데이터 프로파일:\n{_json.dumps(profile, ensure_ascii=False, default=str)}\n\n"
-        f"사용자 요청 (한국어): {user_query}"
+        f"df 컬럼(이름:타입): {schema}\n"
+        f"사용자 요청 (한국어): {user_query}\n"
+        f"위 컬럼만 사용해 실행 가능한 파이썬 코드만 출력 (설명·마크다운·이모지 금지)."
     )
     raw = await generate(prompt, system=system, fmt_json=False, model=model)
 

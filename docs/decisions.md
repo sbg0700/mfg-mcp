@@ -1247,3 +1247,11 @@ Page2 "다음" navigate를 VITE_DL_UI_V2 분기로 전환(on → /pipeline/data-
 D-210 (라이브 배포 부채 — 갱신 시 재기동 규율)
 
 코드 갱신 시 실행 중 서비스(backend·MCP) 재기동 누락이 이번 2층 stale의 근본. "갱신 → 재기동" 규율 + dev 서비스 systemd --user 영속화(MCP·backend, dl-frontend 패턴)를 R-final ①에 편입.
+
+D-211 (Page 3 데이터 잠금 — 깔때기) → D-212로 대체(폐기, Page 2-3 재구성)
+
+3페이지 데이터 카드를 2페이지에서 놓은 dataset_role 하나로 자동 고정(잠금), 후보 목록·function/site 필터 비표시. 사용자 재선택 제거 = "2에서 고른 걸 3에서 또 고르는" 중복 해소. 저장 datalake_id 값/계약 불변(프론트 표시·바인딩만). spec 4-3의 vid×function 후보 피커는 교체. (가) 완전 잠금 채택(변경 버튼 미제공) — 병갑 결정.
+
+D-212 (Page 2-3 흐름 재구성 — 명세 3-2/3-3 원안 복귀)
+
+Page 2 = 4기능 팔레트(데이터 미바인딩, dataset_role 미설정), Page 3 = 회사 선택 후 스테이지별 function으로 데이터 선택. D-211(가, Page 3 잠금) 폐기 — Page 2가 데이터를 안 고르므로 잠글 대상 부재. 백엔드 영향: /structure 무변경(dataset_role 비필수), /datalake/list에 company 1줄, Page 5 무영향, modality 결정론 유지. 병갑 결정.

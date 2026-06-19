@@ -222,8 +222,11 @@ async def execute_endpoint(req: ExecuteReq) -> dict:
                     "pre_validation": pre_validation,
                     "execution": None, "validation": None,
                     "note": "계획 사전 검증 실패(blocking) — 실행 중단"}
+        # 승인 카드/실행 정합: 미구현 op(remove_outlier 등) 제외 (Validator issues 는 유지)
+        plan_result = _filter_implemented_steps(plan_result, req.modality)
         exec_result = await run_execute(plan_result, approved_keys=set(req.approved_keys),
-                                        modality=req.modality, data_path=data_path)
+                                        modality=req.modality, data_path=data_path,
+                                        constraints=req.constraints)
         # ★사후 Validator: 6종 검증 (compliance/transform/integrity/regression/constraint/output_health)
         validation = await run_validate(exec_result, plan=plan_result, profile=profile,
                                         constraints=req.constraints)
@@ -242,6 +245,43 @@ async def lineage_endpoint(dataset_id: str) -> dict:
     from harness.lineage import get_chain  # executor와 동일 경로 (같은 _STORE 공유)
     chain = get_chain(dataset_id)
     return {"dataset_id": dataset_id, "n_records": len(chain), "chain": chain}
+
+
+@app.get("/api/lineage/session/{session_id}")
+async def lineage_session_endpoint(session_id: str) -> dict:
+    """세션의 모든 모듈(데이터셋) 누적 lineage를 시각순으로 — 추적성 시연/캡처용.
+    read-only·additive(엔진 변경 0). 인메모리라 재기동 시 소실(같은 세션 캡처 전제).
+    record별: lineage_id, dataset_id, 작업종류, 대상컬럼, 제거 행수(remove_outlier 등), 시각, 승인."""
+    from session_store import get_session
+    from harness.lineage import get_chain
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    pf = session.get("pipeline_full") or {}
+    dsids: list[str] = []
+    for s in pf.get("stages", []):
+        for m in s.get("modules", []):
+            did = m.get("datalake_id")
+            if did and did not in dsids:
+                dsids.append(did)
+    records: list[dict] = []
+    for did in dsids:
+        for e in get_chain(did):
+            params = e.get("transformation_params") or {}
+            records.append({
+                "lineage_id": e.get("id"),
+                "dataset_id": did,
+                "transformation_type": e.get("transformation_type"),
+                "target_column": e.get("source_column") or e.get("result_column"),
+                "removed_rows": params.get("removed_rows"),   # remove_outlier 등 행 변경분
+                "applied_at": e.get("applied_at"),
+                "applied_by_agent": e.get("applied_by_agent"),
+                "approved": bool(e.get("user_approval_id")),
+                "can_rollback": e.get("can_rollback"),
+            })
+    records.sort(key=lambda r: r.get("applied_at") or "")
+    return {"session_id": session_id, "datasets": dsids,
+            "n_records": len(records), "chain": records}
 
 
 @app.get("/api/lines")
@@ -314,17 +354,20 @@ async def _resolve_image_dir(dataset_id: str) -> str:
     return directory
 
 
-def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict]):
-    """미리보기 필요시에만 df 로드 (balance_classes pending step 있을 때).
-    실패해도 파이프라인은 계속 (preview만 빠짐). LLM 0 — 순수 데이터 I/O."""
-    if not any(s.get("operation") == "balance_classes" and s.get("target_column")
+def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: list[dict],
+                               data_path: str | None = None):
+    """미리보기/건수 계산용 df 로드 (balance_classes 또는 remove_outlier pending 시).
+    data_path(실 lake) 우선 — Executor 와 동일 데이터로 미리보기 정합. LLM 0, 순수 I/O."""
+    if not any(s.get("operation") in ("balance_classes", "remove_outlier") and s.get("target_column")
                for s in pending_steps):
         return None
     try:
         import pandas as pd
         if modality in ("timeseries", "order"):
-            from executor import _resolve
-            path = _resolve(dataset_id, modality)
+            path = data_path
+            if path is None:
+                from executor import _resolve
+                path = _resolve(dataset_id, modality)
             for enc in ("utf-8-sig", "cp949", "latin1"):
                 try:
                     return pd.read_csv(path, encoding=enc, low_memory=False)
@@ -333,12 +376,32 @@ def _maybe_load_df_for_preview(dataset_id: str, modality: str, pending_steps: li
             return None
         if modality == "event-log":
             from executor import _load_eventlog
-            df, _path, _n = _load_eventlog(dataset_id)
+            df, _path, _n = _load_eventlog(dataset_id, data_path)
             return df
-        # inspection-image: balance_classes 의미 없음
+        # inspection-image: balance_classes/remove_outlier 의미 없음
         return None
     except Exception:
         return None
+
+
+def _remove_outlier_preview(df, col: str, bounds) -> dict:
+    """승인 전 '범위 밖 N행' 건수 (Validator 위반 카운트와 동일 규약)."""
+    try:
+        import pandas as pd
+        from executor import _constraint_bounds
+        lo, hi = _constraint_bounds(bounds)
+        if col not in df.columns or (lo is None and hi is None):
+            return {"applicable": False, "reason": "대상 컬럼/제약 경계 없음"}
+        s = pd.to_numeric(df[col], errors="coerce")
+        viol = pd.Series(False, index=s.index)
+        if lo is not None:
+            viol |= (s < lo)
+        if hi is not None:
+            viol |= (s > hi)
+        return {"applicable": True, "removed": int(viol.fillna(False).sum()),
+                "n_total": int(len(df)), "bounds": [lo, hi]}
+    except Exception as e:
+        return {"applicable": False, "reason": f"건수 계산 실패: {e}"}
 
 
 def _resolve_modality(module: dict, node_id: str | None = None) -> str:
@@ -353,6 +416,34 @@ def _resolve_modality(module: dict, node_id: str | None = None) -> str:
     if node_id and node_id in _NODE_MODALITY:
         return _NODE_MODALITY[node_id]
     return "timeseries"
+
+
+# ── 승인 카드/실행 정합 seam (엔진 무변경·additive) ──────────────────────────
+# executor 가 실제 df 를 바꾸지 않는 미구현 op(remove_outlier/create_feature/drop_column/relabel 등)를
+# 승인 카드·실행 스텝에서 제외(헛 승인·"삭제/완료" 거짓표시 방지). 제약 위반은 Validator 가 constraints 로
+# 독립 검사하므로 issues 로 그대로 남음(회귀 0). 구현셋은 모달리티별 executor 디스패치 기준.
+def _implemented_ops(modality: str) -> set | None:
+    """모달리티별 '실제 df 변경' 구현 연산. None = 필터 미적용(이미지=메타 경로)."""
+    if modality in ("timeseries", "order"):
+        from executor import _OPERATIONS as _EXEC_OPS     # 등록 연산(읽기) + 특수분기 normalize_group/remove_outlier
+        return set(_EXEC_OPS) | {"normalize_group", "remove_outlier"}
+    if modality == "event-log":
+        return {"balance_classes", "fill_missing", "compute_stats", "remove_outlier"}   # _execute_eventlog 분기
+    return None
+
+
+def _filter_implemented_steps(plan_result: dict, modality: str) -> dict:
+    implemented = _implemented_ops(modality)
+    if implemented is None:
+        return plan_result
+    steps = plan_result.get("steps") or []
+    kept = [s for s in steps if s.get("operation") in implemented]
+    if len(kept) == len(steps):
+        return plan_result
+    out = dict(plan_result)
+    out["steps"] = kept
+    out["requires_approval"] = any(s.get("permission_level") in ("L2", "L3") for s in kept)
+    return out
 
 
 class CreateSessionReq(BaseModel):
@@ -577,6 +668,9 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                             "pre_validation": pre_validation,
                             "session": public_view(session)}
 
+                # 승인 카드/실행 정합: 미구현 op(remove_outlier 등) 제외 (Validator issues 는 유지)
+                plan_result = _filter_implemented_steps(plan_result, modality)
+
                 # 3) 권한 게이트 — unapproved L2/L3 있으면 suspend-and-return
                 approved = set(session["approved_step_keys"])
                 unapproved = [
@@ -588,7 +682,7 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                     session["status"] = "awaiting_approval"
                     # ★STEP 2a (D-104): balance_classes pending step에 available_options + 결정론 미리보기 첨부.
                     #   df는 미리보기 시점에만 로드 (Executor와 별개 — 가벼움). LLM 호출 없음.
-                    preview_df = _maybe_load_df_for_preview(dataset_id, modality, unapproved)
+                    preview_df = _maybe_load_df_for_preview(dataset_id, modality, unapproved, data_path)
                     pending_steps_payload = []
                     for s in unapproved:
                         ps = {
@@ -610,6 +704,14 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                             except Exception as _e:
                                 ps["preview"] = {"applicable": False,
                                                  "reason": f"preview 계산 실패: {_e}"}
+                        # remove_outlier: 승인 전 '범위 밖 N행 제거' 건수 표시
+                        if (s.get("operation") == "remove_outlier" and preview_df is not None
+                                and s.get("target_column")):
+                            ps["preview"] = _remove_outlier_preview(
+                                preview_df, s["target_column"], (constraints or {}).get(s["target_column"]))
+                            if ps["preview"].get("applicable"):
+                                ps["rationale"] = (ps.get("rationale") or "") + \
+                                    f" · 범위 밖 {ps['preview']['removed']}행 제거 예정 (총 {ps['preview']['n_total']}행)"
                         pending_steps_payload.append(ps)
                     session["pending"] = {
                         "stage_order": so,
@@ -632,7 +734,8 @@ async def execute_pipeline(req: ExecutePipelineReq) -> dict:
                 execution = await run_execute(plan_result, approved_keys=approved,
                                               modality=modality,
                                               selected_options=selected_options,
-                                              data_path=data_path)
+                                              data_path=data_path,
+                                              constraints=constraints)
                 validation = await run_validate(execution, plan=plan_result,
                                                 profile=profile, constraints=constraints)
                 validation["pre_validation"] = pre_validation  # 사전 결과도 첨부
@@ -810,6 +913,22 @@ def _collect_recommended_models(session: dict) -> list[dict]:
                 "from_node": node_id,
                 "advisory_only": name in _VRAM_HEAVY_MODELS,
             })
+    return out
+
+
+def _fallback_models(available: list[dict]) -> list[dict]:
+    """LLM 추천 0/死 시 풀 폴백 (EDA fallback_charts_from_guide·D-121 패턴) — 비-advisory 모델을
+    실행 가능으로 노출(중립 fit_score). '실행 가능 0'으로 끝나지 않게."""
+    out = []
+    for m in available:
+        if m.get("advisory_only"):
+            continue
+        out.append({
+            "name": m["name"], "fit_score": 3,
+            "rationale_ko": "LLM 미응답 — 풀에서 기본 추천(실행 가능). 분석 목적에 맞는 모델을 선택하세요.",
+            "context_reflections": [], "task": m.get("task"), "when": m.get("when"),
+            "from_node": m.get("from_node"), "advisory_only": False, "fallback": True,
+        })
     return out
 
 
@@ -1127,6 +1246,12 @@ async def eda_freeform(session_id: str, req: EdaFreeformReq) -> dict:
     code = gen.get("code", "")
     ok, reason = validate_eda_code(code)
     if not ok:
+        # LLM이 코드 대신 자연어·이모지를 뱉어 파싱 실패(SyntaxError/empty) → 친절 안내(자연어를
+        # '생성된 코드'로 덤프하지 않아 '원본 데이터 제공' 류 오해 방지). 안전 위반(import 등)은 사유 유지.
+        if reason.startswith("SyntaxError") or reason == "empty code":
+            return {"session_id": session_id, "status": "rejected",
+                    "reason": "코드 생성 실패 — 질문을 더 단순하게 바꿔 다시 시도해 주세요.",
+                    "model_used": model, "query": req.user_query}
         return {"session_id": session_id, "status": "rejected",
                 "reason": reason, "code": code, "model_used": model,
                 "query": req.user_query}
@@ -1219,6 +1344,42 @@ async def eda_freeform_approve(session_id: str, req: EdaApproveCodeReq) -> dict:
             "result": exec_result["result"], "result_type": exec_result["result_type"],
             "lineage_id": lineage_id,
             "code": code, "query": pending["query"]}
+
+
+class FreeformSummaryReq(BaseModel):
+    query: str = ""
+    result: object | None = None        # sandbox _coerce_result 출력 (dict/list/scalar)
+    result_type: str | None = None
+
+
+@app.post("/api/analyze/{session_id}/eda/freeform/summary")
+async def eda_freeform_summary(session_id: str, req: FreeformSummaryReq) -> dict:
+    """자유분석 결과(dict) → 한국어 1~2문장 요약 (best-effort). 차트 요약과 동일 패턴.
+    실패해도 프런트는 결정론 표로 폴백 — 여기선 빈 summary만 반환(에러 비표면)."""
+    import json as _json
+    from session_store import get_session
+    from llm import generate_json
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    model = session.get("model")
+    system = (
+        "You are a manufacturing data analysis explainer (Korean). "
+        "Given a user question and its analysis RESULT, write 1~2 plain Korean sentences "
+        "that read the result back to the user with the KEY numbers. "
+        "STRICT: cite numbers EXACTLY from the result; never invent numbers; "
+        "if values look normalized (e.g. z-score, small +/- range), call them 정규화된 상대값. "
+        "Respond ONLY in JSON: {\"summary\": \"...\", \"key_points\": [\"...\"]}."
+    )
+    user = _json.dumps({"question": req.query, "result_type": req.result_type,
+                        "result": req.result}, ensure_ascii=False, default=str)[:6000]
+    parsed = await generate_json(user, system=system, model=model)
+    if parsed.get("_llm_failed"):
+        return {"session_id": session_id, "llm_status": "failed",
+                "summary": "", "key_points": [], "llm_error": parsed.get("error")}
+    return {"session_id": session_id, "llm_status": "ok",
+            "summary": str(parsed.get("summary", "")),
+            "key_points": list(parsed.get("key_points", []) or [])[:5]}
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1495,9 +1656,10 @@ async def model_recommend(session_id: str) -> dict:
     from llm import _try_parse_llm
     parsed = _try_parse_llm(raw)
     if parsed.get("_llm_failed"):
-        return {"session_id": session_id, "recommendations": [],
+        # LLM 死 → 풀 폴백(실행 가능 ≥1), 0으로 끝내지 않음 (D-121 패턴)
+        return {"session_id": session_id, "recommendations": _fallback_models(available),
                 "available_models": available, "user_purpose": user_purpose,
-                "llm_status": "failed", "llm_error": parsed.get("error"),
+                "llm_status": "failed_fallback", "llm_error": parsed.get("error"),
                 "model_used": model}
     name_to_meta = {m["name"]: m for m in available}
     recs = []
@@ -1524,6 +1686,10 @@ async def model_recommend(session_id: str) -> dict:
             "advisory_only": meta.get("advisory_only", False),
         })
     recs.sort(key=lambda x: -x["fit_score"])
+    if not recs:                                  # LLM ok 이나 전부 필터/0 → 풀 폴백(실행 가능 ≥1)
+        return {"session_id": session_id, "recommendations": _fallback_models(available),
+                "available_models": available, "user_purpose": user_purpose,
+                "llm_status": "ok_fallback", "model_used": model}
     return {"session_id": session_id, "recommendations": recs,
             "available_models": available, "user_purpose": user_purpose,
             "llm_status": "ok", "model_used": model}

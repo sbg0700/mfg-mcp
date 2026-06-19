@@ -8,16 +8,17 @@ export default function ColumnChips({ columns }) {
   const chip = {
     display: 'inline-block', padding: '2px 8px', margin: '2px 4px 2px 0',
     borderRadius: 10, fontSize: 11, background: '#f3f4f6', border: '1px solid #e5e7eb',
+    color: '#1f2937',   // 밝은 칩 배경에 묻히지 않도록 어두운 글자 (다크 테마 대비)
   }
   const badge = {
     marginLeft: 4, padding: '0 5px', borderRadius: 8, fontSize: 10,
-    background: '#fde68a', border: '1px solid #f59e0b',
+    background: '#fde68a', border: '1px solid #f59e0b', color: '#1f2937',
   }
   const groupBadge = { ...badge, background: '#ddd6fe', border: '1px solid #8b5cf6' }
   return (
     <div style={{ margin: '6px 0' }}>
       <span className="muted" style={{ fontSize: 11, marginRight: 6 }}>
-        실컬럼 {columns.length}개 (catalog):
+        컬럼 {columns.length}개:
       </span>
       {columns.map((c) => {
         const m = DUP_RE.exec(c.name)

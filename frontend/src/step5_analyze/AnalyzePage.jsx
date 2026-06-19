@@ -5,6 +5,7 @@ import Toast from '../components/Toast.jsx'
 import QuestionRadioGroup from './QuestionRadioGroup.jsx'
 import ChartCard from './charts/ChartCard.jsx'
 import FreeformEda from './FreeformEda.jsx'
+import LineagePanel from './LineagePanel.jsx'
 
 // Page 5 — 분석목적 + EDA (spec-2 Part 6).
 // 추천(LLM)·선택은 실동작. EDA는 STEP 3a 실엔진(LLM 판단 + 결정론 차트) + STEP 3b recharts.
@@ -119,8 +120,8 @@ export default function AnalyzePage() {
     <div>
       <h1>분석 목적</h1>
       <p className="muted">
-        4단 표준화 결과(AggregatedContext)를 LLM이 보고 분석 목적을 추천합니다.
-        <code>available_options</code> 외 추천은 환각 방어 코드가 제거합니다 (D-91).
+        표준화 결과를 보고 분석 목적을 추천합니다.
+        정해진 목적 외 추천은 자동으로 걸러집니다.
       </p>
 
       {questions?.llm_status === 'failed' ? (
@@ -154,7 +155,7 @@ export default function AnalyzePage() {
 
       <div style={{ marginTop: 16, textAlign: 'right' }}>
         <button className="btn btn-primary" onClick={onSubmit} disabled={submitting || !selected}>
-          {submitting ? '저장 중…' : '선택 저장 (function_axis 결정)'}
+          {submitting ? '저장 중…' : '분석 목적 저장'}
         </button>
       </div>
 
@@ -200,9 +201,11 @@ export default function AnalyzePage() {
 
         <FreeformEda sessionId={sid} />
 
+        <LineagePanel sessionId={sid} />
+
         {kf.length > 0 && (
           <details className="findings-details">
-            <summary className="muted">키 핀딩 ({kf.length}개) — 1B-2b 결정론 추출</summary>
+            <summary className="muted">주요 발견 {kf.length}개</summary>
             <ul className="findings-list">
               {kf.map((f, i) => (
                 <li key={i} className="finding-row">

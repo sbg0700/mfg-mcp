@@ -1,7 +1,7 @@
 import {
   ScatterChart, Scatter as RScatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { AXIS, GRID, TOOLTIP_STYLE, COLORS, CHART_HEIGHT } from './common'
+import { AXIS, GRID, TOOLTIP_STYLE, COLORS, CHART_HEIGHT, fmtAxis } from './common'
 
 // data: {x_column, y_column, x:[], y:[], n}
 export default function Scatter({ data }) {
@@ -12,8 +12,8 @@ export default function Scatter({ data }) {
     <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
       <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
         <CartesianGrid {...GRID} />
-        <XAxis type="number" dataKey="x" name={data.x_column} {...AXIS} />
-        <YAxis type="number" dataKey="y" name={data.y_column} {...AXIS} />
+        <XAxis type="number" dataKey="x" name={data.x_column} {...AXIS} tickFormatter={fmtAxis} />
+        <YAxis type="number" dataKey="y" name={data.y_column} {...AXIS} tickFormatter={fmtAxis} />
         <Tooltip wrapperStyle={TOOLTIP_STYLE} contentStyle={TOOLTIP_STYLE} cursor={{ strokeDasharray: '3 3' }} />
         <RScatter
           name={`${data.x_column} vs ${data.y_column}`}

@@ -9,12 +9,15 @@
 // - register 모달 UI = 3c 범위 외 (D-191 — 백엔드 Mode B 는 3a 완비, D-186)
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { get, dlColumns, dlConstraintMerge, dlSessionPutFull } from '../api.js'
+import { get, dlList, dlColumns, dlConstraintMerge, dlSessionPutFull } from '../api.js'
 import { resolveModality } from '../lib/modality.js'
 import Toast from '../components/Toast.jsx'
 import ConstraintFormV2 from './ConstraintFormV2.jsx'
 import DatalakeCardPicker from './DatalakeCardPicker.jsx'
 import ColumnChips from './ColumnChips.jsx'
+import { ESSENTIAL_COLUMNS } from './essentialColumns.js'
+
+const COMPANY_ALL = '__all__'   // D-212: 상단 회사 셀렉터 "전체"(필터 미적용) 센티넬
 
 // 3b 세션 호환 — 구 shape {col:[min,max]} → canonical range (충실 변환, silent drop 0)
 function upconvertLegacy(constraints) {
@@ -33,13 +36,18 @@ export default function DataSelectPageV2() {
   const sid = params.get('session') || ''
   const [structure, setStructure] = useState(null)
   const [linesCatalog, setLinesCatalog] = useState([])
-  // {mk: {datalake_id, modality, cmap, merged}} — modality 는 catalog entry 권위(D-163),
+  // {mk: {datalake_id, modality, dataset_role, dataset_name, cmap, merged}} — modality catalog 권위(D-163),
   // cmap = {col: canonical_spec}(세션 적용분), merged = constraint_merge rows(prefill 제안 소스)
   const [moduleState, setModuleState] = useState({})
   const [columnsByDataset, setColumnsByDataset] = useState({})
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
   const [loadErr, setLoadErr] = useState('')
+  // D-212: 상단 회사 셀렉터 — 옵션 = 현재 vid 데이터의 distinct company, 기본 "전체"(필터 없음)
+  const [company, setCompany] = useState(COMPANY_ALL)
+  const [companyOptions, setCompanyOptions] = useState([])
+  // 핵심 컬럼 토글 — mk(공정 카드)별, 기본 접힘(핵심만). 라인3 맵 데이터셋에만 노출.
+  const [showAllCols, setShowAllCols] = useState({})
 
   useEffect(() => {
     if (!sid) return
@@ -55,6 +63,9 @@ export default function DataSelectPageV2() {
             restored[mk] = {
               datalake_id: m.datalake_id || null,
               modality: m.modality || null,
+              // D-212 방어: 복원 시 dataset_role = 저장값 → datalake_id 폴백 (Page 2는 미설정)
+              dataset_role: m.dataset_role || m.datalake_id || null,
+              dataset_name: null,   // 이름은 카드 재선택 시 채워짐 (복원 시 datalake_id로 표시)
               // 복원: constraints_v2(canonical) 우선, 부재 시 3b 구 shape 업컨버트
               cmap: m.constraints_v2 || upconvertLegacy(m.constraints),
               merged: null,
@@ -70,6 +81,18 @@ export default function DataSelectPageV2() {
       .catch((e) => setLoadErr(e.message || '로드 실패'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid])
+
+  // D-212: 현재 vid(라인) 데이터의 distinct company → 셀렉터 옵션. 비거나 1종이어도 무해.
+  useEffect(() => {
+    const vid = structure?.line_id
+    if (!vid) return
+    dlList({ vid })
+      .then((r) => {
+        const cs = [...new Set((r.entries || []).map((e) => e.company).filter(Boolean))].sort()
+        setCompanyOptions(cs)
+      })
+      .catch(() => setCompanyOptions([]))
+  }, [structure?.line_id])
 
   async function fetchColumns(datalakeId) {
     if (!datalakeId || columnsByDataset[datalakeId]) return
@@ -90,7 +113,7 @@ export default function DataSelectPageV2() {
         ...prev, [mk]: { ...(prev[mk] || {}), merged: r.merged || [] },
       }))
     } catch (e) {
-      setToast(`prefill 조회 실패 (${datalakeId}): ${e.message}`)
+      setToast(`추천 값 조회 실패 (${datalakeId})`)
     }
   }
 
@@ -116,7 +139,11 @@ export default function DataSelectPageV2() {
           function: m.function,
           // modality = 선택 entry 의 catalog 값 우선(권위, D-163), 미선택 시 구 규칙 폴백
           modality: st.modality || resolveModality(m, s.node_id),
-          dataset_role: m.dataset_role,
+          // D-212 방어: dataset_role = 선택 datalake_id (Page 2 미설정 → 다운스트림 '?' 회피)
+          dataset_role: st.dataset_role ?? st.datalake_id ?? null,
+          // Page 2 중첩 메타 보존(additive) — Page2→3→2 재방문 시 체인/부착 복원
+          chain_order: m.chain_order ?? null,
+          attached_to: m.attached_to ?? null,
           datalake_id: st.datalake_id || null,
           constraints_v2: st.cmap || {},   // 다운컨버트·engine_excluded 는 백엔드 (D-189)
         }
@@ -127,7 +154,7 @@ export default function DataSelectPageV2() {
       const r = await dlSessionPutFull(sid, { line_id: structure.line_id, stages })
       const nEx = (r.engine_excluded || []).length
       if (nEx > 0) {
-        setToast(`저장 완료 — 비-range 제약 ${nEx}건은 엔진 전달 제외(메타 기록, D-189)`)
+        setToast(`저장 완료 — 범위가 아닌 제약 ${nEx}건은 분석 엔진에 전달되지 않습니다`)
       }
       navigate(`/pipeline/run?session=${sid}`)
     } catch (e) {
@@ -148,12 +175,23 @@ export default function DataSelectPageV2() {
 
   return (
     <div>
-      <h1>{lineDef.display_name} — 데이터·제약 입력 <span style={{ fontSize: 13, color: '#2563eb' }}>(DL v2)</span></h1>
+      <h1>{lineDef.display_name} — 데이터·제약 입력</h1>
       <p className="muted">
-        Data Lake catalog(vid={structure.line_id})에서 카드로 선택합니다.
-        제약은 선택 데이터셋의 <strong>catalog 실컬럼</strong>에 매핑되며,
-        카탈로그 prefill 은 <strong>승인 시에만</strong> 적용됩니다 (D-167 재승인 게이트).
+        데이터 카드를 골라 각 공정에 연결하세요.
+        선택한 데이터의 컬럼에 측정값 허용 범위를 지정할 수 있습니다.
       </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 16px' }}>
+        <label className="muted" style={{ fontSize: 13 }}>회사</label>
+        <select value={company} onChange={(e) => setCompany(e.target.value)}
+                style={{ fontSize: 13, padding: '2px 6px' }}>
+          <option value={COMPANY_ALL}>전체</option>
+          {companyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <span className="muted" style={{ fontSize: 12 }}>
+          선택한 회사 데이터로 각 공정 카드를 거릅니다 (전체 = 미적용).
+        </span>
+      </div>
 
       {nModules === 0 && (
         <div className="error-text" style={{ padding: 12, border: '1px solid #f59e0b',
@@ -172,45 +210,66 @@ export default function DataSelectPageV2() {
           return (
             <section key={stage.node_id} className="page3-stage-card">
               <h2 className="page3-stage-title">
-                Stage {stage.stage_order + 1}: {nodeDef?.display_name || stage.node_id}
+                단계 {stage.stage_order + 1}: {nodeDef?.display_name || stage.node_id}
               </h2>
               <div className="page3-modules">
                 {(stage.modules || []).map((m) => {
                   const mk = `${stage.stage_order}.${m.index}`
                   const st = moduleState[mk] || {}
                   const allCols = st.datalake_id ? (columnsByDataset[st.datalake_id] || []) : []
+                  const essential = st.datalake_id ? ESSENTIAL_COLUMNS[st.datalake_id] : null
+                  const showAll = !!showAllCols[mk]
+                  // 맵 데이터셋 + 접힘이면 핵심 컬럼만, 그 외(맵 없음 또는 펼침)는 전체
+                  const visibleCols = essential && !showAll
+                    ? allCols.filter((c) => essential.includes(c.name))
+                    : allCols
                   return (
                     <div key={mk} className="page3-module">
                       <div className="page3-module-header">
                         <span className={`module-fn fn-${m.function} module-fn-chip`}>
                           {m.function}
                         </span>
-                        <span className="muted">dataset_role: {m.dataset_role || '?'}</span>
+                        {st.datalake_id ? (
+                          <span className="muted">선택: {st.dataset_name || st.datalake_id}</span>
+                        ) : (
+                          <span className="muted">데이터 미선택 — 아래 카드에서 선택</span>
+                        )}
                       </div>
                       <DatalakeCardPicker
                         vid={structure.line_id}
                         moduleFunction={m.function}
+                        company={company === COMPANY_ALL ? null : company}
                         value={st.datalake_id}
                         onChange={(entry) => {
                           if (!entry) {
                             setForModule(mk, { datalake_id: null, modality: null,
+                                               dataset_role: null, dataset_name: null,
                                                cmap: {}, merged: null })
                             return
                           }
                           // 데이터셋 변경 = 구 세션 제약 무효 (merge view 도 동일 규칙)
+                          // ★D-212 방어: dataset_role = 선택 datalake_id, 이름은 헤더 표시용
                           setForModule(mk, {
                             datalake_id: entry.datalake_id,
                             modality: entry.modality || null,
+                            dataset_role: entry.datalake_id,
+                            dataset_name: entry.name || null,
                             cmap: {}, merged: null,
                           })
                           fetchColumns(entry.datalake_id)
                           fetchMerge(mk, entry.datalake_id)
                         }}
                       />
-                      <ColumnChips columns={allCols} />
+                      {essential && allCols.length > 0 && (
+                        <button className="btn" style={{ fontSize: 11, padding: '2px 10px', margin: '6px 0' }}
+                                onClick={() => setShowAllCols((prev) => ({ ...prev, [mk]: !showAll }))}>
+                          {showAll ? '핵심 컬럼만 보기' : `전체 컬럼 보기 (${allCols.length}개)`}
+                        </button>
+                      )}
+                      <ColumnChips columns={visibleCols} />
                       <ConstraintFormV2
                         datalakeId={st.datalake_id}
-                        columns={allCols}
+                        columns={visibleCols}
                         merged={st.merged}
                         cmap={st.cmap || {}}
                         onChange={(cmap) => setForModule(mk, { cmap })}
@@ -218,7 +277,7 @@ export default function DataSelectPageV2() {
                         onPersisted={() => fetchMerge(mk, st.datalake_id)}
                       />
                       <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>
-                        신규 등록(register)은 추후 지원 — 현재는 사전 적재 catalog 선택 (D-186/D-191)
+                        신규 등록은 추후 지원 — 현재는 사전 적재 catalog 선택
                       </div>
                     </div>
                   )

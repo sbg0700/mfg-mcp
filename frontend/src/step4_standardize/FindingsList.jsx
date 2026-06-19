@@ -56,11 +56,11 @@ export default function FindingsList({ aggregatedContext, moduleResults }) {
 
       {sc.length > 0 && (
         <>
-          <h3 style={{ marginTop: 16 }}>Stage 함의 (Page 5/6 컨텍스트)</h3>
+          <h3 style={{ marginTop: 16 }}>단계 함의 (Page 5/6 컨텍스트)</h3>
           <ul className="stage-implications">
             {sc.map((s) => (
               <li key={s.stage_order}>
-                <strong>Stage {s.stage_order + 1} ({s.node_id})</strong>
+                <strong>단계 {s.stage_order + 1} ({s.node_id})</strong>
                 {' — '}
                 <span className="muted">{s.downstream_implication}</span>
                 {s.main_findings?.length > 0 && (

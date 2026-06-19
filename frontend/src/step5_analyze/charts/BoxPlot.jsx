@@ -25,16 +25,18 @@ function BoxTooltip({ active, payload }) {
   )
 }
 
+// Y축 눈금 = 천단위 구분 + 소수 2자리 (실데이터 이상치 큰 값이 "1000004"로 깨져 보이던 것 정상화)
+const fmtTick = (v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })
+
 export default function BoxPlot({ data }) {
   const groups = data.groups || {}
   const rows = Object.entries(groups).map(([label, g]) => ({
     label,
     min: g.min, q1: g.q1, median: g.median, q3: g.q3, max: g.max, n: g.n,
     boxHeight: g.q3 - g.q1,
-    // ErrorBar는 [low, high] 배열 형태(중심에서 음수·양수 오프셋)
-    // 중심을 median으로 두면 수염은 [median-min, max-median]
-    medianMid: g.median,
-    whisker: [g.median - g.min, g.max - g.median],
+    // 수염(min~max)을 박스와 같은 x에 그리려고 박스 스택의 q1 Bar(값=q1, 정상=박스 바닥)에 ErrorBar 부착.
+    // q1 기준 오프셋 [q1-min, max-q1] → 아래 min, 위 max 까지 = min~max 수염 (median 중심 별도 Bar 어긋남 해소).
+    whiskerFromQ1: [g.q1 - g.min, g.max - g.q1],
   }))
   // YAxis 범위 = 모든 그룹의 min~max
   const allMin = rows.length ? Math.min(...rows.map((r) => r.min)) : 0
@@ -42,13 +44,21 @@ export default function BoxPlot({ data }) {
   const pad = (allMax - allMin) * 0.05 || 1
   return (
     <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-      <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
+      <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
         <CartesianGrid {...GRID} />
         <XAxis dataKey="label" {...AXIS} />
-        <YAxis {...AXIS} domain={[allMin - pad, allMax + pad]} />
+        <YAxis {...AXIS} width={64} domain={[allMin - pad, allMax + pad]} tickFormatter={fmtTick} />
         <Tooltip content={<BoxTooltip />} />
-        {/* base = q1 (투명) */}
-        <Bar dataKey="q1" stackId="box" fill="transparent" isAnimationActive={false} />
+        {/* base = q1 (투명) + 수염 ErrorBar(min~max) 부착 — 박스와 동일 x 정렬 */}
+        <Bar dataKey="q1" stackId="box" fill="transparent" isAnimationActive={false}>
+          <ErrorBar
+            dataKey="whiskerFromQ1"
+            width={6}
+            strokeWidth={1.5}
+            stroke={COLORS.maintenance}
+            direction="y"
+          />
+        </Bar>
         {/* 박스 = q3-q1 (보임) */}
         <Bar
           dataKey="boxHeight"
@@ -58,16 +68,6 @@ export default function BoxPlot({ data }) {
           stroke={COLORS.process}
           isAnimationActive={false}
         />
-        {/* 수염 = ErrorBar (median 중심 [low, high]) — 별도 보조 Bar에 부착 */}
-        <Bar dataKey="medianMid" fill="transparent" isAnimationActive={false}>
-          <ErrorBar
-            dataKey="whisker"
-            width={6}
-            strokeWidth={1.5}
-            stroke={COLORS.maintenance}
-            direction="y"
-          />
-        </Bar>
       </ComposedChart>
     </ResponsiveContainer>
   )

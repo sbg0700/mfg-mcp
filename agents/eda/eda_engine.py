@@ -16,6 +16,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -239,21 +240,55 @@ def filter_recommendations(recs: list[dict], modality: str) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────
 # 5) 결정론 차트 데이터 계산 (LLM 0)
 # ─────────────────────────────────────────────────────────────────────────
-def _pick_numeric_column(df: pd.DataFrame, hint: str | None) -> str | None:
-    if hint and hint in df.columns and pd.api.types.is_numeric_dtype(df[hint]):
+# 인덱스성/순번 컬럼 이름 패턴 (CSV 인덱스 누출 'Unnamed: 0', 'idx', 행번호 류)
+_INDEXY_NAME_RE = re.compile(r"^(unnamed.*|index|idx|no\.?|seq(no)?|순번|행번호|번호|row(num)?)$", re.I)
+# 타임스탬프/날짜 컬럼 이름 (앵커드 — 'Injection_Time'·'Cycle_Time' 같은 '시간 측정값'은 보존)
+_TIME_NAME_RE = re.compile(r"^(_?time|timestamp|datetime|_?start|_?stop|date|reg_?date|dttm|일시|시각|날짜)$", re.I)
+
+
+def _junk_cols(df: pd.DataFrame) -> set:
+    """feature·상관·타깃·라벨 선택에서 제외할 컬럼(데이터 삭제 아님 — '선택'에서만 배제, additive).
+      ① 인덱스성: 이름이 Unnamed/index/idx/순번/행번호, 또는 숫자 단조증가+전부 고유(행번호 누출),
+      ② 타임스탬프/날짜: dtype datetime64, 또는 이름이 TimeStamp/_time/_start/_stop/date 류
+         (단 'Injection_Time'·'Cycle_Time' 등 시간 '측정값'은 앵커드 정규식으로 보존)."""
+    junk: set = set()
+    for c in df.columns:
+        name = str(c).strip()
+        if name.lower().startswith("unnamed") or _INDEXY_NAME_RE.match(name):
+            junk.add(c)
+            continue
+        if pd.api.types.is_datetime64_any_dtype(df[c]) or _TIME_NAME_RE.match(name):
+            junk.add(c)           # 타임스탬프/날짜 = raw feature·라벨·타깃 부적합
+            continue
+        if not pd.api.types.is_numeric_dtype(df[c]):
+            continue
+        s = pd.to_numeric(df[c], errors="coerce").dropna()
+        if len(s) >= 3 and s.is_monotonic_increasing and s.nunique() == len(s):
+            junk.add(c)
+    return junk
+
+
+def _pick_numeric_column(df: pd.DataFrame, hint: str | None, exclude: set | None = None) -> str | None:
+    exclude = _junk_cols(df) if exclude is None else exclude
+    if (hint and hint in df.columns and pd.api.types.is_numeric_dtype(df[hint])
+            and hint not in exclude):
         return hint
     for c in df.columns:
+        if c in exclude:
+            continue
         if pd.api.types.is_numeric_dtype(df[c]):
             return str(c)
     return None
 
 
-def _pick_categorical_column(df: pd.DataFrame, hint: str | None) -> str | None:
-    if hint and hint in df.columns:
+def _pick_categorical_column(df: pd.DataFrame, hint: str | None, exclude: set | None = None) -> str | None:
+    exclude = _junk_cols(df) if exclude is None else exclude
+    if hint and hint in df.columns and hint not in exclude:
         return hint
-    # 카디널리티 낮은 컬럼 우선 (라벨 후보)
+    # 라벨 후보 = 비숫자 + 카디널리티 2 이상(상수 컬럼 제외) + 인덱스성 제외. 낮은 카디널리티 우선.
     candidates = [(c, df[c].nunique(dropna=True)) for c in df.columns
-                  if not pd.api.types.is_numeric_dtype(df[c])]
+                  if not pd.api.types.is_numeric_dtype(df[c]) and c not in exclude]
+    candidates = [(c, n) for c, n in candidates if n >= 2]
     if not candidates:
         return None
     candidates.sort(key=lambda x: x[1])
@@ -264,6 +299,7 @@ def compute_chart_data(df: pd.DataFrame, chart_type: str, spec: dict,
                        modality: str) -> dict:
     """추천된 1개 차트의 데이터 결정론 계산. LLM 0, numpy+pandas만."""
     df = _apply_row_guard(df)   # 가드: row > 1M → stride 샘플링 (synthetic은 무발동)
+    junk = _junk_cols(df)       # 인덱스성 컬럼(Unnamed/idx/행번호) — feature·상관·타깃에서 제외
 
     if chart_type == "histogram":
         col = _pick_numeric_column(df, spec.get("target_column"))
@@ -282,20 +318,18 @@ def compute_chart_data(df: pd.DataFrame, chart_type: str, spec: dict,
         }
 
     if chart_type == "boxplot_by_label":
-        target = _pick_numeric_column(df, spec.get("target_column"))
-        label = _pick_categorical_column(df, spec.get("label_column"))
+        target = _pick_numeric_column(df, spec.get("target_column"), junk)
+        label = _pick_categorical_column(df, spec.get("label_column"), junk)
         if not target:
             return {"error": "no numeric target"}
         groups: dict[str, dict] = {}
         if label and label in df.columns:
-            grouped = df.groupby(label)[target]
+            # 카테고리 30+ 가드: 상위 30개 그룹만
+            count_per_group = df[label].value_counts(dropna=True).head(30).index
+            grouped = [(g, df.loc[df[label] == g, target]) for g in count_per_group]
         else:
             grouped = [("all", df[target])]
             label = None
-        # 카테고리 30+ 가드: 상위 30개 그룹만
-        if label is not None:
-            count_per_group = df[label].value_counts(dropna=True).head(30).index
-            grouped = [(g, df.loc[df[label] == g, target]) for g in count_per_group]
         for g, sub in grouped:
             sub_nn = sub.dropna().astype(float)
             if len(sub_nn) == 0:
@@ -304,6 +338,21 @@ def compute_chart_data(df: pd.DataFrame, chart_type: str, spec: dict,
             groups[str(g)] = {
                 "min": float(q[0]), "q1": float(q[1]), "median": float(q[2]),
                 "q3": float(q[3]), "max": float(q[4]), "n": int(len(sub_nn)),
+            }
+        # 의미있는 라벨 그룹이 ≤1 → 박스플롯 무의미. 타깃 분포(히스토그램)로 폴백.
+        if len([g for g in groups.values() if g["n"] > 0]) <= 1:
+            s = df[target].dropna().astype(float)
+            if len(s) == 0:
+                return {"error": "empty after dropna", "column": target}
+            counts, edges = np.histogram(s, bins="auto")
+            return {
+                "fallback_chart_type": "histogram",
+                "fallback_reason": "라벨 그룹이 1개 — 분포(히스토그램)로 대체",
+                "column": target,
+                "bins": [float(x) for x in edges.tolist()],
+                "counts": [int(x) for x in counts.tolist()],
+                "stats": {"mean": float(s.mean()), "std": float(s.std()),
+                          "min": float(s.min()), "max": float(s.max()), "n": int(len(s))},
             }
         return {"target_column": target, "label_column": label, "groups": groups}
 
@@ -385,6 +434,9 @@ def compute_chart_data(df: pd.DataFrame, chart_type: str, spec: dict,
     if chart_type == "correlation_bar":
         target = spec.get("target_column")
         num = df.select_dtypes(include=[np.number]).dropna(axis=1, how="all")
+        num = num.drop(columns=[c for c in junk if c in num.columns], errors="ignore")  # 인덱스성 제외
+        if target in junk:
+            target = None
         if num.shape[1] < 2:
             return {"error": "need >= 2 numeric columns"}
         if not target or target not in num.columns:
@@ -401,10 +453,15 @@ def compute_chart_data(df: pd.DataFrame, chart_type: str, spec: dict,
 
     if chart_type == "scatter":
         num = df.select_dtypes(include=[np.number]).dropna(axis=1, how="all")
+        num = num.drop(columns=[c for c in junk if c in num.columns], errors="ignore")  # 인덱스성 제외
         if num.shape[1] < 2:
             return {"error": "need >= 2 numeric columns"}
         x_col = spec.get("target_column")
         y_col = spec.get("label_column")
+        if x_col in junk:
+            x_col = None
+        if y_col in junk:
+            y_col = None
         if not (x_col in num.columns):
             # 분산 큰 두 컬럼
             stds = num.std(numeric_only=True).sort_values(ascending=False)

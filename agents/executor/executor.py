@@ -56,6 +56,37 @@ def _col_stats(s: pd.Series) -> dict[str, Any]:
     }
 
 
+def _constraint_bounds(spec: Any) -> tuple[float | None, float | None]:
+    """제약 spec → (lo, hi). 지원: [min,max] 리스트 / {min,max} / {type:range,min,max} 딕트.
+    숫자 아니면 None('제약 없음'). Validator _bounds 와 동일 규약 — remove_outlier 경계 권위."""
+    def _n(v: Any) -> float | None:
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+    if isinstance(spec, dict):
+        return _n(spec.get("min")), _n(spec.get("max"))
+    if isinstance(spec, (list, tuple)) and len(spec) >= 2:
+        return _n(spec[0]), _n(spec[1])
+    return None, None
+
+
+def _apply_remove_outlier(df, col, bounds):
+    """제약 [lo,hi] 밖 행 제거. 판정 불가(NaN) 행은 보존. 반환: (df, removed, lo, hi) | None(미적용)."""
+    lo, hi = _constraint_bounds(bounds)
+    if not col or col not in df.columns or (lo is None and hi is None):
+        return None
+    n_before = len(df)
+    s = pd.to_numeric(df[col], errors="coerce")
+    inb = pd.Series(True, index=df.index)
+    if lo is not None:
+        inb &= (s >= lo)
+    if hi is not None:
+        inb &= (s <= hi)
+    df = df[s.isna() | inb]
+    return df, n_before - len(df), lo, hi
+
+
 # ---------------------------------------------------------------------------
 # 실제 변환 함수들 (결정론적)
 # ---------------------------------------------------------------------------
@@ -184,7 +215,8 @@ _OPERATIONS = {
 async def execute(plan: dict, approved_keys: set | None = None,
                   modality: str = "timeseries",
                   selected_options: dict[str, str] | None = None,
-                  data_path: str | None = None) -> dict:
+                  data_path: str | None = None,
+                  constraints: dict | None = None) -> dict:
     """PreprocessingPlan 실행.
 
     approved_keys: 사용자가 승인한 step_key 집합 (order 대신 안정적 식별자).
@@ -202,7 +234,7 @@ async def execute(plan: dict, approved_keys: set | None = None,
     if modality == "inspection-image":
         return await _execute_image(plan, approved_keys, dataset_id, data_path)
     if modality == "event-log":
-        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options, data_path)
+        return await _execute_eventlog(plan, approved_keys, dataset_id, selected_options, data_path, constraints)
 
     # order는 CSV라 timeseries 경로 재사용 (DATA_ROOT만 order로)
     path = data_path if data_path is not None else _resolve(dataset_id, modality)
@@ -275,6 +307,31 @@ async def execute(plan: dict, approved_keys: set | None = None,
                 semantic_group=gname, status="done", detail=detail,
                 lineage_id=lid, can_rollback=True, before_stats=before, after_stats=after,
             ))
+            continue
+
+        # ★remove_outlier — 제약 [min,max] 밖 행 제거(승인된 이상치 제거). 실제 행 drop + lineage(진짜).
+        if op == "remove_outlier":
+            res = _apply_remove_outlier(df, col, (constraints or {}).get(col))
+            if res is None:
+                results.append(StepResult(
+                    order=order, step_key=step.get("step_key"), operation=op,
+                    target_column=col, permission_level=perm, status="skipped",
+                    detail=f"remove_outlier 미적용 (대상 컬럼/제약 경계 없음): {col}"))
+                continue
+            df, removed, lo, hi = res
+            before, after = {}, {"n_rows": len(df), "removed": removed}
+            lid = lineage.record(
+                dataset_id=dataset_id, transformation_type="remove_outlier",
+                source_column=col, result_column=col,
+                params={"permission_level": perm, "bounds": [lo, hi], "removed_rows": removed},
+                applied_by_agent="executor",
+                user_approval_id=("ui-" + str(step.get("step_key"))) if step.get("step_key") in approved_keys else None,
+                can_rollback=True)
+            results.append(StepResult(
+                order=order, step_key=step.get("step_key"), operation=op,
+                target_column=col, permission_level=perm, status="done",
+                detail=f"'{col}' 범위 [{lo}, {hi}] 밖 {removed}행 제거 (보존 {len(df)})",
+                lineage_id=lid, can_rollback=True, before_stats=before, after_stats=after))
             continue
 
         fn = _OPERATIONS.get(op)
@@ -498,7 +555,8 @@ def _load_eventlog(dataset_id: str, data_path: str | None = None):
 
 async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str,
                             selected_options: dict[str, str] | None = None,
-                            data_path: str | None = None) -> dict:
+                            data_path: str | None = None,
+                            constraints: dict | None = None) -> dict:
     """event-log 전처리. timeseries와 동일 권한 게이트+lineage.
     특유 작업: 멀티시트 통합(로드시 자동), balance_classes(불균형 보정 — STEP 2a 옵션 식별자 분기)."""
     selected_options = selected_options or {}
@@ -552,9 +610,24 @@ async def _execute_eventlog(plan: dict, approved_keys: set, dataset_id: str,
                 sheet_note = f" (멀티시트 {n_sheets}개 통합)" if n_sheets > 1 else ""
                 detail = f"기초 통계 산출{sheet_note}. 행={len(df)}, 컬럼={len(df.columns)}"
                 before, after = {}, {"n_rows": len(df), "n_cols": len(df.columns)}
+            elif op == "remove_outlier":
+                # 제약 [min,max] 밖 행 제거(승인된 이상치 제거). 실제 행 drop + lineage(진짜).
+                res = _apply_remove_outlier(df, col, (constraints or {}).get(col))
+                if res is None:
+                    results.append(StepResult(order=order, step_key=step.get("step_key"),
+                        operation=op, target_column=col, permission_level=perm, status="skipped",
+                        detail=f"remove_outlier 미적용 (대상 컬럼/제약 경계 없음): {col}"))
+                    continue
+                df, removed, lo, hi = res
+                before, after = {}, {"n_rows": len(df), "removed": removed}
+                detail = f"'{col}' 범위 [{lo}, {hi}] 밖 {removed}행 제거 (보존 {len(df)})"
             else:
-                detail = f"{op} 완료"
-                before, after = {}, {}
+                # event-log 미구현/미적용 op(remove_outlier 등)는 df 무변경 — 거짓 "완료"/lineage 금지.
+                # status="skipped" 로만 보고(transformation_applied 미기록). (timeseries fn is None 동작과 정합)
+                results.append(StepResult(order=order, step_key=step.get("step_key"), operation=op,
+                    target_column=col, permission_level=perm, status="skipped",
+                    detail=f"'{op}'는 event-log 경로 미구현 — 미적용(데이터 무변경)."))
+                continue
 
             lineage_params: dict = {"permission_level": perm, "modality": "event-log"}
             if op == "balance_classes" and applied_strategy:

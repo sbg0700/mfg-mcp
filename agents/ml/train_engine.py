@@ -65,7 +65,13 @@ def prepare_features(
             f"(random_state={RANDOM_STATE})"
         )
 
-    # 타겟 분리 (지도학습만)
+    # EDA와 동일 기준의 인덱스성·타임스탬프 제외 헬퍼 재사용
+    try:
+        from eda_engine import _junk_cols  # type: ignore[import-not-found]
+    except ImportError:
+        from agents.eda.eda_engine import _junk_cols  # type: ignore[no-redef]
+
+    # 타겟 분리 (지도학습만) — ★타깃 결측 행만 제거(feature 결측은 아래 0 대치, 전체행 dropna 금지)
     y: pd.Series | None = None
     if supervised:
         if not target_col or target_col not in df.columns:
@@ -73,10 +79,22 @@ def prepare_features(
                 f"지도학습 타겟 컬럼 필요: '{target_col}' 없음 (df cols: "
                 f"{list(df.columns)[:10]}...)"
             )
+        n_before = len(df)
+        df = df[df[target_col].notna()]
+        n_drop = n_before - len(df)
+        if n_drop:
+            notices.append(f"타깃 '{target_col}' 결측 {n_drop:,}행 제외 (feature 결측은 0 대치)")
         y = df[target_col]
         X = df.drop(columns=[target_col])
     else:
         X = df.copy()
+
+    # ★인덱스성·타임스탬프 컬럼 feature 제외 (idx/Unnamed/TimeStamp 등 — 학습 누출 방지)
+    junk = [c for c in _junk_cols(X) if c in X.columns]
+    if junk:
+        X = X.drop(columns=junk)
+        notices.append(f"인덱스성·타임스탬프 {len(junk)}개 feature 제외: "
+                       f"{', '.join(map(str, junk[:6]))}" + (" …" if len(junk) > 6 else ""))
 
     # 고차원 카테고리 제외 (OOM 가드)
     cat_cols = X.select_dtypes(include=["object", "category"]).columns

@@ -59,8 +59,10 @@ export default function ChartCard({ chart, sessionId }) {
   // 2) compute 시 발생한 데이터 에러 (no numeric column 등)
   if (data.error) return <ChartError label={chart.label} message={data.error} />
 
-  const Comp = CHART_COMPONENTS[chart.chart_type]
-  if (!Comp) return <ChartError label={chart.label} message={`미지원 차트: ${chart.chart_type}`} />
+  // 백엔드 폴백(예: 라벨 1개 → boxplot_by_label 데이터가 histogram 으로 대체) 시 그 컴포넌트로 디스패치
+  const effectiveType = data.fallback_chart_type || chart.chart_type
+  const Comp = CHART_COMPONENTS[effectiveType]
+  if (!Comp) return <ChartError label={chart.label} message={`미지원 차트: ${effectiveType}`} />
 
   async function onSummary() {
     setSummaryBusy(true); setSummaryErr(null)

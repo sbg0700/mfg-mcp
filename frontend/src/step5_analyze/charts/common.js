@@ -3,6 +3,16 @@
 
 export const AXIS = { stroke: 'var(--muted)', fontSize: 12 }
 export const GRID = { stroke: 'var(--border)', strokeOpacity: 0.4 }
+
+// 숫자 축 눈금 포맷 — 풀 float(0.5810885779447149) 방지: 작은 값 소수 3자리(끝 0 제거),
+// 큰 값 천단위+소수 2자리, 정수는 그대로.
+export const fmtAxis = (v) => {
+  const n = Number(v)
+  if (v == null || !isFinite(n)) return v
+  if (Number.isInteger(n)) return n.toLocaleString()
+  if (Math.abs(n) < 1) return n.toFixed(3).replace(/\.?0+$/, '')
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
 export const TOOLTIP_STYLE = {
   background: 'var(--panel-2)',
   border: '1px solid var(--border)',

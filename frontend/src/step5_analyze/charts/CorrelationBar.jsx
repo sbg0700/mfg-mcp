@@ -1,7 +1,7 @@
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { AXIS, GRID, TOOLTIP_STYLE, COLORS, CHART_HEIGHT } from './common'
+import { AXIS, GRID, TOOLTIP_STYLE, COLORS, CHART_HEIGHT, fmtAxis } from './common'
 
 // data: {target_column, columns:[], values:[]}  — horizontal bar (변수=Y, |corr|=X)
 export default function CorrelationBar({ data }) {
@@ -13,7 +13,7 @@ export default function CorrelationBar({ data }) {
     <ResponsiveContainer width="100%" height={h}>
       <BarChart layout="vertical" data={rows} margin={{ top: 4, right: 16, bottom: 4, left: 12 }}>
         <CartesianGrid {...GRID} />
-        <XAxis type="number" {...AXIS} domain={[0, 'dataMax']} />
+        <XAxis type="number" {...AXIS} domain={[0, 'dataMax']} tickFormatter={fmtAxis} />
         <YAxis type="category" dataKey="col" width={120} {...AXIS} />
         <Tooltip wrapperStyle={TOOLTIP_STYLE} contentStyle={TOOLTIP_STYLE} />
         <Bar dataKey="val" name={`|corr| vs ${data.target_column}`} fill={COLORS.process} />
