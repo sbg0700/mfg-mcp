@@ -1,5 +1,7 @@
 # GYEOL — Generative Yield Engine for On-prem LLM
 
+**🌐 English · [한국어](README.ko.md)**
+
 **An MCP · agent · local-LLM system that automates manufacturing data preprocessing entirely inside an air-gapped network.**
 
 > Traditional ETL: a human writes the transformation code.
@@ -10,6 +12,12 @@ A local LLM inspects and plans the work; a deterministic engine performs every t
 ```
 Ollama (Gemma) → MCP (4 modalities) → Inspector → Planner → [Human approval] → Executor → Validator → Aggregator → EDA · ML
 ```
+
+## Demo
+
+*6-stage pipeline with a human approval gate, running fully on-prem (44s, sped up).*
+
+https://github.com/user-attachments/assets/26b4d961-2cc3-43cb-b58c-220d3c8d9ceb
 
 ---
 
@@ -42,23 +50,11 @@ The data lake is **never silently mutated** (anti-silent-drop): the original is 
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  U["User / Engineer"] --> FE["React · 6-stage UI"]
-  FE --> BE["FastAPI orchestration"]
-  BE --> MCP["MCP servers · 4 modalities<br/>timeseries · inspection-image · event-log · order"]
-  MCP --> INS["Inspector<br/>profile + LLM read"]
-  INS --> PLN["Planner<br/>rule candidates + LLM ordering"]
-  PLN --> GATE{"Human approval<br/>L2 / L3 gate"}
-  GATE --> EXE["Executor<br/>deterministic · LLM-free"]
-  EXE --> VAL["Validator<br/>pre/post checks · LLM-free"]
-  VAL --> AGG["Aggregator<br/>step context"]
-  AGG --> OUT["EDA · ML"]
-  LLM["Local LLM<br/>Gemma · Ollama"] -. judgment only .-> INS
-  LLM -. judgment only .-> PLN
-```
+End-to-end inside an **on-premise / air-gapped network** (Docker Compose). The only external surface is the web dashboard over HTTP — **data never leaves the plant**.
 
-A **harness layer** spans the whole flow: lineage tracking, L1/L2/L3 guardrails, schema validation, and context summarization (only samples/summaries reach the LLM, protecting tokens). Each modality server exposes the same **7-tool contract**, so adding a new process means reusing the contract rather than rebuilding.
+![GYEOL system architecture — data/prompt flow + harness engineering](GYEOL_architecture_en.png)
+
+**How to read it:** the LLM only *proposes* (dashed `judgment` arrows) — it never touches data. The Inspector→Planner→Executor→Validator chain runs deterministically, reading data through the catalog seam (`catalog.get → data_path → lake`). The **harness** spans the engine (3-tier guardrails + approval gate, pre/post validation, lineage, backup/rollback), so every operation is auditable and reversible. Each modality server exposes the same **7-tool contract**, so a new process reuses the contract instead of rebuilding.
 
 ---
 
