@@ -48,6 +48,18 @@ The data lake is **never silently mutated** (anti-silent-drop): the original is 
 
 ---
 
+## What it does
+
+GYEOL's edge is not any single feature but that it handles **whatever data arrives** — automatically, inside an air-gapped network, with full traceability.
+
+- **Data-agnostic preprocessing** — four modalities (time-series, inspection-image, event-log, order) handled through one shared 7-tool contract. A new process or format is absorbed by reusing the contract, not by re-engineering.
+- **AI plans, deterministic code executes** — the LLM inspects the data and proposes a preprocessing plan (outlier removal, etc.); after human approval, deterministic functions run it. Same input → same output (reproducible), with the original lake untouched (before/after CSVs + rollback).
+- **End-to-end traceability** — a per-session cumulative lineage view (operations, rows removed, approvals, timestamps) makes every transformation auditable and reversible.
+- **Air-gapped by design** — zero external API calls. Data, inference, and training all stay inside the plant; the only external surface is the web dashboard over HTTP.
+- **Analysis & modeling assist** — on preprocessed data, GYEOL also offers chart recommendation and natural-language analysis (sandboxed after approval), plus scikit-learn / XGBoost model training with tracked results.
+
+---
+
 ## Architecture
 
 End-to-end inside an **on-premise / air-gapped network** (Docker Compose). The only external surface is the web dashboard over HTTP — **data never leaves the plant**.
@@ -58,12 +70,21 @@ End-to-end inside an **on-premise / air-gapped network** (Docker Compose). The o
 
 ---
 
-## Key features
+## Troubleshooting — proving practicality on constrained hardware
 
-- **Outlier removal** — constraint-based, applied only after human approval; produces lineage + before/after CSVs and never touches the original lake.
-- **EDA** — automatic chart recommendation plus natural-language analysis (LLM generates code → human approves → sandboxed execution).
-- **Modeling** — scikit-learn / XGBoost training with feature importance and tracked results.
-- **Traceability** — per-session cumulative lineage view (operations, rows removed, approvals, timestamps).
+GYEOL is meant to be deployed not on high-end servers but on the **limited hardware found on a factory floor** (e.g. an RTX 3070 with 8 GB VRAM). Using real KAMP data, we measured the local LLM's inference cost, traced the bottleneck, and optimized it. (Measurement code and assets: `scripts/`)
+
+**What the measurements showed**
+
+- **The bottleneck is LLM inference, not data** — scaling the data 1000× (184 → 210,000 rows) did not scale the processing time proportionally. The deterministic preprocessing is fast; the LLM's inspect/plan steps dominate the time.
+- **A model-selection trade-off** — `e4b` (3.5 GB) fits fully in 8 GB VRAM and runs in 10–25 s, while `26b` (19 GB) exceeds 8 GB and offloads 63% to the CPU, running at 125–175 s.
+
+**Optimization — removing model cold-loading**
+
+- The first call was disproportionately slow because of **model cold-loading** (disk → GPU). Removing it with a `keep-alive` warm-up cut **`e4b`'s inference time by ~33% on average**.
+- `26b`, by contrast, did not stabilize even with cold-loading removed (0 VRAM change): CPU-offloading variance dominates.
+
+**Conclusion** — a constrained (8 GB) plant can deploy immediately with `e4b` + `keep-alive`, while `26b` assumes a 24 GB+ GPU. The 8 GB limit is solved not by *overcoming* it but by *choosing the right model + optimizing* it.
 
 ---
 
@@ -106,7 +127,7 @@ cd frontend && npm install && npm run dev
 #   frontend:        http://localhost:5173
 ```
 
-> Inference characteristics were measured on constrained hardware (RTX 3070, 8 GB) — see `scripts/`. `e4b` fits fully in VRAM and is practical; `26b` assumes a 24 GB+ GPU.
+> Inference characteristics were measured on constrained hardware (RTX 3070, 8 GB) — see `scripts/` and the Troubleshooting section above. `e4b` fits fully in VRAM and is practical; `26b` assumes a 24 GB+ GPU.
 
 ---
 
