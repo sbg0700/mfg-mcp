@@ -168,6 +168,6 @@ cd frontend && npm install && npm run dev
 2-person team project.
 
 - **Byeonggab Song ([@sbg0700](https://github.com/sbg0700))** — designed the project skeleton and the end-to-end agentic-flow vertical backbone; led troubleshooting; built the React 6-stage pipeline UI.
-- **Myeongseon Kim ([@myeongsun125](https://github.com/myeongsun125))** — connected the real manufacturing data (KAMP) pipeline; mapped heterogeneous data sources and generated the metadata catalog.
+- **Myeongsun Kim ([@myeongsun125](https://github.com/myeongsun125))** — connected the real manufacturing data (KAMP) pipeline; mapped heterogeneous data sources and generated the metadata catalog.
 
 Built spec-driven: design decisions are recorded in `docs/decisions.md` as the single source of truth before implementation.
